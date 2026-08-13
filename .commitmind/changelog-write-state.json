@@ -1,5 +1,5 @@
 {
-  "lastFingerprint": "478ac7b2547a2309a48b80fd950fd411f4b81772",
+  "lastFingerprint": "f7b820e12015f421e4ade3b376d8e4c431687b54",
   "lastDate": "2026-08-13",
-  "lastContent": "- Added Settings page with provider and model selection for Claude Code and Codex\n- Persisted user preferences to `userData/settings.json` via new IPC handlers\n- Updated task runner to use selected provider and model from settings\n- Added model parameter support to task execution commands for both providers\n- Added comprehensive tests for settings IPC handlers and repository persistence"
+  "lastContent": "- Added \"Run Provider\" action to the task runner panel for executing real provider CLIs with selected model and instructions\n- Refactored task store to handle echo-fixture and provider execution modes with dedicated methods\n- Preserved the echo fixture as \"Test Echo\" for quick verification without provider calls\n- Added test coverage verifying provider mode passes the selected model to the process manager"
 }

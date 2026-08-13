@@ -2,6 +2,10 @@
 
 ## 2026-08-14
 
+- Manuel task paneline `Run Provider` eklendi; secili proje, provider ve model
+  ile gercek Claude Code/Codex CLI calistirma akisi UI'dan baslatilabiliyor.
+  Echo fixture `Test Echo` olarak korundu.
+
 - Settings ekranı eklendi; aktif provider ve provider'a göre model tercihi
   `userData/settings.json` içinde kalıcı saklanıyor, task paneli artık ilk kurulu
   provider yerine seçili provider/model ayarını kullanıyor.
@@ -73,6 +77,11 @@
 - Geliştirme komutları `docs/DEVELOPMENT.md` içinde belgelendi ve Faz 0 görev kaydı tamamlandı.
 
 ## 2026-08-13
+
+- Added "Run Provider" action to the task runner panel for executing real provider CLIs with selected model and instructions
+- Refactored task store to handle echo-fixture and provider execution modes with dedicated methods
+- Preserved the echo fixture as "Test Echo" for quick verification without provider calls
+- Added test coverage verifying provider mode passes the selected model to the process manager
 
 - Added Settings page with provider and model selection for Claude Code and Codex
 - Persisted user preferences to `userData/settings.json` via new IPC handlers

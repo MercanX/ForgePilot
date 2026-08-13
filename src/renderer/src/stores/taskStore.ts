@@ -20,6 +20,12 @@ type TaskStoreState = {
     instructions: string,
     model: string | null
   ) => Promise<void>;
+  startProviderTask: (
+    project: Project,
+    provider: ProviderDetectionResult,
+    instructions: string,
+    model: string | null
+  ) => Promise<void>;
   stopTask: () => Promise<void>;
 };
 
@@ -30,6 +36,29 @@ const appendLine = (lines: TaskLogLine[], line: TaskLogLine): TaskLogLine[] =>
 
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : "Task action failed.";
+
+const startTask = async (
+  project: Project,
+  provider: ProviderDetectionResult,
+  instructions: string,
+  model: string | null,
+  mode: "echo-fixture" | "provider",
+  timeoutMs: number
+): Promise<void> => {
+  const response = await window.forgepilot.tasks.start({
+    instructions: {
+      body: instructions,
+      format: "plain-text",
+      metadata: {}
+    },
+    model,
+    mode,
+    projectRootPath: project.rootPath,
+    providerId: provider.id,
+    timeoutMs
+  });
+  useTaskStore.setState({ activeTaskId: response.handle.id });
+};
 
 export const useTaskStore = create<TaskStoreState>((set, get) => {
   window.forgepilot.tasks.onOutput((event) => {
@@ -64,19 +93,17 @@ export const useTaskStore = create<TaskStoreState>((set, get) => {
       set({ errorMessage: null, isRunning: true, lines: [] });
 
       try {
-        const response = await window.forgepilot.tasks.start({
-          instructions: {
-            body: instructions,
-            format: "plain-text",
-            metadata: {}
-          },
-          model,
-          mode: "echo-fixture",
-          projectRootPath: project.rootPath,
-          providerId: provider.id,
-          timeoutMs: 30_000
-        });
-        set({ activeTaskId: response.handle.id });
+        await startTask(project, provider, instructions, model, "echo-fixture", 30_000);
+      } catch (error) {
+        set({ errorMessage: getErrorMessage(error), isRunning: false });
+      }
+    },
+
+    startProviderTask: async (project, provider, instructions, model) => {
+      set({ errorMessage: null, isRunning: true, lines: [] });
+
+      try {
+        await startTask(project, provider, instructions, model, "provider", 300_000);
       } catch (error) {
         set({ errorMessage: getErrorMessage(error), isRunning: false });
       }

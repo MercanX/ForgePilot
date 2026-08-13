@@ -17,6 +17,7 @@ export const TaskRunnerPanel = (): ReactElement => {
   const isRunning = useTaskStore((state) => state.isRunning);
   const lines = useTaskStore((state) => state.lines);
   const startEchoTask = useTaskStore((state) => state.startEchoTask);
+  const startProviderTask = useTaskStore((state) => state.startProviderTask);
   const stopTask = useTaskStore((state) => state.stopTask);
   const selectedProject = activeProject ?? projects[0] ?? null;
   const selectedProvider = useMemo(
@@ -46,11 +47,27 @@ export const TaskRunnerPanel = (): ReactElement => {
             disabled={!canStart}
             onClick={() => {
               if (selectedProject && selectedProvider) {
+                void startProviderTask(
+                  selectedProject,
+                  selectedProvider,
+                  instructions,
+                  selectedModel
+                );
+              }
+            }}
+          >
+            Run Provider
+          </button>
+          <button
+            type="button"
+            disabled={!canStart}
+            onClick={() => {
+              if (selectedProject && selectedProvider) {
                 void startEchoTask(selectedProject, selectedProvider, instructions, selectedModel);
               }
             }}
           >
-            Run Echo
+            Test Echo
           </button>
           <button type="button" disabled={!isRunning} onClick={() => void stopTask()}>
             Stop
@@ -75,7 +92,7 @@ export const TaskRunnerPanel = (): ReactElement => {
 
       <pre className="task-output" aria-live="polite">
         {lines.length === 0
-          ? "Run Echo starts a real child process without calling an AI provider."
+          ? "Run Provider sends these instructions to the selected real provider CLI."
           : lines.map((line) => `[${line.stream}] ${line.text}`).join("")}
       </pre>
     </section>

@@ -13,6 +13,16 @@ export const IPC_CHANNELS = {
     detect: "providers:detect",
     refresh: "providers:refresh"
   },
+  tasks: {
+    start: "tasks:start",
+    stop: "tasks:stop",
+    output: "tasks:output",
+    exit: "tasks:exit"
+  },
+  settings: {
+    get: "settings:get",
+    save: "settings:save"
+  },
   jobs: {
     request: "jobs:request",
     get: "jobs:get",

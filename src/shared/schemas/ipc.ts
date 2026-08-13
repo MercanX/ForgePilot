@@ -11,6 +11,14 @@ import {
   syncFindingsRequestSchema,
   workflowResponseSchema
 } from "./cloud-api";
+import {
+  taskExecutionRequestSchema,
+  taskExitEventSchema,
+  taskOutputEventSchema,
+  taskStartResponseSchema,
+  taskStopRequestSchema,
+  taskStopResponseSchema
+} from "./job";
 import { languagePackManifestSchema, localeIdSchema } from "./language-pack";
 import {
   projectAddRequestSchema,
@@ -21,6 +29,7 @@ import {
   projectSchema
 } from "./project";
 import { providerDetectionResultSchema, providerIdSchema } from "./provider";
+import { appSettingsSchema, settingsSaveRequestSchema } from "./settings";
 
 export const appPingRequestSchema = z.object({}).strict();
 
@@ -73,6 +82,34 @@ export const ipcSchemaMap = {
     refresh: {
       request: z.object({}).strict(),
       response: z.array(providerDetectionResultSchema)
+    }
+  },
+  tasks: {
+    start: {
+      request: taskExecutionRequestSchema,
+      response: taskStartResponseSchema
+    },
+    stop: {
+      request: taskStopRequestSchema,
+      response: taskStopResponseSchema
+    },
+    output: {
+      request: z.object({}).strict(),
+      response: taskOutputEventSchema
+    },
+    exit: {
+      request: z.object({}).strict(),
+      response: taskExitEventSchema
+    }
+  },
+  settings: {
+    get: {
+      request: z.object({}).strict(),
+      response: appSettingsSchema
+    },
+    save: {
+      request: settingsSaveRequestSchema,
+      response: appSettingsSchema
     }
   },
   jobs: {

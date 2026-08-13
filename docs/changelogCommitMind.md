@@ -2,6 +2,15 @@
 
 ## 2026-08-14
 
+- Faz 5 kapsamında güvenli `spawn` tabanlı `processManager`, task execution
+  service, `tasks:start`/`tasks:stop` IPC handler'ları ve preload event abonelikleri
+  eklendi; stdout/stderr ve exit olayları renderer'a tipli push kanalından akıyor.
+- Renderer tarafına seçili proje ve kurulu provider ile çalışan manuel `Run Echo`
+  fixture paneli eklendi; bu panel gerçek child process çalıştırır ama AI provider
+  çağrısı yapmadan süreç yaşam döngüsünü doğrular.
+- Süreç çalıştırma proje köküyle sınırlandırıldı, shell kullanılmadı, environment
+  değişkenleri allowlist ile aktarıldı ve task talimat gövdeleri diske yazılmadan
+  bellekte process'e iletildi.
 - Windows provider tespitinde `where.exe` çıktısındaki uzantısız/npm shim yolları
   yerine gerçek `.exe` adayları önceliklendirildi; kurulu CLI için versiyon
   okunamazsa UI artık yanlış `not detected` mesajı göstermiyor.
@@ -61,6 +70,12 @@
 - Geliştirme komutları `docs/DEVELOPMENT.md` içinde belgelendi ve Faz 0 görev kaydı tamamlandı.
 
 ## 2026-08-13
+
+- Added secure `spawn`-based process manager that restricts execution to the project root, disables shell usage, and passes only allowlisted environment variables.
+- Implemented task execution service with `tasks:start`/`tasks:stop` IPC handlers, streaming stdout/stderr and exit events to the renderer via typed push channels.
+- Added manual task fixture panel with `Run Echo` functionality that validates the process lifecycle without invoking an AI provider.
+- Introduced settings repository with schema validation for persisting application settings.
+- Added preload API for task subscriptions and settings management, enabling renderer communication with the new IPC channels.
 
 - Added local project management with native folder selection, persistent storage in `userData/projects.json`, and typed IPC/preload APIs for listing, adding, removing, and opening projects.
 - Introduced a new Projects screen in the renderer with a Zustand-based store, displaying project lists, active state, and status/error messages.

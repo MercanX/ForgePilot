@@ -1,6 +1,7 @@
 import { type ReactElement, useEffect } from "react";
 
 import { ProviderPanel } from "@renderer/components/ProviderPanel";
+import { TaskRunnerPanel } from "@renderer/components/TaskRunnerPanel";
 import { useProjectStore } from "@renderer/stores/projectStore";
 import type { Project } from "@shared/schemas/project";
 
@@ -102,6 +103,7 @@ export const ProjectsPage = (): ReactElement => {
       )}
 
       <ProviderPanel />
+      <TaskRunnerPanel />
     </div>
   );
 };

@@ -63,6 +63,62 @@ export const providerExitInfoSchema = z
   })
   .strict();
 
+export const taskExecutionModeSchema = z.enum(["echo-fixture", "provider"]);
+
+export const taskExecutionRequestSchema = z
+  .object({
+    providerId: providerIdSchema,
+    projectRootPath: z.string().min(1),
+    instructions: taskInstructionsSchema,
+    model: z.string().min(1).nullable().default(null),
+    timeoutMs: z.number().int().positive().default(DEFAULT_JOB_TIMEOUT_MS),
+    mode: taskExecutionModeSchema.default("echo-fixture")
+  })
+  .strict();
+
+export const taskHandleSchema = z
+  .object({
+    id: z.string().uuid(),
+    providerId: providerIdSchema,
+    processId: z.number().int().positive().nullable()
+  })
+  .strict();
+
+export const taskStartResponseSchema = z
+  .object({
+    handle: taskHandleSchema,
+    startedAt: z.string().datetime()
+  })
+  .strict();
+
+export const taskStopRequestSchema = z
+  .object({
+    taskId: z.string().uuid()
+  })
+  .strict();
+
+export const taskStopResponseSchema = z
+  .object({
+    stopped: z.boolean()
+  })
+  .strict();
+
+export const taskOutputEventSchema = z
+  .object({
+    taskId: z.string().uuid(),
+    providerId: providerIdSchema,
+    chunk: providerOutputChunkSchema
+  })
+  .strict();
+
+export const taskExitEventSchema = z
+  .object({
+    taskId: z.string().uuid(),
+    providerId: providerIdSchema,
+    exitInfo: providerExitInfoSchema
+  })
+  .strict();
+
 export const taskResultSchema = z
   .object({
     taskId: z.string().uuid(),
@@ -79,8 +135,14 @@ export const taskResultSchema = z
 
 export type JobStatus = z.infer<typeof jobStatusSchema>;
 export type TaskInstructions = z.infer<typeof taskInstructionsSchema>;
+export type TaskExecutionMode = z.infer<typeof taskExecutionModeSchema>;
+export type TaskExecutionRequest = z.infer<typeof taskExecutionRequestSchema>;
 export type Task = z.infer<typeof taskSchema>;
 export type Job = z.infer<typeof jobSchema>;
 export type ProviderOutputChunk = z.infer<typeof providerOutputChunkSchema>;
 export type ProviderExitInfo = z.infer<typeof providerExitInfoSchema>;
 export type TaskResult = z.infer<typeof taskResultSchema>;
+export type TaskStartResponse = z.infer<typeof taskStartResponseSchema>;
+export type TaskStopRequest = z.infer<typeof taskStopRequestSchema>;
+export type TaskOutputEvent = z.infer<typeof taskOutputEventSchema>;
+export type TaskExitEvent = z.infer<typeof taskExitEventSchema>;

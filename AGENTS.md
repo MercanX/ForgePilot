@@ -116,7 +116,8 @@ onay vermeden sonraki fazın planını uygulamaya geçirme.
 - Faz 2 paylaşılan sözleşmeler temeli tamamlanmıştır.
 - Faz 3 proje yönetimi temeli tamamlanmıştır.
 - Faz 4 sağlayıcı tespiti ve adaptör temeli tamamlanmıştır.
-- Faz 5'e başlamadan önce kullanıcıya Faz 5 başlangıç raporu verilmeli ve açık
+- Faz 5 süreç çalıştırma ve manuel task fixture temeli tamamlanmıştır.
+- Faz 6'ya başlamadan önce kullanıcıya Faz 6 başlangıç raporu verilmeli ve açık
   onay alınmalıdır.
 
 ## Dokümantasyon ve Görev Takibi

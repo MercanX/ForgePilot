@@ -119,7 +119,8 @@ h1 {
 
 .primary-action,
 .project-actions button,
-.provider-panel-heading button {
+.provider-panel-heading button,
+.task-runner-actions button {
   min-height: 38px;
   border: 1px solid #34373d;
   border-radius: 6px;
@@ -136,13 +137,15 @@ h1 {
 
 .primary-action:hover:not(:disabled),
 .project-actions button:hover:not(:disabled),
-.provider-panel-heading button:hover:not(:disabled) {
+.provider-panel-heading button:hover:not(:disabled),
+.task-runner-actions button:hover:not(:disabled) {
   filter: brightness(1.12);
 }
 
 .primary-action:disabled,
 .project-actions button:disabled,
-.provider-panel-heading button:disabled {
+.provider-panel-heading button:disabled,
+.task-runner-actions button:disabled {
   cursor: wait;
   opacity: 0.6;
 }
@@ -326,6 +329,68 @@ h1 {
   color: #fecaca;
 }
 
+.task-runner-panel {
+  border-top: 1px solid #26282c;
+  margin-top: 28px;
+  padding-top: 24px;
+}
+
+.task-runner-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.task-runner-heading h2 {
+  color: #ffffff;
+  font-size: 20px;
+  margin: 0;
+}
+
+.task-runner-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.task-runner-context {
+  display: flex;
+  gap: 16px;
+  color: #a8adb7;
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.task-runner-panel textarea {
+  width: 100%;
+  min-height: 92px;
+  border: 1px solid #2a2d33;
+  border-radius: 8px;
+  background: #15171a;
+  color: #f8fafc;
+  font: inherit;
+  line-height: 1.5;
+  margin-bottom: 12px;
+  padding: 12px;
+  resize: vertical;
+}
+
+.task-output {
+  overflow: auto;
+  min-height: 140px;
+  max-height: 260px;
+  border: 1px solid #2a2d33;
+  border-radius: 8px;
+  background: #08090b;
+  color: #d5d9e2;
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 0;
+  padding: 12px;
+  white-space: pre-wrap;
+}
+
 @media (max-width: 720px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -382,5 +447,11 @@ h1 {
 
   .provider-grid {
     grid-template-columns: 1fr;
+  }
+
+  .task-runner-heading,
+  .task-runner-context {
+    align-items: stretch;
+    flex-direction: column;
   }
 }

@@ -1,9 +1,12 @@
 import { type ReactElement, useEffect, useState } from "react";
 
 import { ProjectsPage } from "@renderer/pages/ProjectsPage";
+import { useProviderStore } from "@renderer/stores/providerStore";
 
 export const App = (): ReactElement => {
   const [bridgeStatus, setBridgeStatus] = useState("Checking preload bridge");
+  const providers = useProviderStore((state) => state.providers);
+  const installedProvider = providers.find((provider) => provider.installed);
 
   useEffect(() => {
     void window.forgepilot.app
@@ -41,7 +44,7 @@ export const App = (): ReactElement => {
       <section className="workspace" aria-labelledby="workspace-title">
         <header className="status-bar">
           <span>Cloud: Not connected</span>
-          <span>Provider: Not selected</span>
+          <span>Provider: {installedProvider?.label ?? "Not selected"}</span>
           <span>{bridgeStatus}</span>
         </header>
         <ProjectsPage />

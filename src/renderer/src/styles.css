@@ -118,7 +118,8 @@ h1 {
 }
 
 .primary-action,
-.project-actions button {
+.project-actions button,
+.provider-panel-heading button {
   min-height: 38px;
   border: 1px solid #34373d;
   border-radius: 6px;
@@ -134,12 +135,14 @@ h1 {
 }
 
 .primary-action:hover:not(:disabled),
-.project-actions button:hover:not(:disabled) {
+.project-actions button:hover:not(:disabled),
+.provider-panel-heading button:hover:not(:disabled) {
   filter: brightness(1.12);
 }
 
 .primary-action:disabled,
-.project-actions button:disabled {
+.project-actions button:disabled,
+.provider-panel-heading button:disabled {
   cursor: wait;
   opacity: 0.6;
 }
@@ -246,6 +249,83 @@ h1 {
   gap: 8px;
 }
 
+.provider-panel {
+  border-top: 1px solid #26282c;
+  margin-top: 28px;
+  padding-top: 24px;
+}
+
+.provider-panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.provider-panel-heading h2 {
+  color: #ffffff;
+  font-size: 20px;
+  margin: 0;
+}
+
+.provider-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.provider-card {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  border: 1px solid #2a2d33;
+  border-radius: 8px;
+  background: #15171a;
+  min-height: 104px;
+  padding: 16px;
+}
+
+.provider-card h3 {
+  color: #ffffff;
+  font-size: 16px;
+  margin: 0 0 8px;
+}
+
+.provider-card p,
+.provider-empty {
+  color: #a8adb7;
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.provider-card span {
+  border: 1px solid #34373d;
+  border-radius: 999px;
+  color: #d5d9e2;
+  flex: 0 0 auto;
+  font-size: 12px;
+  padding: 4px 8px;
+}
+
+.provider-card-installed span,
+.provider-card-authenticated span {
+  border-color: #16a34a;
+  color: #86efac;
+}
+
+.provider-card-not-installed span {
+  border-color: #525866;
+  color: #a8adb7;
+}
+
+.provider-card-error span {
+  border-color: #7f1d1d;
+  color: #fecaca;
+}
+
 @media (max-width: 720px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -293,5 +373,14 @@ h1 {
 
   .project-actions {
     flex-wrap: wrap;
+  }
+
+  .provider-panel-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .provider-grid {
+    grid-template-columns: 1fr;
   }
 }

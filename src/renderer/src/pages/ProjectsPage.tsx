@@ -1,5 +1,6 @@
 import { type ReactElement, useEffect } from "react";
 
+import { ProviderPanel } from "@renderer/components/ProviderPanel";
 import { useProjectStore } from "@renderer/stores/projectStore";
 import type { Project } from "@shared/schemas/project";
 
@@ -99,6 +100,8 @@ export const ProjectsPage = (): ReactElement => {
           ))}
         </section>
       )}
+
+      <ProviderPanel />
     </div>
   );
 };

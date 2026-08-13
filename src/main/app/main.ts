@@ -4,6 +4,7 @@ import { isDev } from "@main/app/runtime";
 import { createMainWindow } from "@main/app/window";
 import { registerAppIpc } from "@main/ipc/app";
 import { registerProjectsIpc } from "@main/ipc/projects";
+import { registerProvidersIpc } from "@main/ipc/providers";
 import { applyContentSecurityPolicy } from "@main/security/csp";
 
 const { app, BrowserWindow } = electron;
@@ -35,6 +36,7 @@ if (!gotSingleInstanceLock) {
       });
       registerAppIpc();
       registerProjectsIpc();
+      registerProvidersIpc();
       mainWindow = await createMainWindow({
         isDev: isDev(),
         openDevTools: process.env.FORGEPILOT_OPEN_DEVTOOLS === "1",

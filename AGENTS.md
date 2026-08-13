@@ -115,7 +115,8 @@ onay vermeden sonraki fazın planını uygulamaya geçirme.
 - Faz 1 Electron kabuğu ve güvenlik temeli tamamlanmıştır.
 - Faz 2 paylaşılan sözleşmeler temeli tamamlanmıştır.
 - Faz 3 proje yönetimi temeli tamamlanmıştır.
-- Faz 4'e başlamadan önce kullanıcıya Faz 4 başlangıç raporu verilmeli ve açık
+- Faz 4 sağlayıcı tespiti ve adaptör temeli tamamlanmıştır.
+- Faz 5'e başlamadan önce kullanıcıya Faz 5 başlangıç raporu verilmeli ve açık
   onay alınmalıdır.
 
 ## Dokümantasyon ve Görev Takibi

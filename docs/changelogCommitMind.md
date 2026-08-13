@@ -2,6 +2,20 @@
 
 ## 2026-08-14
 
+- Windows provider tespitinde `where.exe` çıktısındaki uzantısız/npm shim yolları
+  yerine gerçek `.exe` adayları önceliklendirildi; kurulu CLI için versiyon
+  okunamazsa UI artık yanlış `not detected` mesajı göstermiyor.
+- Provider tespitinde başarılı `execFile` çağrılarının exit code'u `0` yerine
+  `null` yorumlandığı için CLI'ların yanlışlıkla `Not installed` görünmesi
+  düzeltildi.
+- Faz 4 kapsamında Claude Code ve Codex için güvenli `execFile` tabanlı CLI
+  tespiti eklendi; `ProviderRegistry`, provider adaptör iskeletleri, versiyon
+  okuma, provider IPC handler'ları ve preload API yüzeyi bağlandı.
+- Renderer tarafına Environment Check içinde provider paneli eklendi; Claude Code
+  ve Codex durumları ekranda `Installed`, `Not installed` veya `Error` olarak
+  görülebilir ve `Check Again` ile yenilenebilir.
+- Git kurulum/sürüm tespiti için temel `gitDetect` modülü eklendi; provider
+  tespiti, registry, IPC ve Git davranışları testlerle doğrulandı.
 - Geliştirme modunda React Vite preamble'ının CSP tarafından engellenip beyaz ekran
   oluşturması düzeltildi; dev CSP yalnızca geliştirme sırasında inline Vite
   preamble'a izin verirken production `script-src 'self'` davranışı korunuyor.

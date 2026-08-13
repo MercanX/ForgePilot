@@ -113,7 +113,8 @@ onay vermeden sonraki fazın planını uygulamaya geçirme.
 
 - Faz 0 depo iskeleti ve araç zinciri tamamlanmıştır.
 - Faz 1 Electron kabuğu ve güvenlik temeli tamamlanmıştır.
-- Faz 2'ye başlamadan önce kullanıcıya Faz 2 başlangıç raporu verilmeli ve açık
+- Faz 2 paylaşılan sözleşmeler temeli tamamlanmıştır.
+- Faz 3'e başlamadan önce kullanıcıya Faz 3 başlangıç raporu verilmeli ve açık
   onay alınmalıdır.
 
 ## Dokümantasyon ve Görev Takibi
@@ -139,6 +140,20 @@ corepack pnpm format:check
 corepack pnpm test
 corepack pnpm build
 ```
+
+Her faz sonunda ayrıca manuel dev açılış kontrolü yapılmalıdır:
+
+```bash
+corepack pnpm dev
+```
+
+Bu kontrolün sonucu faz bitiş raporunda açıkça yazılmalıdır:
+
+- Dev komutu başlatıldı mı?
+- Electron penceresi açıldı mı?
+- `ForgePilot` pencere başlığı göründü mü?
+- Hata çıktısı var mı?
+- Dev süreci açık mı bırakıldı, yoksa kapatıldı mı?
 
 `pnpm` PATH içinde yoksa `corepack pnpm ...` kullan.
 

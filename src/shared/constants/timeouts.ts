@@ -1,0 +1,4 @@
+export const DEFAULT_JOB_TIMEOUT_MS = 30 * 60 * 1000;
+export const JOB_HEARTBEAT_INTERVAL_MS = 30 * 1000;
+export const JOB_SUBMIT_RETRY_LIMIT = 3;
+export const PROVIDER_DETECTION_TIMEOUT_MS = 5 * 1000;

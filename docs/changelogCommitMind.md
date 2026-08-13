@@ -2,6 +2,14 @@
 
 ## 2026-08-14
 
+- Faz 2 kapsamında Project, Provider, Finding, Job, Run, Cloud API ve Language
+  Pack Zod sözleşmeleri eklendi; provider adapter arayüzü, protocol/locale/timeout
+  sabitleri, IPC şema haritası ve state machine geçişleri tanımlandı.
+- Paylaşılan sözleşmeler için fixture tabanlı birim testleri ve `shared/` import
+  boundary testi eklendi.
+- Her faz sonunda `corepack pnpm dev` ile manuel Electron dev açılış kontrolü
+  yapılması ve sonucunun faz bitiş raporunda belirtilmesi kuralı `AGENTS.md`
+  içine eklendi.
 - Faz 1 kapsamında Electron güvenlik temeli tamamlandı; güvenli `BrowserWindow`
   tercihleri, CSP üretimi, navigation guard, Zod doğrulamalı IPC handler deseni
   ve tipli preload `ping` köprüsü eklendi.

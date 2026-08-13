@@ -1,5 +1,5 @@
 {
-  "lastFingerprint": "fdbae518a93eeda88d48d6f5c2b8f6ef1fb079aa",
+  "lastFingerprint": "3c650a776aa1246857a0f9f39e1b1bfa5457e7bc",
   "lastDate": "2026-08-13",
-  "lastContent": "- Fixed `pnpm dev` startup by adding a launcher that removes `ELECTRON_RUN_AS_NODE` from the child process environment, ensuring Electron opens as a desktop app.\n- Pinned Electron, Electron-Vite, and Vite to compatible versions to resolve runtime and build incompatibilities.\n- Configured main and preload build outputs to use `.cjs` format for correct Electron runtime loading.\n- Updated the main entry point in `package.json` to reference the new `.cjs` output file.\n- Added `electron` to pnpm's allowed build dependencies to ensure proper native module installation."
+  "lastContent": "- Added local project management with native folder selection, persistent storage in `userData/projects.json`, and typed IPC/preload APIs for listing, adding, removing, and opening projects.\n- Introduced a new Projects screen in the renderer with a Zustand-based store, displaying project lists, active state, and status/error messages.\n- Implemented `pathGuard` for absolute path validation and prevention of access outside the selected project root, covered by tests.\n- Fixed development CSP to allow Vite's inline preamble only in dev mode, preventing white screens while keeping production `script-src 'self'` strict.\n- Made DevTools opening optional via the `FORGEPILOT_OPEN_DEVTOOLS` environment variable to avoid terminal noise during normal development."
 }

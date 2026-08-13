@@ -114,7 +114,8 @@ onay vermeden sonraki fazın planını uygulamaya geçirme.
 - Faz 0 depo iskeleti ve araç zinciri tamamlanmıştır.
 - Faz 1 Electron kabuğu ve güvenlik temeli tamamlanmıştır.
 - Faz 2 paylaşılan sözleşmeler temeli tamamlanmıştır.
-- Faz 3'e başlamadan önce kullanıcıya Faz 3 başlangıç raporu verilmeli ve açık
+- Faz 3 proje yönetimi temeli tamamlanmıştır.
+- Faz 4'e başlamadan önce kullanıcıya Faz 4 başlangıç raporu verilmeli ve açık
   onay alınmalıdır.
 
 ## Dokümantasyon ve Görev Takibi

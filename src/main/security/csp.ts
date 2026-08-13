@@ -10,10 +10,11 @@ export const createContentSecurityPolicy = (options: ContentSecurityPolicyOption
   const connectSources = options.allowDevServer
     ? ["'self'", "http://localhost:*", "ws://localhost:*"]
     : ["'self'"];
+  const scriptSources = options.allowDevServer ? ["'self'", "'unsafe-inline'"] : ["'self'"];
 
   return [
     "default-src 'self'",
-    "script-src 'self'",
+    `script-src ${scriptSources.join(" ")}`,
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data:",
     `connect-src ${connectSources.join(" ")}`,

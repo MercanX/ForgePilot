@@ -3,6 +3,7 @@ import electron, { type BrowserWindow as ElectronBrowserWindow } from "electron"
 import { isDev } from "@main/app/runtime";
 import { createMainWindow } from "@main/app/window";
 import { registerAppIpc } from "@main/ipc/app";
+import { registerProjectsIpc } from "@main/ipc/projects";
 import { applyContentSecurityPolicy } from "@main/security/csp";
 
 const { app, BrowserWindow } = electron;
@@ -33,8 +34,10 @@ if (!gotSingleInstanceLock) {
         allowDevServer: isDev()
       });
       registerAppIpc();
+      registerProjectsIpc();
       mainWindow = await createMainWindow({
         isDev: isDev(),
+        openDevTools: process.env.FORGEPILOT_OPEN_DEVTOOLS === "1",
         rendererUrl: process.env.ELECTRON_RENDERER_URL
       });
     })
@@ -53,6 +56,7 @@ if (!gotSingleInstanceLock) {
     if (BrowserWindow.getAllWindows().length === 0) {
       void createMainWindow({
         isDev: isDev(),
+        openDevTools: process.env.FORGEPILOT_OPEN_DEVTOOLS === "1",
         rendererUrl: process.env.ELECTRON_RENDERER_URL
       }).then((window) => {
         mainWindow = window;

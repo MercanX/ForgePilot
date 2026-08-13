@@ -1,5 +1,7 @@
 import { type ReactElement, useEffect, useState } from "react";
 
+import { ProjectsPage } from "@renderer/pages/ProjectsPage";
+
 export const App = (): ReactElement => {
   const [bridgeStatus, setBridgeStatus] = useState("Checking preload bridge");
 
@@ -40,14 +42,9 @@ export const App = (): ReactElement => {
         <header className="status-bar">
           <span>Cloud: Not connected</span>
           <span>Provider: Not selected</span>
-          <span>v0.1.0</span>
+          <span>{bridgeStatus}</span>
         </header>
-        <div className="empty-state">
-          <p className="eyebrow">Desktop client foundation</p>
-          <h1 id="workspace-title">ForgePilot is ready for the first workflow layer.</h1>
-          <p>The Electron, React, TypeScript, lint, format and test toolchain is now scaffolded.</p>
-          <p className="bridge-status">{bridgeStatus}</p>
-        </div>
+        <ProjectsPage />
       </section>
     </main>
   );

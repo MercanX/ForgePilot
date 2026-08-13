@@ -19,6 +19,7 @@ export const projectSchema = z
   .strict();
 
 export const projectListResponseSchema = z.array(projectSchema);
+export const projectAddResponseSchema = projectSchema.nullable();
 
 export const projectAddRequestSchema = z.object({}).strict();
 
@@ -33,5 +34,6 @@ export const projectOpenRequestSchema = projectRemoveRequestSchema;
 export type Project = z.infer<typeof projectSchema>;
 export type ProjectListResponse = z.infer<typeof projectListResponseSchema>;
 export type ProjectAddRequest = z.infer<typeof projectAddRequestSchema>;
+export type ProjectAddResponse = z.infer<typeof projectAddResponseSchema>;
 export type ProjectRemoveRequest = z.infer<typeof projectRemoveRequestSchema>;
 export type ProjectOpenRequest = z.infer<typeof projectOpenRequestSchema>;

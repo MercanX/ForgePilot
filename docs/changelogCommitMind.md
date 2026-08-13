@@ -2,6 +2,22 @@
 
 ## 2026-08-14
 
+- Geliştirme modunda React Vite preamble'ının CSP tarafından engellenip beyaz ekran
+  oluşturması düzeltildi; dev CSP yalnızca geliştirme sırasında inline Vite
+  preamble'a izin verirken production `script-src 'self'` davranışı korunuyor.
+- Dev açılışında Chromium DevTools iç uyarılarının terminali kirletmemesi için
+  DevTools otomatik açılışı kapatıldı; gerektiğinde `FORGEPILOT_OPEN_DEVTOOLS=1`
+  ile manuel açılacak hale getirildi.
+- Faz 3 kapsamında yerel proje yönetimi eklendi; kullanıcı native klasör seçme
+  dialog'u ile proje ekleyebilir, projeler `userData/projects.json` içinde kalıcı
+  tutulur, açma/kaldırma akışı tipli IPC ve preload API üzerinden çalışır.
+- Renderer tarafında ilk gerçek Projects ekranı ve Zustand tabanlı proje store'u
+  eklendi; proje listesi, aktif proje durumu, ekleme, açma, kaldırma ve hata/durum
+  mesajları görünür hale getirildi.
+- Proje kökü güvenliği için `pathGuard` eklendi; mutlak dizin doğrulama, gerçek yol
+  çözümleme ve proje kökü dışına çıkan yolların reddi testlerle doğrulandı.
+- Gömülü varsayılan `en-US` locale kaynağı için servis iskeleti eklendi; diğer
+  dillerin harici language pack olarak geleceği karar korunuyor.
 - Faz 2 kapsamında Project, Provider, Finding, Job, Run, Cloud API ve Language
   Pack Zod sözleşmeleri eklendi; provider adapter arayüzü, protocol/locale/timeout
   sabitleri, IPC şema haritası ve state machine geçişleri tanımlandı.
@@ -31,6 +47,12 @@
 - Geliştirme komutları `docs/DEVELOPMENT.md` içinde belgelendi ve Faz 0 görev kaydı tamamlandı.
 
 ## 2026-08-13
+
+- Added local project management with native folder selection, persistent storage in `userData/projects.json`, and typed IPC/preload APIs for listing, adding, removing, and opening projects.
+- Introduced a new Projects screen in the renderer with a Zustand-based store, displaying project lists, active state, and status/error messages.
+- Implemented `pathGuard` for absolute path validation and prevention of access outside the selected project root, covered by tests.
+- Fixed development CSP to allow Vite's inline preamble only in dev mode, preventing white screens while keeping production `script-src 'self'` strict.
+- Made DevTools opening optional via the `FORGEPILOT_OPEN_DEVTOOLS` environment variable to avoid terminal noise during normal development.
 
 - Fixed `pnpm dev` startup by adding a launcher that removes `ELECTRON_RUN_AS_NODE` from the child process environment, ensuring Electron opens as a desktop app.
 - Pinned Electron, Electron-Vite, and Vite to compatible versions to resolve runtime and build incompatibilities.

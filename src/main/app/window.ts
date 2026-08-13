@@ -11,6 +11,7 @@ const { BrowserWindow } = electron;
 
 export type MainWindowOptions = {
   isDev: boolean;
+  openDevTools?: boolean;
   rendererUrl?: string;
 };
 
@@ -48,7 +49,9 @@ export const createMainWindow = async (
 
   if (options.isDev && options.rendererUrl) {
     await mainWindow.loadURL(options.rendererUrl);
-    mainWindow.webContents.openDevTools({ mode: "detach" });
+    if (options.openDevTools) {
+      mainWindow.webContents.openDevTools({ mode: "detach" });
+    }
     return mainWindow;
   }
 

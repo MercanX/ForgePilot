@@ -14,6 +14,7 @@ import {
 import { languagePackManifestSchema, localeIdSchema } from "./language-pack";
 import {
   projectAddRequestSchema,
+  projectAddResponseSchema,
   projectListResponseSchema,
   projectOpenRequestSchema,
   projectRemoveRequestSchema,
@@ -49,11 +50,11 @@ export const ipcSchemaMap = {
     },
     add: {
       request: projectAddRequestSchema,
-      response: projectSchema
+      response: projectAddResponseSchema
     },
     remove: {
       request: projectRemoveRequestSchema,
-      response: z.object({ removed: z.literal(true) }).strict()
+      response: z.object({ removed: z.boolean() }).strict()
     },
     open: {
       request: projectOpenRequestSchema,

@@ -29,6 +29,19 @@ açar.
 ortam değişkenini child process ortamından silerek Electron'un Node modu yerine
 normal masaüstü uygulaması olarak açılmasını garanti eder.
 
+DevTools normal geliştirme açılışında otomatik açılmaz. Gerekirse şu ortam
+değişkeniyle açık başlatılabilir:
+
+```bash
+FORGEPILOT_OPEN_DEVTOOLS=1 corepack pnpm dev
+```
+
+PowerShell:
+
+```powershell
+$env:FORGEPILOT_OPEN_DEVTOOLS='1'; corepack pnpm dev
+```
+
 ## Doğrulama
 
 ```bash

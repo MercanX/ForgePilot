@@ -1,5 +1,5 @@
 {
-  "lastFingerprint": "803311563ebf6da01b9cb7ce5aa9f3fe5a37101d",
+  "lastFingerprint": "fdbae518a93eeda88d48d6f5c2b8f6ef1fb079aa",
   "lastDate": "2026-08-13",
-  "lastContent": "- Added DESIGN.md as the authoritative technical design document covering architecture, component diagrams, state machines, and cloud API contracts.\n- Expanded BUILD_PLAN.md with new architectural decisions for extended provider adapter methods, heartbeat-based job contracts, and version negotiation.\n- Added implementation details for environment checks, orphan process reaping, and run state machine management across multiple phases.\n- Introduced crash recovery and offline/degraded mode handling specifications with clear server authority rules.\n- Defined SQLite schema evolution with checkpoint columns and findings cache, ensuring job instruction bodies are never persisted to disk."
+  "lastContent": "- Fixed `pnpm dev` startup by adding a launcher that removes `ELECTRON_RUN_AS_NODE` from the child process environment, ensuring Electron opens as a desktop app.\n- Pinned Electron, Electron-Vite, and Vite to compatible versions to resolve runtime and build incompatibilities.\n- Configured main and preload build outputs to use `.cjs` format for correct Electron runtime loading.\n- Updated the main entry point in `package.json` to reference the new `.cjs` output file.\n- Added `electron` to pnpm's allowed build dependencies to ensure proper native module installation."
 }

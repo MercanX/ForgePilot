@@ -9,7 +9,11 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()],
     build: {
       rollupOptions: {
-        input: resolve(__dirname, "src/main/app/main.ts")
+        input: resolve(__dirname, "src/main/app/main.ts"),
+        output: {
+          format: "cjs",
+          entryFileNames: "[name].cjs"
+        }
       }
     },
     resolve: {
@@ -24,7 +28,11 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()],
     build: {
       rollupOptions: {
-        input: resolve(__dirname, "src/preload/index.ts")
+        input: resolve(__dirname, "src/preload/index.ts"),
+        output: {
+          format: "cjs",
+          entryFileNames: "[name].cjs"
+        }
       }
     },
     resolve: {

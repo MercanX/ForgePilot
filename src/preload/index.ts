@@ -1,7 +1,9 @@
-import { contextBridge, ipcRenderer } from "electron";
+import electron from "electron";
 
 import { IPC_CHANNELS } from "@shared/constants/channels";
 import type { AppPingResponse } from "@shared/schemas/ipc";
+
+const { contextBridge, ipcRenderer } = electron;
 
 const forgepilotApi = {
   app: {

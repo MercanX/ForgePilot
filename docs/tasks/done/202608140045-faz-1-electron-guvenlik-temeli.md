@@ -21,6 +21,10 @@ IPC handler deseni tamamlandı.
   bırakıldı.
 - CSP, navigation guard, IPC şeması ve pencere güvenlik tercihleri için testler
   eklendi.
+- Electron dev açılışında `ELECTRON_RUN_AS_NODE` ortam değişkeninin uygulamayı
+  Node modunda başlatmasını önleyen launcher eklendi.
+- Electron-Vite, Vite ve Electron sürümleri uyumlu hatta sabitlendi; main/preload
+  çıktıları Electron runtime için `.cjs` olarak üretilecek şekilde ayarlandı.
 
 ## Doğrulama
 
@@ -29,3 +33,4 @@ IPC handler deseni tamamlandı.
 - `corepack pnpm format:check`
 - `corepack pnpm test`
 - `corepack pnpm build`
+- `corepack pnpm dev`

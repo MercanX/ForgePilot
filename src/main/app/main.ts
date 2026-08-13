@@ -1,11 +1,13 @@
-import { app, BrowserWindow } from "electron";
+import electron, { type BrowserWindow as ElectronBrowserWindow } from "electron";
 
 import { isDev } from "@main/app/runtime";
 import { createMainWindow } from "@main/app/window";
 import { registerAppIpc } from "@main/ipc/app";
 import { applyContentSecurityPolicy } from "@main/security/csp";
 
-let mainWindow: BrowserWindow | null = null;
+const { app, BrowserWindow } = electron;
+
+let mainWindow: ElectronBrowserWindow | null = null;
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 

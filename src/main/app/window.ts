@@ -1,8 +1,13 @@
 import { join } from "node:path";
 
-import { BrowserWindow, type WebPreferences } from "electron";
+import electron, {
+  type BrowserWindow as ElectronBrowserWindow,
+  type WebPreferences
+} from "electron";
 
 import { installNavigationGuard } from "@main/security/navGuard";
+
+const { BrowserWindow } = electron;
 
 export type MainWindowOptions = {
   isDev: boolean;
@@ -25,12 +30,14 @@ export const getDefaultWebPreferences = (preloadPath: string): WebPreferences =>
   preload: preloadPath
 });
 
-export const createMainWindow = async (options: MainWindowOptions): Promise<BrowserWindow> => {
+export const createMainWindow = async (
+  options: MainWindowOptions
+): Promise<ElectronBrowserWindow> => {
   const mainWindow = new BrowserWindow({
     ...DEFAULT_WINDOW_BOUNDS,
     show: false,
     title: "ForgePilot",
-    webPreferences: getDefaultWebPreferences(join(__dirname, "../preload/index.mjs"))
+    webPreferences: getDefaultWebPreferences(join(__dirname, "../preload/index.cjs"))
   });
 
   installNavigationGuard(mainWindow);

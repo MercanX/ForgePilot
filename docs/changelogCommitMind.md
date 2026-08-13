@@ -5,6 +5,9 @@
 - Faz 1 kapsamında Electron güvenlik temeli tamamlandı; güvenli `BrowserWindow`
   tercihleri, CSP üretimi, navigation guard, Zod doğrulamalı IPC handler deseni
   ve tipli preload `ping` köprüsü eklendi.
+- `pnpm dev` açılışı düzeltildi; `ELECTRON_RUN_AS_NODE` ortam değişkenini temizleyen
+  launcher eklendi ve Electron main/preload çıktıları `.cjs` olarak üretilecek
+  şekilde yapılandırıldı.
 - CSP, navigation guard, IPC şeması ve pencere güvenlik tercihleri için regresyon
   testleri eklendi.
 - Varsayılan `en-US` dilinin uygulama içinde çalışması ve diğer dillerin imzalı,
@@ -20,6 +23,12 @@
 - Geliştirme komutları `docs/DEVELOPMENT.md` içinde belgelendi ve Faz 0 görev kaydı tamamlandı.
 
 ## 2026-08-13
+
+- Fixed `pnpm dev` startup by adding a launcher that removes `ELECTRON_RUN_AS_NODE` from the child process environment, ensuring Electron opens as a desktop app.
+- Pinned Electron, Electron-Vite, and Vite to compatible versions to resolve runtime and build incompatibilities.
+- Configured main and preload build outputs to use `.cjs` format for correct Electron runtime loading.
+- Updated the main entry point in `package.json` to reference the new `.cjs` output file.
+- Added `electron` to pnpm's allowed build dependencies to ensure proper native module installation.
 
 - Added DESIGN.md as the authoritative technical design document covering architecture, component diagrams, state machines, and cloud API contracts.
 - Expanded BUILD_PLAN.md with new architectural decisions for extended provider adapter methods, heartbeat-based job contracts, and version negotiation.

@@ -1,6 +1,8 @@
-import { ipcMain, type IpcMainInvokeEvent } from "electron";
+import electron, { type IpcMainInvokeEvent } from "electron";
 
 import type { z } from "zod";
+
+const { ipcMain } = electron;
 
 export class IpcHandlerError extends Error {
   public constructor(

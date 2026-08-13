@@ -1,4 +1,6 @@
-import { session } from "electron";
+import electron from "electron";
+
+const { session } = electron;
 
 type ContentSecurityPolicyOptions = {
   allowDevServer: boolean;

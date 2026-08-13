@@ -1,5 +1,5 @@
 {
-  "lastFingerprint": "f7b820e12015f421e4ade3b376d8e4c431687b54",
+  "lastFingerprint": "49434a8f6569e92817b2067aa6ab0481ac80adec",
   "lastDate": "2026-08-13",
-  "lastContent": "- Added \"Run Provider\" action to the task runner panel for executing real provider CLIs with selected model and instructions\n- Refactored task store to handle echo-fixture and provider execution modes with dedicated methods\n- Preserved the echo fixture as \"Test Echo\" for quick verification without provider calls\n- Added test coverage verifying provider mode passes the selected model to the process manager"
+  "lastContent": "- Added AI Factory Cloud API client foundation with HTTPS-only enforcement and localhost dev exception.\n- Introduced Electron safeStorage-based credential store for secure token persistence.\n- Added job service orchestrating handshake, workflow, job request, task execution, result submission, and findings sync flows.\n- Added local mock cloud server with `dev:mock-cloud` script, supporting handshake, workflow, job, heartbeat, result, fail, and findings endpoints.\n- Added renderer Cloud Run panel and job store for running cloud jobs via selected provider/model from the UI."
 }

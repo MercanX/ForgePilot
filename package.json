@@ -13,7 +13,8 @@
     "lint": "eslint .",
     "format:check": "prettier --check .",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "dev:mock-cloud": "node tools/mock-cloud/mock-cloud.cjs"
   },
   "build": {
     "appId": "com.aifactory.forgepilot",

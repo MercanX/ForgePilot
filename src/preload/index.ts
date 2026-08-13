@@ -1,6 +1,12 @@
 import electron from "electron";
 
 import { IPC_CHANNELS } from "@shared/constants/channels";
+import type {
+  CloudConnectionStatus,
+  CloudStatusRequest,
+  JobRunRequest,
+  JobRunResponse
+} from "@shared/schemas/cloud-api";
 import type { AppPingResponse } from "@shared/schemas/ipc";
 import type {
   TaskExecutionRequest,
@@ -56,6 +62,12 @@ const forgepilotApi = {
       subscribe(IPC_CHANNELS.tasks.output, callback),
     onExit: (callback: (event: TaskExitEvent) => void): Unsubscribe =>
       subscribe(IPC_CHANNELS.tasks.exit, callback)
+  },
+  jobs: {
+    status: (request: CloudStatusRequest): Promise<CloudConnectionStatus> =>
+      ipcRenderer.invoke(IPC_CHANNELS.jobs.status, request),
+    runOnce: (request: JobRunRequest): Promise<JobRunResponse> =>
+      ipcRenderer.invoke(IPC_CHANNELS.jobs.runOnce, request)
   },
   settings: {
     get: (): Promise<AppSettings> => ipcRenderer.invoke(IPC_CHANNELS.settings.get, {}),

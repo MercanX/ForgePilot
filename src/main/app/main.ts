@@ -3,6 +3,7 @@ import electron, { type BrowserWindow as ElectronBrowserWindow } from "electron"
 import { isDev } from "@main/app/runtime";
 import { createMainWindow } from "@main/app/window";
 import { registerAppIpc } from "@main/ipc/app";
+import { registerJobsIpc } from "@main/ipc/jobs";
 import { registerProjectsIpc } from "@main/ipc/projects";
 import { registerProvidersIpc } from "@main/ipc/providers";
 import { registerSettingsIpc } from "@main/ipc/settings";
@@ -41,6 +42,7 @@ if (!gotSingleInstanceLock) {
       registerProvidersIpc();
       registerSettingsIpc();
       registerTasksIpc();
+      registerJobsIpc();
       mainWindow = await createMainWindow({
         isDev: isDev(),
         openDevTools: process.env.FORGEPILOT_OPEN_DEVTOOLS === "1",

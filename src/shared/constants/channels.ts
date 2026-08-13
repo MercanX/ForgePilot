@@ -24,6 +24,8 @@ export const IPC_CHANNELS = {
     save: "settings:save"
   },
   jobs: {
+    status: "jobs:status",
+    runOnce: "jobs:run-once",
     request: "jobs:request",
     get: "jobs:get",
     workflow: "jobs:workflow",

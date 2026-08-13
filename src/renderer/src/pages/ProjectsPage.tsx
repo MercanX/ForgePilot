@@ -1,5 +1,6 @@
 import { type ReactElement, useEffect } from "react";
 
+import { CloudRunPanel } from "@renderer/components/CloudRunPanel";
 import { ProviderPanel } from "@renderer/components/ProviderPanel";
 import { TaskRunnerPanel } from "@renderer/components/TaskRunnerPanel";
 import { useProjectStore } from "@renderer/stores/projectStore";
@@ -103,6 +104,7 @@ export const ProjectsPage = (): ReactElement => {
       )}
 
       <ProviderPanel />
+      <CloudRunPanel />
       <TaskRunnerPanel />
     </div>
   );

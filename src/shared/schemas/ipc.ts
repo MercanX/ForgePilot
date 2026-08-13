@@ -4,11 +4,16 @@ import {
   failJobRequestSchema,
   getTaskResponseSchema,
   heartbeatRequestSchema,
+  jobRunRequestSchema,
+  jobRunResponseSchema,
   requestJobRequestSchema,
   requestJobResponseSchema,
   submitResultRequestSchema,
   submitResultResponseSchema,
   syncFindingsRequestSchema,
+  syncFindingsResponseSchema,
+  cloudConnectionStatusSchema,
+  cloudStatusRequestSchema,
   workflowResponseSchema
 } from "./cloud-api";
 import {
@@ -113,6 +118,14 @@ export const ipcSchemaMap = {
     }
   },
   jobs: {
+    status: {
+      request: cloudStatusRequestSchema,
+      response: cloudConnectionStatusSchema
+    },
+    runOnce: {
+      request: jobRunRequestSchema,
+      response: jobRunResponseSchema
+    },
     request: {
       request: requestJobRequestSchema,
       response: requestJobResponseSchema
@@ -139,7 +152,7 @@ export const ipcSchemaMap = {
     },
     syncFindings: {
       request: syncFindingsRequestSchema,
-      response: z.object({ accepted: z.literal(true) }).strict()
+      response: syncFindingsResponseSchema
     }
   },
   localization: {

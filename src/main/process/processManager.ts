@@ -133,11 +133,6 @@ export const createProcessManager = (): ProcessManager => {
       finish(exitCode, signal);
     });
 
-    if (options.input) {
-      child.stdin.write(options.input);
-    }
-    child.stdin.end();
-
     const managedProcess: ManagedProcess = {
       handle,
       kill: () => child.kill("SIGKILL"),
@@ -153,6 +148,12 @@ export const createProcessManager = (): ProcessManager => {
     };
 
     processes.set(handle.id, managedProcess);
+    setImmediate(() => {
+      if (options.input) {
+        child.stdin.write(options.input);
+      }
+      child.stdin.end();
+    });
     return managedProcess;
   };
 

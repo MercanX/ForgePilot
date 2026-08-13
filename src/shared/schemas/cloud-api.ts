@@ -11,6 +11,14 @@ import { projectSchema } from "./project";
 import { providerIdSchema } from "./provider";
 import { workflowStageSchema } from "./run";
 
+export const cloudConnectionStatusSchema = z
+  .object({
+    connected: z.boolean(),
+    message: z.string(),
+    serverVersion: z.string().min(1).nullable()
+  })
+  .strict();
+
 export const capabilitySchema = z.enum(SUPPORTED_CAPABILITIES);
 
 export const handshakeRequestSchema = z
@@ -87,11 +95,45 @@ export const syncFindingsRequestSchema = z
   })
   .strict();
 
+export const syncFindingsResponseSchema = z.object({ accepted: z.literal(true) }).strict();
+
+export const jobRunRequestSchema = z
+  .object({
+    project: projectSchema,
+    providerId: providerIdSchema,
+    model: z.string().min(1).nullable().default(null),
+    serverUrl: z.string().url().default("http://localhost:4317"),
+    timeoutMs: z.number().int().positive().default(300_000)
+  })
+  .strict();
+
+export const jobRunResponseSchema = z
+  .object({
+    job: jobSchema,
+    result: taskResultSchema,
+    submitAccepted: z.boolean(),
+    syncedFindings: z.array(findingSchema)
+  })
+  .strict();
+
+export const cloudStatusRequestSchema = z
+  .object({
+    serverUrl: z.string().url().default("http://localhost:4317")
+  })
+  .strict();
+
 export type HandshakeRequest = z.infer<typeof handshakeRequestSchema>;
 export type HandshakeResponse = z.infer<typeof handshakeResponseSchema>;
 export type WorkflowResponse = z.infer<typeof workflowResponseSchema>;
 export type RequestJobRequest = z.infer<typeof requestJobRequestSchema>;
+export type RequestJobResponse = z.infer<typeof requestJobResponseSchema>;
+export type GetTaskResponse = z.infer<typeof getTaskResponseSchema>;
 export type SubmitResultResponse = z.infer<typeof submitResultResponseSchema>;
 export type HeartbeatRequest = z.infer<typeof heartbeatRequestSchema>;
 export type FailJobRequest = z.infer<typeof failJobRequestSchema>;
 export type SyncFindingsRequest = z.infer<typeof syncFindingsRequestSchema>;
+export type SyncFindingsResponse = z.infer<typeof syncFindingsResponseSchema>;
+export type JobRunRequest = z.infer<typeof jobRunRequestSchema>;
+export type JobRunResponse = z.infer<typeof jobRunResponseSchema>;
+export type CloudStatusRequest = z.infer<typeof cloudStatusRequestSchema>;
+export type CloudConnectionStatus = z.infer<typeof cloudConnectionStatusSchema>;

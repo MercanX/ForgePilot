@@ -42,6 +42,19 @@ PowerShell:
 $env:FORGEPILOT_OPEN_DEVTOOLS='1'; corepack pnpm dev
 ```
 
+## Mock Cloud
+
+Faz 6 ile birlikte yerel AI Factory mock cloud server eklenmiştir. Dev app'i
+ayrı bir terminalde açıkken mock cloud'u şu komutla başlatın:
+
+```bash
+corepack pnpm dev:mock-cloud
+```
+
+Varsayılan adres `http://localhost:4317` olarak kullanılır. Bu HTTP adresi
+yalnızca localhost geliştirme istisnasıdır; gerçek cloud URL'leri HTTPS olmak
+zorundadır.
+
 ## Doğrulama
 
 ```bash

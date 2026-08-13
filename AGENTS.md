@@ -117,7 +117,8 @@ onay vermeden sonraki fazın planını uygulamaya geçirme.
 - Faz 3 proje yönetimi temeli tamamlanmıştır.
 - Faz 4 sağlayıcı tespiti ve adaptör temeli tamamlanmıştır.
 - Faz 5 süreç çalıştırma ve manuel task fixture temeli tamamlanmıştır.
-- Faz 6'ya başlamadan önce kullanıcıya Faz 6 başlangıç raporu verilmeli ve açık
+- Faz 6 AI Factory Cloud API istemcisi ve mock cloud temeli tamamlanmıştır.
+- Faz 7'ye başlamadan önce kullanıcıya Faz 7 başlangıç raporu verilmeli ve açık
   onay alınmalıdır.
 
 ## Dokümantasyon ve Görev Takibi

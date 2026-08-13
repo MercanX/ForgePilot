@@ -330,6 +330,7 @@ h1 {
   color: #fecaca;
 }
 
+.cloud-run-panel,
 .task-runner-panel {
   border-top: 1px solid #26282c;
   margin-top: 28px;

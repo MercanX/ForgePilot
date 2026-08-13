@@ -2,6 +2,7 @@ import { type ReactElement, useEffect, useState } from "react";
 
 import { ProjectsPage } from "@renderer/pages/ProjectsPage";
 import { SettingsPage } from "@renderer/pages/SettingsPage";
+import { useJobStore } from "@renderer/stores/jobStore";
 import { useProviderStore } from "@renderer/stores/providerStore";
 import { useSettingsStore } from "@renderer/stores/settingsStore";
 
@@ -10,6 +11,7 @@ type AppPage = "projects" | "settings";
 export const App = (): ReactElement => {
   const [activePage, setActivePage] = useState<AppPage>("projects");
   const [bridgeStatus, setBridgeStatus] = useState("Checking preload bridge");
+  const cloudMessage = useJobStore((state) => state.cloudMessage);
   const providers = useProviderStore((state) => state.providers);
   const loadSettings = useSettingsStore((state) => state.loadSettings);
   const settings = useSettingsStore((state) => state.settings);
@@ -64,7 +66,7 @@ export const App = (): ReactElement => {
       </aside>
       <section className="workspace" aria-labelledby="workspace-title">
         <header className="status-bar">
-          <span>Cloud: Not connected</span>
+          <span>Cloud: {cloudMessage}</span>
           <span>Provider: {selectedProvider?.label ?? "Not selected"}</span>
           <span>{bridgeStatus}</span>
         </header>

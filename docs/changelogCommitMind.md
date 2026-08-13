@@ -2,6 +2,14 @@
 
 ## 2026-08-14
 
+- Faz 6 kapsaminda AI Factory Cloud istemci temeli eklendi; HTTPS-only
+  `httpClient`, `safeStorage` tabanli credential store, `jobService`,
+  `jobs:*` IPC/preload yuzeyi ve mock cloud run paneli baglandi.
+- `corepack pnpm dev:mock-cloud` komutu ile calisan yerel mock cloud server
+  eklendi; handshake, workflow, job request/get, heartbeat, result, fail ve
+  findings sync endpoint'leri ayni Zod sozlesmelerine gore calisiyor.
+- Job service mock cloud'dan gelen task'i secili gercek provider/model uzerinden
+  calistirip stdout/stderr sonucunu cloud'a geri gonderebiliyor.
 - Manuel task paneline `Run Provider` eklendi; secili proje, provider ve model
   ile gercek Claude Code/Codex CLI calistirma akisi UI'dan baslatilabiliyor.
   Echo fixture `Test Echo` olarak korundu.
@@ -77,6 +85,12 @@
 - Geliştirme komutları `docs/DEVELOPMENT.md` içinde belgelendi ve Faz 0 görev kaydı tamamlandı.
 
 ## 2026-08-13
+
+- Added AI Factory Cloud API client foundation with HTTPS-only enforcement and localhost dev exception.
+- Introduced Electron safeStorage-based credential store for secure token persistence.
+- Added job service orchestrating handshake, workflow, job request, task execution, result submission, and findings sync flows.
+- Added local mock cloud server with `dev:mock-cloud` script, supporting handshake, workflow, job, heartbeat, result, fail, and findings endpoints.
+- Added renderer Cloud Run panel and job store for running cloud jobs via selected provider/model from the UI.
 
 - Added "Run Provider" action to the task runner panel for executing real provider CLIs with selected model and instructions
 - Refactored task store to handle echo-fixture and provider execution modes with dedicated methods

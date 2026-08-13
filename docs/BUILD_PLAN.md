@@ -5,6 +5,10 @@ README'de tarif edilen mimariye uygun şekilde adım adım nasıl inşa edilece�
 tanımlar. Aşamalar bağımlılık sırasına göre dizilmiştir: bir sonraki aşama,
 kendinden öncekinin ürettiği sözleşmelere/temele dayanır.
 
+> Teknik detaylar (bileşen diyagramı, durum makineleri, Cloud API sözleşmesi,
+> UI/ekran tasarımı, MVP kapsamı) için: [DESIGN.md](DESIGN.md). Çelişki
+> durumunda teknik detayda DESIGN.md, sıralamada bu doküman esas alınır.
+
 ## Önce Karara Bağlanması Gereken Mimari Kararlar
 
 Aşağıdaki kararlar Faz 0–2'de netleştirilir ve sonraki tüm fazlarda referans alınır.
@@ -44,6 +48,20 @@ Aşağıdaki kararlar Faz 0–2'de netleştirilir ve sonraki tüm fazlarda refer
 9. **AI Factory Cloud sözleşmesi**: Bu depo kapsamı dışında olan bulut sunucusu,
    versiyonlanmış bir Zod sözleşmesiyle (`shared/schemas/cloud-api.ts`) ve
    geliştirme sırasında yerel bir mock sunucuyla ele alınır.
+10. **Genişletilmiş ProviderAdapter**: README'deki 7 metoda ek olarak
+    `authenticate()` (yalnızca durum sorgusu — credential'a dokunmaz),
+    `sendInput()` (interaktif CLI stdin'i) ve `killProcess()` (son çare
+    sonlandırma) eklenir; ayrıntılı imza DESIGN.md §5'te.
+11. **Heartbeat'li job sözleşmesi**: Job akışı yalnızca request/result değil —
+    `POST /jobs/{id}/heartbeat` (30sn) ve `POST /jobs/{id}/fail` de sözleşmenin
+    parçasıdır; sunucu, kesilen istemcileri heartbeat kesilmesinden tespit eder.
+12. **Version negotiation**: Her oturum `POST /session/handshake` ile başlar
+    (`desktopVersion` / `protocolVersion` / `supportedCapabilities`); sunucu
+    `update-required` dönerse yeni run başlatma kilitlenir (Faz 10).
+13. **Yerel DB = cache, sunucu = source of truth**: Findings/workflow/stage
+    verilerinde çakışma durumunda sunucu kazanır. Yerel otorite yalnızca proje
+    listesi, kullanıcı ayarları, run geçmişi ve loglardır. Job talimat gövdeleri
+    hiçbir zaman diske yazılmaz (IP koruması — DESIGN.md §8).
 
 ---
 
@@ -108,6 +126,11 @@ bölümü bunun pazarlık konusu olmadığını açıkça belirtiyor.
    round-trip'i ile preload köprüsünü kanıtlar.
 9. Güvenlik regresyon testi: `nodeIntegration: false`, `contextIsolation: true`,
    `sandbox: true` doğrulaması (sonraki fazlarda kazara bozulmaya karşı).
+10. `src/main/environment/` modül iskeleti: internet/sunucu/Git/CLI/PATH
+    kontrollerinin (Environment Check, DESIGN.md §16.2) yaşayacağı modül —
+    gerçek kontroller Faz 4 ve 6'da doldurulur, iskelet ve test düzeni şimdi kurulur.
+11. `src/main/process/orphanReaper.ts` iskeleti: açılışta önceki oturumdan
+    kalan sahipsiz CLI process'lerini tespit/temizleme (implementasyon Faz 5'te).
 
 **Bitti kriteri**: `pnpm dev` pencereyi açar; renderer'ın doğrudan Node/`require`/
 `process` erişimi yok (test ile doğrulanır); doğrulanmış desenle IPC round-trip çalışır.
@@ -144,6 +167,13 @@ uzlaştırma turu gerekir.
 6. `src/shared/constants/`: kanal adı sabitleri, sağlayıcı ID'leri, varsayılan
    zaman aşımı/limitler.
 7. Sözleşme birim testleri: her şema için geçerli/geçersiz fixture round-trip testleri.
+8. `src/shared/schemas/run.ts`: `Run` şeması + Run/Stage/Job durum makinesi
+   tipleri (`src/shared/types/state-machines.ts`) — durum geçiş diyagramları
+   DESIGN.md §7'de; kod bu diyagramların birebir karşılığıdır.
+9. Finding lifecycle enum'u (`finding.ts` içinde): `open | acknowledged |
+   in-progress | resolved | ignored | reopened`.
+10. `src/shared/constants/protocolVersion.ts`: protokol sürümü + desteklenen
+    capability listesi (version negotiation için, Mimari Karar #12).
 
 **Bitti kriteri**: `shared/` hiçbir şekilde `main/`/`renderer/`'a bağımlı değil
 (lint import-boundary kuralıyla zorlanır); her şemanın en az bir testi var;
@@ -217,6 +247,13 @@ raporlayabilir ve tek biçimli bir adaptör yüzeyi sunabilir — henüz gerçek
 7. Adaptör kayıt genişletilebilirlik deseni (`registry.ts` içinde basit bir
    constructor dizisi) şimdi belgelenir — üçüncü bir sağlayıcı eklemek tek dosyalık
    bir değişiklik olur.
+8. `authenticate()` implementasyonu (her adaptörde): CLI oturum durumunun
+   yan etkisiz sorgusu — credential okunmaz/saklanmaz (Mimari Karar #10).
+9. `src/main/environment/gitDetect.ts`: Git kurulum/sürüm tespiti + seçili
+   projenin branch/remote bilgisi (Projects kartında gösterilir).
+10. Renderer: **Environment Check / Setup sayfası** (DESIGN.md §16.2) —
+    kontrol listesi (✓/✕), "Installation Instructions" paneli, "Check Again"
+    butonu, sağlayıcı seçimi. Sunucu kontrol satırı Faz 6'ya kadar mock'a bağlanır.
 
 **Bitti kriteri**: Gerçek Claude Code/Codex CLI'ı kurulu bir makinede ForgePilot
 kurulu/versiyon/durumu doğru raporlar; hiçbiri kurulu değilken UI çökmeden
@@ -263,6 +300,15 @@ eklenebilmesini sağlar.
 7. Manuel test düzeneği: gerçek bir CLI kurulu olmasını gerektirmeyen "echo görevi"
    fixture'ı — süreç-yönetimi mantığı Claude Code/Codex kullanılabilirliğinden
    bağımsız test edilebilir.
+8. `sendInput()` ve `killProcess()` implementasyonu: interaktif CLI'a stdin
+   iletimi; kademeli sonlandırma (önce SIGTERM/nazik kapatma, zaman aşımında kill).
+9. Çıktı hacmi yönetimi: UI tarafında ring-buffer (son ~2000 satır), IPC'ye
+   toplu (batched) gönderim; tam akış rotasyonlu log dosyasına (DESIGN.md Risk #4).
+10. `orphanReaper` implementasyonu: PID kayıt dosyası + açılışta sahipsiz
+    process tespiti/temizliği; `before-quit` temizliğiyle birlikte çalışır.
+11. Stop akışı: UI onay diyaloğu → nazik kapatma → zaman aşımında zorla;
+    her iki yol da normalize `ProviderExitInfo` üretir (Pause/Resume MVP-sonrası,
+    DESIGN.md §7 "job sınırında duraklat" kararına göre).
 
 **Bitti kriteri**: Gerçek kurulu bir sağlayıcı CLI'ına karşı görev başlatılabilir,
 canlı çıktı renderer'da görünür, durdur alt süreci temiz iptal eder, uygulama
@@ -317,6 +363,14 @@ döndür" döngüsünün çalışan bir yerel yarısına takılmasını sağlar.
 8. Sözleşme testleri: aynı Zod şemaları hem mock sunucunun yanıtlarına hem de
    (ileride) gerçek sunucuya karşı çalıştırılır — sözleşme sapması sahada değil
    CI'da yakalanır.
+9. Genişletilmiş endpoint seti (DESIGN.md §6): `POST /session/handshake`
+   (version negotiation), `GET /workflows/current` (server-driven stage
+   listesi), `POST /jobs/{id}/heartbeat` (30sn döngü, powerMonitor
+   uyku/uyanma tetiklemesiyle), `POST /jobs/{id}/fail` (sınıflandırılmış hata
+   raporu). Mock sunucu bunların tamamını implemente eder.
+10. Offline / degraded mod: sunucuya ulaşılamadığında durum çubuğu + banner
+    ("mevcut veriler görüntülenebilir, yeni run başlatılamaz"), yeniden deneme
+    butonu; kritik proprietary içerik offline cache edilmez.
 
 **Bitti kriteri**: Mock bulut sunucusu çalışırken README akışının tamamı
 (proje seç → sağlayıcı seç → görev iste → çalıştır → sonuç gönder → bulguları
@@ -350,10 +404,28 @@ doğrulama çıktısının ekleneceği gönderim akışı).
    yalnızca *mekanikleri* kontrol eder (çalıştı mı, beklenen artefakt şeklini
    üretti mi); kalite/doğruluk puanlamasına benzer hiçbir şey implemente etmez
    — bu bulutun sahip olduğu bir alan.
+6. **Dashboard** (DESIGN.md §16.4): sunucudan gelen stage listesinin dinamik
+   render'ı (✓/●/○ durumları), progress çubuğu, aktif agent/operasyon metni,
+   findings özet sayaçları, Live Activity akışı — istemcide sabit stage adı
+   veya stage-bazlı dallanma yazılmaz (Mimari Karar #6).
+7. Findings ekranı genişletmesi: severity/stage/status/agent/dosya filtreleri,
+   detay paneli (dosya:satır, açıklama, öneri), lifecycle durum değiştirme
+   (`open → acknowledged → in-progress → resolved/ignored`, `reopen`) +
+   `POST /findings/sync` ile sunucu senkronu ve "not synced" rozeti.
+   (MVP'de salt görüntüleme; lifecycle+senkron MVP-sonrası — DESIGN.md §12.)
+8. **Run yöneticisi** (`src/services/runs/runManager.ts`): Run durum makinesi
+   (DESIGN.md §7), her durum geçişinde SQLite `runs.checkpoint`'e senkron yazım,
+   run geçmişi ekranı (tablo + run detayı: stage zaman çizelgesi, job listesi).
+9. **Crash recovery**: açılışta `running/preparing` durumunda kalmış run
+   tespiti → `interrupted` işaretle → Resume/Discard diyaloğu (DESIGN.md §10);
+   Resume'da otorite sunucudur (`GET /jobs/{id}` ile gerçek durum sorgulanır).
+   (Checkpoint altyapısı bu fazda; diyalog UI'ı MVP-sonrası tamamlanabilir.)
 
 **Bitti kriteri**: Bir görev çalıştırmasından sonra (Faz 5/6 akışı), UI en az
 bir genel yerel doğrulama bulgusuyla (örn. exit code) yapılandırılmış bir
-sonuçlar görünümü gösterir ve bu bulgu Faz 6'nın `syncFindings` yüküne dahil edilir.
+sonuçlar görünümü gösterir ve bu bulgu Faz 6'nın `syncFindings` yüküne dahil
+edilir; Dashboard, mock workflow'un stage listesini sunucu verisinden render
+eder; tamamlanan her çalıştırma Runs ekranında bir Run kaydı olarak görünür.
 
 ---
 
@@ -407,8 +479,10 @@ arayüzü kullandığından, SQLite temel bir engel yerine bir backend değişim
 olarak eklenebilir — bu, çalışan bir uygulama olmadan SQLite/native modül
 kurulum maliyetini (Faz 11 paketleme karmaşıklığı) baştan ödemeyi önler.
 
-1. `src/services/db/schema.ts` + migrasyon çalıştırıcı: `projects`, `jobs`,
-   `task_results`, `findings`, `settings` tabloları.
+1. `src/services/db/schema.ts` + migrasyon çalıştırıcı: `projects`, `runs`
+   (checkpoint sütunuyla), `jobs`, `task_results`, `findings_cache`,
+   `settings`, `logs_index` tabloları (şema detayı DESIGN.md §8; job talimat
+   gövdeleri tabloya yazılmaz — yalnızca meta veri).
 2. `src/services/db/connection.ts`: SQLite dosyasını `app.getPath('userData')`'dan
    açar, yalnızca main-process erişimi (renderer'dan DB erişimi yok — tüm
    okuma/yazmalar IPC-doğrulamalı servis çağrılarından geçer).
@@ -452,6 +526,11 @@ geçerli).
 5. Güncelleme feed'inin barındırılacağı yer (örn. GitHub Releases) — açık kaynak
    istemci olduğundan makul bir varsayım olarak, gerçek altyapı bekleyen bir
    varsayım olarak belgelenir.
+6. Version-negotiation kilidi: handshake `update-required` döndüğünde tam sayfa
+   kilit ekranı — yeni run başlatılamaz, mevcut veriler görüntülenebilir,
+   [Update Now] güncelleme akışını tetikler (DESIGN.md §11). "Sunucu
+   değişikliği ≠ EXE update" ayrımı burada test edilir: mock sunucuda workflow
+   değişikliği güncelleme istemez, protokol sürüm atlaması ister.
 
 **Bitti kriteri**: Uygulama (başlangıçta mock/yerel) bir güncelleme feed'ini
 kontrol eder, UI'da güncelleme mevcudiyetini gösterir; akış gerçek release
@@ -605,6 +684,14 @@ anlatır; güvenlik-hassas modüllerde (`main/security`, `main/process`,
   özellikle çalışan bir uygulama gerektirir, bu yüzden sonlara doğru biçimlendirilir.
 - **Faz 13 en son**: güvenlik/şeffaflık denetimi yalnızca tam bir yüzey alanına
   karşı anlamlıdır, ve dokümanlar planlananı değil inşa edileni anlatmalı.
+- **Run yöneticisi + crash recovery Faz 7'de**: Run kaydı ancak gerçek bir
+  uçtan uca akış (Faz 5+6) var olduktan sonra anlamlıdır; checkpoint altyapısı
+  SQLite'tan (Faz 9) önce JSON ile başlar, Faz 9'da tabloya taşınır.
+- **Environment Check iki fazda dolar**: iskelet Faz 1'de (modül sınırı erken
+  çizilir), CLI/Git kontrolleri Faz 4'te, sunucu/lisans kontrolleri Faz 6'da —
+  her kontrol, bağlı olduğu altyapıyla birlikte gelir.
+- **Heartbeat Faz 6'da, Faz 5'te değil**: heartbeat sunucu sözleşmesinin
+  parçasıdır; süreç çalıştırma yerel fixture'larla heartbeat'siz test edilir.
 
 ---
 

@@ -2,6 +2,12 @@
 
 ## 2026-08-13
 
+- Added DESIGN.md as the authoritative technical design document covering architecture, component diagrams, state machines, and cloud API contracts.
+- Expanded BUILD_PLAN.md with new architectural decisions for extended provider adapter methods, heartbeat-based job contracts, and version negotiation.
+- Added implementation details for environment checks, orphan process reaping, and run state machine management across multiple phases.
+- Introduced crash recovery and offline/degraded mode handling specifications with clear server authority rules.
+- Defined SQLite schema evolution with checkpoint columns and findings cache, ensuring job instruction bodies are never persisted to disk.
+
 - Added a comprehensive, phased build plan for ForgePilot, outlining the full development roadmap from repository scaffolding to production-ready application.
 - Established key architectural decisions, including package management, build tooling, state management, and security protocols, to guide future development.
 - Defined nine sequential development phases with clear dependencies, implementation steps, and completion criteria for each stage.

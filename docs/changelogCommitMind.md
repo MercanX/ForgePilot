@@ -1,5 +1,19 @@
 # Changelog CommitMind
 
+## 2026-08-14
+
+- Varsayılan `en-US` dilinin uygulama içinde çalışması ve diğer dillerin imzalı,
+  JSON tabanlı `.fplang` paketleriyle yüklenmesi yönünde çoklu dil mimari kararı
+  belgelendi.
+- ForgePilot deposu için kök `AGENTS.md` eklendi; faz başlamadan önce plan raporu
+  ve kullanıcı onayı, faz bitiminde sonuç raporu ve sonraki faza geçiş için tekrar
+  onay zorunluluğu belgelendi.
+- ForgePilot için pnpm workspace tabanlı Electron, Vite, React ve TypeScript uygulama iskeleti eklendi.
+- Main, preload ve renderer girişleri oluşturularak boş ama build edilebilir masaüstü istemci temeli kuruldu.
+- Strict TypeScript, ESLint, Prettier ve Vitest doğrulama hattı yapılandırıldı.
+- Windows, macOS ve Linux üzerinde typecheck, lint, format ve test çalıştıran GitHub Actions CI eklendi.
+- Geliştirme komutları `docs/DEVELOPMENT.md` içinde belgelendi ve Faz 0 görev kaydı tamamlandı.
+
 ## 2026-08-13
 
 - Added DESIGN.md as the authoritative technical design document covering architecture, component diagrams, state machines, and cloud API contracts.

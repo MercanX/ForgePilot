@@ -150,6 +150,7 @@ Trade-off : Her API çağrısı için IPC köprüsü yazmak ek iş; karşılığ
 | Process | `src/main/process/` | spawn sarmalayıcı, env allowlist, orphan reaper | filesystem |
 | Logging | `src/main/logging/` | pino + redaksiyon dönüşümü | — |
 | Updates | `src/main/updates/` | electron-updater yönetimi | api (version nego.) |
+| Localization | `src/services/localization/` | Gömülü `en-US`, harici `.fplang` paketleri, fallback ve aktif locale yönetimi | shared/schemas, db |
 | API client | `src/services/api/` | httpClient (HTTPS-only) + cloudApi (tipli endpoint'ler) | shared/schemas, security |
 | Job service | `src/services/jobs/` | request→execute→result akışı + heartbeat | api, process, providers |
 | Run manager | `src/services/runs/` | Run durum makinesi, checkpoint, crash recovery, yerel doğrulayıcılar | db, jobs |
@@ -841,6 +842,70 @@ LOGS                      [DEBUG ✓][INFO ✓][WARN ✓][ERROR ✓][FATAL ✓] 
 
 ---
 
+## 17. Localization / Language Pack Modeli
+
+ForgePilot multi-language çalışır; ancak varsayılan dil `en-US` uygulamanın
+içinde gelir. Bu sayede kullanıcı hiçbir dil paketi yüklemese bile uygulama
+kurulur, açılır, hata mesajı gösterebilir ve Settings ekranına ulaşabilir.
+
+`en-US` dışındaki diller EXE içine gömülmez. Bu diller `.fplang` uzantılı, ZIP
+tabanlı ve JSON içerikli language pack olarak yüklenir.
+
+```text
+tr-TR.fplang
+├─ manifest.json
+├─ common.json
+├─ renderer.json
+├─ errors.json
+├─ settings.json
+└─ providers.json
+```
+
+`manifest.json` alanları Zod ile doğrulanır:
+
+```json
+{
+  "id": "tr-TR",
+  "name": "Türkçe",
+  "version": "1.0.0",
+  "forgepilotProtocol": "1",
+  "direction": "ltr",
+  "fallback": "en-US",
+  "checksum": "...",
+  "signature": "..."
+}
+```
+
+Kurallar:
+
+- Paketler yalnızca JSON ve manifest içerir; JavaScript, HTML, executable veya
+  shell komutu içeremez.
+- Main process paketi açar, manifest'i ve çeviri gövdelerini doğrular, checksum
+  ve imza kontrolü yapar.
+- Renderer çeviri dosyalarını doğrudan okumaz; preload üzerinden tipli IPC
+  çağrılarıyla aktif çevirileri alır.
+- Production build'de imzasız paket aktif edilemez. Dev build'de imzasız paket
+  yalnızca açık geliştirme bayrağıyla test edilebilir.
+- Eksik key varsa önce paketin `fallback` locale'ine, en sonda gömülü `en-US`
+  kaynaklarına düşülür.
+- Aktif locale ve yüklü paket manifest metadata'sı settings içinde saklanır;
+  çeviri gövdeleri SQLite'a kopyalanmaz.
+- RTL diller için `direction: "rtl"` desteklenir ve renderer root yönü bu
+  metadata'dan ayarlanır.
+- AI Factory Cloud ileride opsiyonel language pack katalog metadata'sı sunabilir;
+  katalog yokken yerel yükleme ve gömülü `en-US` çalışmaya devam eder.
+
+```text
+Karar     : `en-US` gömülü varsayılan; diğer diller harici `.fplang` paketi.
+Neden     : Uygulama paketsiz açılabilir kalır, EXE çeviri şişmesini taşımaz ve
+            yeni diller uygulama rebuild gerektirmeden dağıtılabilir.
+Alternatif: Tüm dilleri EXE içine gömmek.
+Trade-off : Paket doğrulama ve fallback altyapısı gerekir; karşılığında daha
+            güvenli, güncellenebilir ve genişletilebilir localization modeli oluşur.
+```
+
+---
+
 ## Ek: Karar Kaydı Özeti
 
 | Karar | Bölüm |
@@ -854,3 +919,4 @@ LOGS                      [DEBUG ✓][INFO ✓][WARN ✓][ERROR ✓][FATAL ✓] 
 | Crash kurtarmada otorite sunucu | §10 |
 | Update feed: GitHub Releases | §11 |
 | MVP tek sağlayıcı, çok-sağlayıcılı arayüzle | §12 |
+| `en-US` gömülü varsayılan; diğer diller harici `.fplang` paketi | §17 |

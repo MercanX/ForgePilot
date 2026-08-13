@@ -62,6 +62,14 @@ Aşağıdaki kararlar Faz 0–2'de netleştirilir ve sonraki tüm fazlarda refer
     verilerinde çakışma durumunda sunucu kazanır. Yerel otorite yalnızca proje
     listesi, kullanıcı ayarları, run geçmişi ve loglardır. Job talimat gövdeleri
     hiçbir zaman diske yazılmaz (IP koruması — DESIGN.md §8).
+14. **Çoklu dil / language pack modeli**: Varsayılan dil `en-US`, uygulamanın
+    içinde bulunan güvenilir çekirdek kaynak olarak gelir ve hiçbir dil paketi
+    yüklenmeden çalışır. `en-US` dışındaki diller EXE içine gömülmez; kullanıcı
+    tarafından veya ileride AI Factory Cloud katalogundan yüklenen JSON tabanlı
+    `.fplang` paketleriyle etkinleşir. Paketler yalnızca `manifest.json` ve
+    çeviri JSON'ları içerir; JavaScript, HTML, executable veya komut içeremez.
+    Production build'de paket imzası zorunludur, dev build'de imzasız paketler
+    yalnızca açık geliştirme bayrağıyla kabul edilir.
 
 ---
 
@@ -174,10 +182,16 @@ uzlaştırma turu gerekir.
    in-progress | resolved | ignored | reopened`.
 10. `src/shared/constants/protocolVersion.ts`: protokol sürümü + desteklenen
     capability listesi (version negotiation için, Mimari Karar #12).
+11. `src/shared/schemas/language-pack.ts`: `LanguagePackManifest`, locale id,
+    direction (`ltr | rtl`), fallback locale, checksum ve imza alanları için Zod
+    şemaları.
+12. `src/shared/constants/locales.ts`: gömülü varsayılan locale `en-US`,
+    desteklenen locale id doğrulaması ve çeviri namespace sabitleri.
 
 **Bitti kriteri**: `shared/` hiçbir şekilde `main/`/`renderer/`'a bağımlı değil
 (lint import-boundary kuralıyla zorlanır); her şemanın en az bir testi var;
-`ProviderAdapter` arayüzü Faz 4'ün üzerine inşa edebileceği kadar donmuş.
+`ProviderAdapter` arayüzü Faz 4'ün üzerine inşa edebileceği kadar donmuş; language
+pack manifest şeması geçerli/geçersiz paket fixture'larıyla test edilmiş.
 
 ---
 
@@ -209,6 +223,9 @@ süreç başlatılmadan önce var olmasını gerektirir.
    akışı, "Aç" ile proje çalışma alanına geçiş (şimdilik yer tutucu).
 6. "Son açılan proje" kalıcılığı (yeniden başlatma kolaylığı için; şimdilik
    userData JSON, Faz 8'de SQLite'a taşınır).
+7. `src/services/localization/` içinde gömülü `en-US` çevirisini ve yüklü language
+   pack'leri okuyan servis arayüzü. Başlangıçta `en-US` paket olmadan çalışır;
+   diğer diller kullanıcı tarafından yüklenmeden listede aktif edilemez.
 
 **Bitti kriteri**: Kullanıcı native dialog ile klasör ekleyebilir, listede
 görebilir, uygulamayı yeniden açtığında hâlâ görebilir; proje kökü dışına
@@ -360,7 +377,11 @@ döndür" döngüsünün çalışan bir yerel yarısına takılmasını sağlar.
    API key veya cihaz-auth akışı varsayımı, açık soru olarak belgelenir) —
    token girmek/saklamak için `renderer/pages/Login` veya ayarlar paneli
    (`credentialStore` üzerinden).
-8. Sözleşme testleri: aynı Zod şemaları hem mock sunucunun yanıtlarına hem de
+8. Language pack katalog sözleşmesi opsiyonel capability olarak eklenir: istemci
+   katalog yokken yalnızca gömülü `en-US` ve yerel paket yüklemeyle çalışır;
+   katalog varsa available language pack metadata'sını indirir. Çeviri JSON'ları
+   yine paket doğrulamasından geçmeden aktif olmaz.
+9. Sözleşme testleri: aynı Zod şemaları hem mock sunucunun yanıtlarına hem de
    (ileride) gerçek sunucuya karşı çalıştırılır — sözleşme sapması sahada değil
    CI'da yakalanır.
 9. Genişletilmiş endpoint seti (DESIGN.md §6): `POST /session/handshake`
@@ -491,10 +512,13 @@ kurulum maliyetini (Faz 11 paketleme karmaşıklığı) baştan ödemeyi önler.
    store'lar) değişmemesi için repository arayüzleri aynı kalır.
 4. Sağlayıcı tespit sonuçları (Faz 4) için önbellekleme katmanı — `providers:detect`
    her açılışta yeniden shell'lemesin diye TTL'li önbellek, açık "yenile" atlaması.
-5. Veri saklama/temizlik politikası (örn. N günden eski veya boyut sınırını
+5. Aktif locale, yüklü language pack manifest metadata'sı ve fallback bilgisi
+   `settings` içinde kalıcılaştırılır. Çeviri gövdeleri SQLite'a kopyalanmaz;
+   doğrulanmış paket dosyaları userData altındaki language-pack dizininde tutulur.
+6. Veri saklama/temizlik politikası (örn. N günden eski veya boyut sınırını
    aşan görev/çıktı geçmişini budama) — "seçili proje dışındaki dosya/bilgi
    toplamaktan kaçın" gizlilik ilkesiyle de örtüşür.
-6. Native modül derleme gereksinimini (`better-sqlite3` Electron ABI-eşleşmeli
+7. Native modül derleme gereksinimini (`better-sqlite3` Electron ABI-eşleşmeli
    rebuild ister) `docs/DEVELOPMENT.md`'de şimdiden belgele.
 
 **Bitti kriteri**: Uygulama verisi yeniden başlatmalarda SQLite üzerinden
@@ -637,7 +661,10 @@ anlatan dokümanlar gerçek implementasyonu anlatmalı, hedeflenen README'yi de�
    iş akışı mantığı eklemeye çalışmaması için.
 8. `SECURITY.md`: güvenlik açığı bildirim süreci — bu güvenlik-hassas, yerel
    çalıştırmalı bir araç olduğundan.
-9. README'nin "Şeffaflık" kontrol listesine karşı son tur, somut bitti kriteri
+9. `CONTRIBUTING.md` veya ayrı localization rehberi içinde `.fplang` paketi nasıl
+   hazırlanır, hangi JSON namespace'leri gerekir, imza/checksum nasıl üretilir
+   ve eksik key fallback davranışı nasıl test edilir belgelenir.
+10. README'nin "Şeffaflık" kontrol listesine karşı son tur, somut bitti kriteri
    olarak (erişilen dosyalar, çalıştırılan komutlar, başlatılan süreçler,
    yapılan ağ istekleri, buluta gönderilen veri, kimlik bilgisi yönetimi) — her
    biri Faz 1–10'da inşa edilen belirli bir modüle işaret ederek yanıtlanabilir olmalı.

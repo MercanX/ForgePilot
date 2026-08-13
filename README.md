@@ -269,6 +269,20 @@ Sensitive values such as:
 
 should never be intentionally written to application logs.
 
+## Language Packs
+
+ForgePilot is designed to support multiple interface languages.
+
+The default language is `en-US` and is bundled with the application so ForgePilot
+can run without installing any language pack.
+
+Additional languages are loaded through external JSON-based language packs rather
+than being embedded directly into the executable.
+
+Language packs are data-only packages. They must not contain executable code,
+scripts, HTML, or commands. Production builds should only activate verified and
+signed language packs.
+
 ## No Hidden AI Factory Repository
 
 ForgePilot must not silently download a complete copy of AI Factory's private rule, agent, skill, or workflow repository.

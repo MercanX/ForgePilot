@@ -1,0 +1,5 @@
+{
+  "lastFingerprint": "1e26a3066f1242e4e9082a502390f23bdc4ee311",
+  "lastDate": "2026-08-13",
+  "lastContent": "- Added comprehensive README documenting ForgePilot's architecture, provider model, and security principles.\n- Defined the open-source vs. server-side component boundary for the desktop client.\n- Outlined the development stack, repository structure, and contribution guidelines.\n- Established transparency and privacy requirements for local execution and data handling.\n- Documented the server-driven workflow design and provider-independent adapter architecture."
+}

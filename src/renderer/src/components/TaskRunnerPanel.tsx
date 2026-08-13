@@ -2,6 +2,7 @@ import { type ReactElement, useMemo, useState } from "react";
 
 import { useProjectStore } from "@renderer/stores/projectStore";
 import { useProviderStore } from "@renderer/stores/providerStore";
+import { useSettingsStore } from "@renderer/stores/settingsStore";
 import { useTaskStore } from "@renderer/stores/taskStore";
 
 export const TaskRunnerPanel = (): ReactElement => {
@@ -11,6 +12,7 @@ export const TaskRunnerPanel = (): ReactElement => {
   const activeProject = useProjectStore((state) => state.activeProject);
   const projects = useProjectStore((state) => state.projects);
   const providers = useProviderStore((state) => state.providers);
+  const settings = useSettingsStore((state) => state.settings);
   const errorMessage = useTaskStore((state) => state.errorMessage);
   const isRunning = useTaskStore((state) => state.isRunning);
   const lines = useTaskStore((state) => state.lines);
@@ -18,9 +20,15 @@ export const TaskRunnerPanel = (): ReactElement => {
   const stopTask = useTaskStore((state) => state.stopTask);
   const selectedProject = activeProject ?? projects[0] ?? null;
   const selectedProvider = useMemo(
-    () => providers.find((provider) => provider.installed) ?? null,
-    [providers]
+    () =>
+      providers.find(
+        (provider) => provider.id === settings.activeProviderId && provider.installed
+      ) ??
+      providers.find((provider) => provider.installed) ??
+      null,
+    [providers, settings.activeProviderId]
   );
+  const selectedModel = selectedProvider ? settings.providerModels[selectedProvider.id] : null;
   const canStart = Boolean(
     selectedProject && selectedProvider && instructions.trim() && !isRunning
   );
@@ -38,7 +46,7 @@ export const TaskRunnerPanel = (): ReactElement => {
             disabled={!canStart}
             onClick={() => {
               if (selectedProject && selectedProvider) {
-                void startEchoTask(selectedProject, selectedProvider, instructions);
+                void startEchoTask(selectedProject, selectedProvider, instructions, selectedModel);
               }
             }}
           >
@@ -53,6 +61,7 @@ export const TaskRunnerPanel = (): ReactElement => {
       <div className="task-runner-context">
         <span>Project: {selectedProject?.name ?? "No project selected"}</span>
         <span>Provider: {selectedProvider?.label ?? "No installed provider"}</span>
+        <span>Model: {selectedModel ?? "No model selected"}</span>
       </div>
 
       <textarea

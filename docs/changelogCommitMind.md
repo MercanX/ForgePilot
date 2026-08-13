@@ -2,6 +2,9 @@
 
 ## 2026-08-14
 
+- Settings ekranı eklendi; aktif provider ve provider'a göre model tercihi
+  `userData/settings.json` içinde kalıcı saklanıyor, task paneli artık ilk kurulu
+  provider yerine seçili provider/model ayarını kullanıyor.
 - Faz 5 kapsamında güvenli `spawn` tabanlı `processManager`, task execution
   service, `tasks:start`/`tasks:stop` IPC handler'ları ve preload event abonelikleri
   eklendi; stdout/stderr ve exit olayları renderer'a tipli push kanalından akıyor.
@@ -70,6 +73,12 @@
 - Geliştirme komutları `docs/DEVELOPMENT.md` içinde belgelendi ve Faz 0 görev kaydı tamamlandı.
 
 ## 2026-08-13
+
+- Added Settings page with provider and model selection for Claude Code and Codex
+- Persisted user preferences to `userData/settings.json` via new IPC handlers
+- Updated task runner to use selected provider and model from settings
+- Added model parameter support to task execution commands for both providers
+- Added comprehensive tests for settings IPC handlers and repository persistence
 
 - Added secure `spawn`-based process manager that restricts execution to the project root, disables shell usage, and passes only allowlisted environment variables.
 - Implemented task execution service with `tasks:start`/`tasks:stop` IPC handlers, streaming stdout/stderr and exit events to the renderer via typed push channels.

@@ -54,6 +54,7 @@ describe("taskExecutionService", () => {
         format: "plain-text",
         metadata: {}
       },
+      model: "gpt-5-codex",
       mode: "echo-fixture",
       projectRootPath: "C:/Github/ForgePilot",
       providerId: PROVIDER_IDS.codex,

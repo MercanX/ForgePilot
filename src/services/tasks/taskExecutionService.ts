@@ -30,9 +30,11 @@ const createEchoCommand = (
       "const fs = require('node:fs');",
       "const input = fs.readFileSync(0, 'utf8');",
       "process.stdout.write(`ForgePilot echo fixture for provider: ${process.argv[1]}\\n`);",
+      "process.stdout.write(`Model: ${process.argv[2] || 'none'}\\n`);",
       "process.stdout.write(input);"
     ].join(" "),
-    request.providerId
+    request.providerId,
+    request.model ?? ""
   ],
   command: process.execPath,
   input: request.instructions.body
@@ -50,12 +52,14 @@ const createProviderCommand = async (
   }
 
   if (request.providerId === "claude-code") {
+    const modelArgs = request.model ? ["--model", request.model] : [];
     return {
-      args: ["-p", "--permission-mode", "plan", request.instructions.body],
+      args: ["-p", "--permission-mode", "plan", ...modelArgs, request.instructions.body],
       command: executablePath
     };
   }
 
+  const modelArgs = request.model ? ["--model", request.model] : [];
   return {
     args: [
       "exec",
@@ -65,6 +69,7 @@ const createProviderCommand = async (
       "read-only",
       "-C",
       request.projectRootPath,
+      ...modelArgs,
       request.instructions.body
     ],
     command: executablePath

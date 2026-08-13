@@ -17,7 +17,8 @@ type TaskStoreState = {
   startEchoTask: (
     project: Project,
     provider: ProviderDetectionResult,
-    instructions: string
+    instructions: string,
+    model: string | null
   ) => Promise<void>;
   stopTask: () => Promise<void>;
 };
@@ -59,7 +60,7 @@ export const useTaskStore = create<TaskStoreState>((set, get) => {
     isRunning: false,
     lines: [],
 
-    startEchoTask: async (project, provider, instructions) => {
+    startEchoTask: async (project, provider, instructions, model) => {
       set({ errorMessage: null, isRunning: true, lines: [] });
 
       try {
@@ -69,6 +70,7 @@ export const useTaskStore = create<TaskStoreState>((set, get) => {
             format: "plain-text",
             metadata: {}
           },
+          model,
           mode: "echo-fixture",
           projectRootPath: project.rootPath,
           providerId: provider.id,

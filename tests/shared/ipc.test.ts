@@ -1,4 +1,4 @@
-import { appPingResponseSchema } from "@shared/schemas/ipc";
+import { appPingRequestSchema, appPingResponseSchema } from "@shared/schemas/ipc";
 
 describe("ipc schemas", () => {
   it("validates the app ping response contract", () => {
@@ -10,5 +10,9 @@ describe("ipc schemas", () => {
         timestamp: new Date().toISOString()
       })
     ).not.toThrow();
+  });
+
+  it("rejects unexpected app ping request fields", () => {
+    expect(() => appPingRequestSchema.parse({ unexpected: true })).toThrow();
   });
 });

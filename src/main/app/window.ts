@@ -9,20 +9,25 @@ export type MainWindowOptions = {
   rendererUrl?: string;
 };
 
+export const DEFAULT_WINDOW_BOUNDS = {
+  width: 1180,
+  height: 760,
+  minWidth: 960,
+  minHeight: 640
+} as const;
+
 export const getDefaultWebPreferences = (preloadPath: string): WebPreferences => ({
   contextIsolation: true,
   nodeIntegration: false,
   sandbox: true,
   webSecurity: true,
+  allowRunningInsecureContent: false,
   preload: preloadPath
 });
 
 export const createMainWindow = async (options: MainWindowOptions): Promise<BrowserWindow> => {
   const mainWindow = new BrowserWindow({
-    width: 1180,
-    height: 760,
-    minWidth: 960,
-    minHeight: 640,
+    ...DEFAULT_WINDOW_BOUNDS,
     show: false,
     title: "ForgePilot",
     webPreferences: getDefaultWebPreferences(join(__dirname, "../preload/index.mjs"))

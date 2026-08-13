@@ -1,7 +1,21 @@
 import type { BrowserWindow, Event } from "electron";
 
-const isAllowedNavigation = (url: string): boolean => {
-  return url.startsWith("file://") || url.startsWith("http://localhost:");
+export const isAllowedNavigation = (targetUrl: string): boolean => {
+  try {
+    const parsedUrl = new URL(targetUrl);
+
+    if (parsedUrl.protocol === "file:") {
+      return true;
+    }
+
+    if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "ws:") {
+      return false;
+    }
+
+    return parsedUrl.hostname === "localhost" || parsedUrl.hostname === "127.0.0.1";
+  } catch {
+    return false;
+  }
 };
 
 export const installNavigationGuard = (window: BrowserWindow): void => {

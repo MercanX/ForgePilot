@@ -27,7 +27,9 @@ if (!gotSingleInstanceLock) {
   app
     .whenReady()
     .then(async () => {
-      applyContentSecurityPolicy();
+      applyContentSecurityPolicy({
+        allowDevServer: isDev()
+      });
       registerAppIpc();
       mainWindow = await createMainWindow({
         isDev: isDev(),

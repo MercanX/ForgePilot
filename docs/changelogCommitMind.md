@@ -2,6 +2,11 @@
 
 ## 2026-08-14
 
+- Faz 1 kapsamında Electron güvenlik temeli tamamlandı; güvenli `BrowserWindow`
+  tercihleri, CSP üretimi, navigation guard, Zod doğrulamalı IPC handler deseni
+  ve tipli preload `ping` köprüsü eklendi.
+- CSP, navigation guard, IPC şeması ve pencere güvenlik tercihleri için regresyon
+  testleri eklendi.
 - Varsayılan `en-US` dilinin uygulama içinde çalışması ve diğer dillerin imzalı,
   JSON tabanlı `.fplang` paketleriyle yüklenmesi yönünde çoklu dil mimari kararı
   belgelendi.

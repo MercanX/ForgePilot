@@ -7,8 +7,8 @@ const forgepilotApi = {
   app: {
     ping: (): Promise<AppPingResponse> => ipcRenderer.invoke(IPC_CHANNELS.app.ping, {})
   }
-};
+} as const;
 
-contextBridge.exposeInMainWorld("forgepilot", forgepilotApi);
+contextBridge.exposeInMainWorld("forgepilot", Object.freeze(forgepilotApi));
 
 export type ForgePilotApi = typeof forgepilotApi;

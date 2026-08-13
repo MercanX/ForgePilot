@@ -1,5 +1,4 @@
-import { useEffect, useState } from "react";
-import type { ReactElement } from "react";
+import { type ReactElement, useEffect, useState } from "react";
 
 export const App = (): ReactElement => {
   const [bridgeStatus, setBridgeStatus] = useState("Checking preload bridge");

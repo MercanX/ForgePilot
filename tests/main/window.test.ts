@@ -8,5 +8,6 @@ describe("main window security defaults", () => {
     expect(preferences.nodeIntegration).toBe(false);
     expect(preferences.sandbox).toBe(true);
     expect(preferences.webSecurity).toBe(true);
+    expect(preferences.allowRunningInsecureContent).toBe(false);
   });
 });

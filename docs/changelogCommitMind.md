@@ -7,6 +7,12 @@
   local exe ve LLM dogrulama adimlarindan gelen olaylara baglandi.
 - `waiting_for_input` gibi ara duruslarda bar artik sona atlamiyor ve henuz
   calismamis Job 4 gibi adimlar ekranda yapilmis gibi gosterilmiyor.
+- LLM dogrulamasi gibi uzun bekleme adimlarinda progress bar'a canli hareket
+  eklendi; Activity listesi kendi icinde kayacak sekilde sinirlandirilarak output
+  paneliyle sikisma engellendi.
+- Activity satirlari `stepId` bazli duruma cevrildi; ayni is devam ederken yeni
+  satira gecmek yerine mevcut satir guncelleniyor ve yeni satir yalnizca gercek
+  yeni is basladiginda aciliyor.
 - Job 3 `waiting_for_input` sonucunda Dashboard'a `Open SCOPE.md` ve
   `Open BASELINE.md` aksiyonlari eklendi; dosyalar tipli preload IPC uzerinden
   proje kokunun disina cikmadan sistem editorunde aciliyor.

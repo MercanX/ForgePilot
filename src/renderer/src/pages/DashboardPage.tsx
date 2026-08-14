@@ -266,10 +266,16 @@ export const DashboardPage = (): ReactElement => {
               <ol>
                 {activityEntries.map((entry, index) => (
                   <li
-                    className={isRunning && index === activityEntries.length - 1 ? "is-live" : ""}
-                    key={entry}
+                    className={`activity-item activity-item-${entry.status}${
+                      isRunning &&
+                      index === activityEntries.length - 1 &&
+                      entry.status === "started"
+                        ? " is-live"
+                        : ""
+                    }`}
+                    key={entry.stepId}
                   >
-                    {entry}
+                    {entry.message}
                   </li>
                 ))}
               </ol>

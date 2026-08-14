@@ -15,6 +15,11 @@ olaylarina tasindi.
 - Renderer job store artik yalnizca gelen progress olaylarini listeye ekliyor.
 - `waiting_for_input` durumunda progress mevcut ara noktada kaliyor; sonraki
   joblar calismadan ekranda tamamlanmis gibi gosterilmiyor.
+- Uzun LLM bekleme adimlari icin progress bar'a hareketli canli geri bildirim
+  eklendi ve Activity listesi output paneline binmeyecek sekilde kaydirilabilir
+  hale getirildi.
+- Activity listesi `stepId` bazli duruma cevrildi; ayni is devam ederken mevcut
+  satir guncelleniyor, yeni satir yalnizca gercek yeni is basladiginda aciliyor.
 
 ## Dogrulama
 

@@ -8,8 +8,14 @@ import type {
 import type { Project } from "@shared/schemas/project";
 import type { ProviderDetectionResult } from "@shared/schemas/provider";
 
+export type ActivityEntry = {
+  message: string;
+  status: JobRunProgressEvent["status"];
+  stepId: string;
+};
+
 type JobStoreState = {
-  activityEntries: string[];
+  activityEntries: ActivityEntry[];
   cloudMessage: string;
   connected: boolean;
   currentOperation: string;
@@ -71,6 +77,30 @@ const getFinalOperation = (lastRun: JobRunResponse): { message: string; progress
   };
 };
 
+const createActivityEntry = (
+  stepId: string,
+  message: string,
+  status: JobRunProgressEvent["status"]
+): ActivityEntry => ({
+  message,
+  status,
+  stepId
+});
+
+const applyProgressEvent = (
+  activityEntries: ActivityEntry[],
+  event: JobRunProgressEvent
+): ActivityEntry[] => {
+  const existingIndex = activityEntries.findIndex((entry) => entry.stepId === event.stepId);
+  const nextEntry = createActivityEntry(event.stepId, event.message, event.status);
+
+  if (existingIndex === -1) {
+    return [...activityEntries, nextEntry];
+  }
+
+  return activityEntries.map((entry, index) => (index === existingIndex ? nextEntry : entry));
+};
+
 export const useJobStore = create<JobStoreState>((set) => ({
   activityEntries: [],
   cloudMessage: "Not connected",
@@ -115,7 +145,7 @@ export const useJobStore = create<JobStoreState>((set) => ({
 
   runCloudJob: async (project, provider, model, stageId, serverUrl = DEFAULT_SERVER_URL) => {
     set({
-      activityEntries: ["Stage run requested."],
+      activityEntries: [],
       currentOperation: "Stage run requested.",
       errorMessage: null,
       isRunning: true,
@@ -130,8 +160,8 @@ export const useJobStore = create<JobStoreState>((set) => ({
         }
 
         set((state) => ({
-          activityEntries: [...state.activityEntries, event.message],
-          currentOperation: event.message,
+          activityEntries: applyProgressEvent(state.activityEntries, event),
+          currentOperation: event.status === "completed" ? state.currentOperation : event.message,
           runProgress: Math.max(state.runProgress, event.progress)
         }));
       }
@@ -149,7 +179,14 @@ export const useJobStore = create<JobStoreState>((set) => ({
       });
       const finalOperation = getFinalOperation(lastRun);
       set({
-        activityEntries: [...useJobStore.getState().activityEntries, finalOperation.message],
+        activityEntries: [
+          ...useJobStore.getState().activityEntries,
+          createActivityEntry(
+            "stage-result",
+            finalOperation.message,
+            finalOperation.progress === 100 ? "completed" : "blocked"
+          )
+        ],
         cloudMessage: finalOperation.progress === 100 ? "Last job completed" : "Waiting for input",
         connected: true,
         currentOperation: finalOperation.message,
@@ -162,7 +199,7 @@ export const useJobStore = create<JobStoreState>((set) => ({
       set({
         activityEntries: [
           ...useJobStore.getState().activityEntries,
-          "Stage run stopped with an error."
+          createActivityEntry("stage-result", "Stage run stopped with an error.", "failed")
         ],
         cloudMessage: "Job failed",
         currentOperation: "Stage failed",

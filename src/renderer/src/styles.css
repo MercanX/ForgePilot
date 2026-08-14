@@ -442,6 +442,7 @@ h1 {
 }
 
 .progress-track {
+  position: relative;
   overflow: hidden;
   height: 10px;
   border-radius: 999px;
@@ -450,6 +451,7 @@ h1 {
 }
 
 .progress-track span {
+  position: relative;
   display: block;
   height: 100%;
   background: #38bdf8;
@@ -462,6 +464,17 @@ h1 {
   animation: progress-scan 1.2s linear infinite;
 }
 
+.progress-track.is-running span::after {
+  position: absolute;
+  top: 0;
+  right: -34px;
+  bottom: 0;
+  width: 68px;
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.65), transparent);
+  content: "";
+  animation: progress-pulse 900ms ease-in-out infinite;
+}
+
 @keyframes progress-scan {
   from {
     background-position: 0 0;
@@ -469,6 +482,16 @@ h1 {
 
   to {
     background-position: 220% 0;
+  }
+}
+
+@keyframes progress-pulse {
+  from {
+    transform: translateX(-28px);
+  }
+
+  to {
+    transform: translateX(28px);
   }
 }
 
@@ -510,18 +533,60 @@ h1 {
 .activity-panel ol {
   display: grid;
   gap: 7px;
+  max-height: 230px;
   margin: 0;
+  overflow: auto;
+  padding-bottom: 2px;
   padding-left: 20px;
+  padding-right: 8px;
 }
 
 .activity-panel li {
   color: #cbd5e1;
   font-size: 13px;
   line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.activity-panel li.activity-item-completed {
+  color: #8f98a6;
+}
+
+.activity-panel li.activity-item-blocked {
+  color: #facc15;
+}
+
+.activity-panel li.activity-item-failed {
+  color: #fecaca;
 }
 
 .activity-panel li.is-live {
+  position: relative;
   color: #86efac;
+}
+
+.activity-panel li.is-live::after {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: #86efac;
+  box-shadow: 0 0 10px #86efac;
+  content: "";
+  margin-left: 8px;
+  vertical-align: middle;
+  animation: live-dot 1s ease-in-out infinite;
+}
+
+@keyframes live-dot {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+
+  50% {
+    opacity: 1;
+  }
 }
 
 .startup-result dl {
@@ -628,7 +693,7 @@ h1 {
   color: #d5d9e2;
   font-size: 12px;
   line-height: 1.5;
-  margin: 0;
+  margin: 18px 0 0;
   padding: 12px;
   white-space: pre-wrap;
 }

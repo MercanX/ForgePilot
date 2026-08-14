@@ -16,6 +16,9 @@ const SELECT_RUN_RULE_PATH =
 const PLACE_INPUTS_RULE_PATH =
   process.env.FORGEPILOT_STARTUP_PLACE_INPUTS_RULE ??
   "C:\\Github\\aiFactory\\.ai-factory\\010-Startup\\rules\\040-place_inputs.rules.md";
+const CAPTURE_GIT_STATE_RULE_PATH =
+  process.env.FORGEPILOT_STARTUP_CAPTURE_GIT_STATE_RULE ??
+  "C:\\Github\\aiFactory\\.ai-factory\\010-Startup\\rules\\050-capture_git_state.rules.md";
 
 const sendJson = (response, statusCode, payload) => {
   response.writeHead(statusCode, {
@@ -114,14 +117,42 @@ const createPlaceInputsPrompt = (requestBody) => {
   ].join("\n");
 };
 
+const createCaptureGitStatePrompt = (requestBody) => {
+  const captureGitStateRule = readRule(CAPTURE_GIT_STATE_RULE_PATH);
+
+  return [
+    `Project root: ${requestBody.project.rootPath}`,
+    "",
+    "--- kural (RULE-A05, 050-capture_git_state.rules.md) ---",
+    captureGitStateRule,
+    "--- kural sonu ---",
+    "",
+    "Exe az once bu kuralin algoritmasini calistirdigini, su sonuca ulastigini iddia ediyor:",
+    "",
+    `exe_result: ${JSON.stringify(requestBody.localExecution?.capture_git_state ?? null)}`,
+    "",
+    "Sen bunu yapmiyorsun - RULE-A05'in kontrol listesine gore, kendi Read/Bash'inle diske bakarak ve gerekirse kendi git komutlarini calistirarak dogrula.",
+    "",
+    "Bitince, baska hicbir sey yazmadan, SON SATIRA tek satirlik JSON yaz:",
+    '- Gectiyse: exe_result\'u aynen ilet, {"ok": true, ...} ile sarmalayarak',
+    '- Gecmediyse: {"ok": false, "violation": "<hangi madde>", "detail": "<ne oldu>"}'
+  ].join("\n");
+};
+
 const createPrompt = (requestBody) =>
-  requestBody.localExecution?.place_inputs
-    ? createPlaceInputsPrompt(requestBody)
-    : requestBody.localExecution?.select_run
-      ? createSelectRunPrompt(requestBody)
-      : createStartupPrompt(requestBody);
+  requestBody.localExecution?.capture_git_state
+    ? createCaptureGitStatePrompt(requestBody)
+    : requestBody.localExecution?.place_inputs
+      ? createPlaceInputsPrompt(requestBody)
+      : requestBody.localExecution?.select_run
+        ? createSelectRunPrompt(requestBody)
+        : createStartupPrompt(requestBody);
 
 const getStageId = (requestBody) => {
+  if (requestBody.localExecution?.capture_git_state) {
+    return "010-startup:capture-git-state";
+  }
+
   if (requestBody.localExecution?.place_inputs) {
     return "010-startup:place-inputs";
   }

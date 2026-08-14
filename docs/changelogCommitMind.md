@@ -2,6 +2,18 @@
 
 ## 2026-08-14
 
+- `010-Startup` akisi Job 4 `capture_git_state` ile genisletildi; Job 3
+  `ready` oldugunda exe RULE-A05 algoritmasiyla secili run klasorune
+  `git-head.txt`, `git-status.txt` ve `working-tree.patch` dosyalarini yaziyor.
+- Git deposu olmayan veya git komutlari hata veren projelerde uc dosyanin
+  tamamına `NO GIT REPOSITORY` yaziliyor ve `has_git: false` mesru sonuc olarak
+  donduruluyor.
+- Mock cloud, `050-capture_git_state.rules.md` dosyasini runtime'da okuyarak
+  Job 4 LLM dogrulama prompt'unu olusturuyor.
+- RULE-A04 guncellemesine uyumlu olarak `SCOPE.md` template'i artik proje
+  kokundeki ust duzey dosya/klasorleri tarayip Include/Exclude listelerini
+  dolduruyor; kaynak disi klasorler ve `.gitignore` desenleri Exclude tarafina
+  aliniyor.
 - Added place_inputs job to the startup flow that places SCOPE.md and BASELINE.md into the selected run folder using RULE-A04.
 - Implemented fallback logic that copies approved root files or writes tr-TR templates, reporting waiting_for_input status when review markers remain.
 - Extended the Dashboard to display place_inputs results including status, run ID, and file placement details.

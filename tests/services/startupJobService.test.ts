@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 
 import {
+  runCaptureGitStateJob,
   runPlaceInputsJob,
   runSelectRunJob,
   runStartupJob
@@ -127,6 +128,11 @@ describe("startupJobService", () => {
     const runId = "sample-20260814-001";
     const runPath = path.join(tempRoot, ".ai-factory-runs", runId);
     await mkdir(runPath, { recursive: true });
+    await mkdir(path.join(tempRoot, "src"));
+    await mkdir(path.join(tempRoot, "node_modules"));
+    await mkdir(path.join(tempRoot, "dist"));
+    await writeFile(path.join(tempRoot, "README.md"), "# Project\n", "utf8");
+    await writeFile(path.join(tempRoot, ".gitignore"), "dist/\n*.log\n", "utf8");
 
     const result = await runPlaceInputsJob(tempRoot, runId);
     const scope = await readFile(path.join(runPath, "SCOPE.md"), "utf8");
@@ -139,6 +145,10 @@ describe("startupJobService", () => {
       status: "waiting_for_input"
     });
     expect(scope).toContain("STARTUP_REVIEW_REQUIRED");
+    expect(scope).toContain("- `README.md`");
+    expect(scope).toContain("- `src/`");
+    expect(scope).toContain("- `dist/`");
+    expect(scope).toContain("- `node_modules/`");
     expect(baseline).toContain("STARTUP_REVIEW_REQUIRED");
   });
 
@@ -159,6 +169,28 @@ describe("startupJobService", () => {
       run_id: runId,
       scope: "placed",
       status: "ready"
+    });
+  });
+
+  it("writes NO GIT REPOSITORY files when the project is not a git repository", async () => {
+    const runId = "sample-20260814-001";
+    const runPath = path.join(tempRoot, ".ai-factory-runs", runId);
+    await mkdir(runPath, { recursive: true });
+
+    const result = await runCaptureGitStateJob(tempRoot, runId);
+
+    await expect(readFile(path.join(runPath, "git-head.txt"), "utf8")).resolves.toBe(
+      "NO GIT REPOSITORY\n"
+    );
+    await expect(readFile(path.join(runPath, "git-status.txt"), "utf8")).resolves.toBe(
+      "NO GIT REPOSITORY\n"
+    );
+    await expect(readFile(path.join(runPath, "working-tree.patch"), "utf8")).resolves.toBe(
+      "NO GIT REPOSITORY\n"
+    );
+    expect(result).toEqual({
+      has_git: false,
+      run_id: runId
     });
   });
 });

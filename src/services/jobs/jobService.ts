@@ -29,7 +29,12 @@ import type { Project } from "@shared/schemas/project";
 import type { ProviderId } from "@shared/schemas/provider";
 
 import { createHttpClient, type HttpClient } from "../api/httpClient";
-import { runPlaceInputsJob, runSelectRunJob, runStartupJob } from "../startup/startupJobService";
+import {
+  runCaptureGitStateJob,
+  runPlaceInputsJob,
+  runSelectRunJob,
+  runStartupJob
+} from "../startup/startupJobService";
 import {
   createTaskExecutionService,
   type TaskExecutionService
@@ -53,6 +58,7 @@ export type JobService = {
 type JobServiceOptions = {
   createClient?: (serverUrl: string) => HttpClient;
   desktopVersion?: string;
+  runCaptureGitStateJob?: typeof runCaptureGitStateJob;
   runPlaceInputsJob?: typeof runPlaceInputsJob;
   runSelectRunJob?: typeof runSelectRunJob;
   runStartupJob?: typeof runStartupJob;
@@ -78,6 +84,7 @@ export const createJobService = (options: JobServiceOptions = {}): JobService =>
   const createClient = createClientFactory(options);
   const taskExecutionService = options.taskExecutionService ?? createTaskExecutionService();
   const desktopVersion = options.desktopVersion ?? "0.1.0";
+  const executeCaptureGitStateJob = options.runCaptureGitStateJob ?? runCaptureGitStateJob;
   const executePlaceInputsJob = options.runPlaceInputsJob ?? runPlaceInputsJob;
   const executeSelectRunJob = options.runSelectRunJob ?? runSelectRunJob;
   const executeStartupJob = options.runStartupJob ?? runStartupJob;
@@ -305,9 +312,22 @@ export const createJobService = (options: JobServiceOptions = {}): JobService =>
       request.project.rootPath,
       selectRunResult.run_id
     );
+    const placeInputsVerification = await runProviderVerification(request, {
+      place_inputs: placeInputsResult
+    });
+    const placeInputsJson = getLastJsonObject(placeInputsVerification.result.outputChunks);
+
+    if (placeInputsJson?.ok !== true || placeInputsResult.status !== "ready") {
+      return placeInputsVerification;
+    }
+
+    const captureGitStateResult = await executeCaptureGitStateJob(
+      request.project.rootPath,
+      selectRunResult.run_id
+    );
 
     return runProviderVerification(request, {
-      place_inputs: placeInputsResult
+      capture_git_state: captureGitStateResult
     });
   };
 

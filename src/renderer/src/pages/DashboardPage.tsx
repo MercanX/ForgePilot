@@ -25,6 +25,10 @@ const stageProgress = (stage: WorkflowStage): number => {
 };
 
 type StartupExecutionMetadata = {
+  capture_git_state?: {
+    has_git?: boolean;
+    run_id?: string;
+  };
   check_factory?: {
     created?: boolean;
     path?: string;
@@ -297,6 +301,28 @@ export const DashboardPage = (): ReactElement => {
                     SCOPE.md: {startupExecution.place_inputs.scope ?? "unknown"} · BASELINE.md:{" "}
                     {startupExecution.place_inputs.baseline ?? "unknown"}
                   </dd>
+                </div>
+              </dl>
+            </section>
+          ) : null}
+
+          {startupExecution?.capture_git_state ? (
+            <section className="startup-result" aria-label="Capture git state result">
+              <h3>Git State</h3>
+              <dl>
+                <div>
+                  <dt>Git</dt>
+                  <dd>
+                    {startupExecution.capture_git_state.has_git ? "Detected" : "Not detected"}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Run ID</dt>
+                  <dd>{startupExecution.capture_git_state.run_id ?? "unknown"}</dd>
+                </div>
+                <div>
+                  <dt>Files</dt>
+                  <dd>git-head.txt · git-status.txt · working-tree.patch</dd>
                 </div>
               </dl>
             </section>

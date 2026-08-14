@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import { copyFile, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -25,6 +26,11 @@ export type PlaceInputsResult = {
   status: "ready" | "waiting_for_input";
 };
 
+export type CaptureGitStateResult = {
+  has_git: boolean;
+  run_id: string;
+};
+
 const TEMPLATE_MARKER =
   "<!-- STARTUP_REVIEW_REQUIRED: Bu dosyayi kontrol edin, gerekli degisiklikleri yaptiktan sonra onaylamak icin bu satiri silin. -->";
 const CONFIG_FILE = "factory.config.yaml";
@@ -32,30 +38,21 @@ const FACTORY_DIR = ".ai-factory";
 const RUN_ID_PATTERN = /^.+-\d{8}-\d{3}$/;
 const RUNS_DIR = ".ai-factory-runs";
 const RUN_SEAL_FILE = "RUN_SEAL.json";
+const NO_GIT_REPOSITORY = "NO GIT REPOSITORY\n";
+const SOURCE_EXCLUDE = new Set([
+  ".ai-factory",
+  ".ai-factory-runs",
+  ".claude",
+  ".git",
+  "node_modules",
+  "vendor"
+]);
 const SUPPORTED_LOCALES = new Set(["tr-TR", "en-US", "de-DE"]);
 const DEFAULT_CONFIG = [
   "version: unknown",
   "factory:",
   "  mode: unknown",
   "  locale: tr-TR",
-  ""
-].join("\n");
-const SCOPE_TEMPLATE = [
-  TEMPLATE_MARKER,
-  "",
-  "# SCOPE",
-  "",
-  "## Include",
-  "",
-  "-",
-  "",
-  "## Exclude",
-  "",
-  "-",
-  "",
-  "## Rationale",
-  "",
-  "-",
   ""
 ].join("\n");
 const BASELINE_TEMPLATE = [
@@ -240,6 +237,96 @@ const isFile = async (filePath: string): Promise<boolean> => {
   }
 };
 
+const readGitignorePatterns = async (projectRootPath: string): Promise<string[]> => {
+  try {
+    const content = await readFile(path.join(projectRootPath, ".gitignore"), "utf8");
+
+    return content
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith("#") && !line.startsWith("!"))
+      .map((line) => line.replace(/^\/+/, ""))
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+};
+
+const wildcardToRegex = (pattern: string): RegExp => {
+  const escaped = pattern.replace(/[|\\{}()[\]^$+?.]/g, "\\$&").replaceAll("*", ".*");
+
+  return new RegExp(`^${escaped}$`);
+};
+
+const ignoredByProject = (relativeName: string, patterns: string[]): boolean => {
+  const relativeDirectory = `${relativeName}/`;
+
+  for (const pattern of patterns) {
+    const cleanPattern = pattern.replace(/\/+$/, "");
+
+    if (!cleanPattern) {
+      continue;
+    }
+
+    if (
+      !cleanPattern.includes("/") &&
+      (relativeName === cleanPattern || relativeDirectory.startsWith(`${cleanPattern}/`))
+    ) {
+      return true;
+    }
+
+    if (
+      wildcardToRegex(cleanPattern).test(relativeName) ||
+      wildcardToRegex(`${cleanPattern}/`).test(relativeDirectory)
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+};
+
+const bulletList = (values: string[]): string =>
+  values.length > 0 ? values.map((value) => `- \`${value}\``).join("\n") : "-";
+
+const createScopeTemplate = async (projectRootPath: string): Promise<string> => {
+  const ignoredPatterns = await readGitignorePatterns(projectRootPath);
+  const entries = await readdir(projectRootPath, { withFileTypes: true });
+  const include: string[] = [];
+  const exclude: string[] = [];
+
+  for (const entry of entries.sort((left, right) =>
+    left.name.localeCompare(right.name, undefined, { sensitivity: "base" })
+  )) {
+    const displayName = `${entry.name}${entry.isDirectory() ? "/" : ""}`;
+
+    if (SOURCE_EXCLUDE.has(entry.name) || ignoredByProject(entry.name, ignoredPatterns)) {
+      exclude.push(displayName);
+    } else {
+      include.push(displayName);
+    }
+  }
+
+  return [
+    TEMPLATE_MARKER,
+    "",
+    "# SCOPE",
+    "",
+    "## Include",
+    "",
+    bulletList(include),
+    "",
+    "## Exclude",
+    "",
+    bulletList(exclude),
+    "",
+    "## Rationale",
+    "",
+    "-",
+    ""
+  ].join("\n");
+};
+
 const placeInputFile = async (
   projectRootPath: string,
   runPath: string,
@@ -277,7 +364,12 @@ export const runPlaceInputsJob = async (
     throw new Error(`Run directory not found: ${runPath}`);
   }
 
-  const scope = await placeInputFile(projectRootPath, runPath, "SCOPE.md", SCOPE_TEMPLATE);
+  const scope = await placeInputFile(
+    projectRootPath,
+    runPath,
+    "SCOPE.md",
+    await createScopeTemplate(projectRootPath)
+  );
   const baseline = await placeInputFile(projectRootPath, runPath, "BASELINE.md", BASELINE_TEMPLATE);
 
   return {
@@ -286,4 +378,66 @@ export const runPlaceInputsJob = async (
     scope,
     status: scope === "placed" && baseline === "placed" ? "ready" : "waiting_for_input"
   };
+};
+
+const runGit = async (projectRootPath: string, args: string[]): Promise<Buffer> =>
+  new Promise((resolve, reject) => {
+    execFile(
+      "git",
+      args,
+      {
+        cwd: projectRootPath,
+        encoding: "buffer",
+        maxBuffer: 50 * 1024 * 1024,
+        shell: false,
+        windowsHide: true
+      },
+      (error, stdout) => {
+        if (error) {
+          reject(new Error(error.message));
+          return;
+        }
+
+        resolve(Buffer.isBuffer(stdout) ? stdout : Buffer.from(stdout));
+      }
+    );
+  });
+
+export const runCaptureGitStateJob = async (
+  projectRootPath: string,
+  runId: string
+): Promise<CaptureGitStateResult> => {
+  const runPath = path.join(projectRootPath, RUNS_DIR, runId);
+
+  if (!(await isDirectory(runPath))) {
+    throw new Error(`Run directory not found: ${runPath}`);
+  }
+
+  const headPath = path.join(runPath, "git-head.txt");
+  const statusPath = path.join(runPath, "git-status.txt");
+  const patchPath = path.join(runPath, "working-tree.patch");
+
+  try {
+    const head = await runGit(projectRootPath, ["rev-parse", "HEAD"]);
+    const statusOutput = await runGit(projectRootPath, ["status", "--short"]);
+    const diffOutput = await runGit(projectRootPath, ["diff", "--binary"]);
+
+    await writeFile(headPath, `${head.toString("utf8").trimEnd()}\n`, "utf8");
+    await writeFile(statusPath, statusOutput);
+    await writeFile(patchPath, diffOutput);
+
+    return {
+      has_git: true,
+      run_id: runId
+    };
+  } catch {
+    await writeFile(headPath, NO_GIT_REPOSITORY, "utf8");
+    await writeFile(statusPath, NO_GIT_REPOSITORY, "utf8");
+    await writeFile(patchPath, NO_GIT_REPOSITORY, "utf8");
+
+    return {
+      has_git: false,
+      run_id: runId
+    };
+  }
 };

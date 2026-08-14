@@ -1,4 +1,4 @@
-import { type ReactElement, useEffect, useMemo } from "react";
+import { type ReactElement, useEffect, useMemo, useState } from "react";
 
 import { ProviderPanel } from "@renderer/components/ProviderPanel";
 import { useJobStore } from "@renderer/stores/jobStore";
@@ -68,6 +68,7 @@ export const DashboardPage = (): ReactElement => {
   const runProgress = useJobStore((state) => state.runProgress);
   const runCloudJob = useJobStore((state) => state.runCloudJob);
   const workflow = useJobStore((state) => state.workflow);
+  const [inputFileMessage, setInputFileMessage] = useState<string | null>(null);
 
   const selectedProvider = useMemo(
     () =>
@@ -126,6 +127,37 @@ export const DashboardPage = (): ReactElement => {
       void loadWorkflow(activeProject.id);
     }
   }, [activeProject, loadWorkflow]);
+
+  const openStartupInputFile = async (fileName: "SCOPE.md" | "BASELINE.md"): Promise<void> => {
+    const runId = startupExecution?.place_inputs?.run_id;
+
+    if (!activeProject) {
+      setInputFileMessage("No project is open.");
+      return;
+    }
+
+    if (!runId) {
+      setInputFileMessage("Run ID is not available yet.");
+      return;
+    }
+
+    try {
+      const result = await window.forgepilot.startup.openInputFile({
+        fileName,
+        projectRootPath: activeProject.rootPath,
+        runId
+      });
+
+      setInputFileMessage(
+        result.opened
+          ? `${fileName} opened in the system editor.`
+          : `Could not open ${fileName}: ${result.errorMessage ?? "unknown error"}`
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "unknown error";
+      setInputFileMessage(`Could not open ${fileName}: ${message}`);
+    }
+  };
 
   if (!activeProject) {
     return (
@@ -303,6 +335,33 @@ export const DashboardPage = (): ReactElement => {
                   </dd>
                 </div>
               </dl>
+              {startupExecution.place_inputs.status === "waiting_for_input" ? (
+                <div className="startup-input-actions">
+                  <p>
+                    Review SCOPE.md and BASELINE.md, remove the review marker after approval, then
+                    start the stage again.
+                  </p>
+                  <div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void openStartupInputFile("SCOPE.md");
+                      }}
+                    >
+                      Open SCOPE.md
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void openStartupInputFile("BASELINE.md");
+                      }}
+                    >
+                      Open BASELINE.md
+                    </button>
+                  </div>
+                  {inputFileMessage ? <span>{inputFileMessage}</span> : null}
+                </div>
+              ) : null}
             </section>
           ) : null}
 

@@ -8,7 +8,11 @@ import type {
   JobRunResponse,
   WorkflowResponse
 } from "@shared/schemas/cloud-api";
-import type { AppPingResponse } from "@shared/schemas/ipc";
+import type {
+  AppPingResponse,
+  StartupOpenInputFileRequest,
+  StartupOpenInputFileResponse
+} from "@shared/schemas/ipc";
 import type {
   TaskExecutionRequest,
   TaskExitEvent,
@@ -76,6 +80,10 @@ const forgepilotApi = {
     get: (): Promise<AppSettings> => ipcRenderer.invoke(IPC_CHANNELS.settings.get, {}),
     save: (settings: AppSettings): Promise<AppSettings> =>
       ipcRenderer.invoke(IPC_CHANNELS.settings.save, settings)
+  },
+  startup: {
+    openInputFile: (request: StartupOpenInputFileRequest): Promise<StartupOpenInputFileResponse> =>
+      ipcRenderer.invoke(IPC_CHANNELS.startup.openInputFile, request)
   }
 } as const;
 

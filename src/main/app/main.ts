@@ -7,6 +7,7 @@ import { registerJobsIpc } from "@main/ipc/jobs";
 import { registerProjectsIpc } from "@main/ipc/projects";
 import { registerProvidersIpc } from "@main/ipc/providers";
 import { registerSettingsIpc } from "@main/ipc/settings";
+import { registerStartupIpc } from "@main/ipc/startup";
 import { registerTasksIpc } from "@main/ipc/tasks";
 import { applyContentSecurityPolicy } from "@main/security/csp";
 
@@ -43,6 +44,7 @@ if (!gotSingleInstanceLock) {
       registerSettingsIpc();
       registerTasksIpc();
       registerJobsIpc();
+      registerStartupIpc();
       mainWindow = await createMainWindow({
         isDev: isDev(),
         openDevTools: process.env.FORGEPILOT_OPEN_DEVTOOLS === "1",

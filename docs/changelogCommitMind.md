@@ -2,6 +2,11 @@
 
 ## 2026-08-14
 
+- Job 3 `waiting_for_input` sonucunda Dashboard'a `Open SCOPE.md` ve
+  `Open BASELINE.md` aksiyonlari eklendi; dosyalar tipli preload IPC uzerinden
+  proje kokunun disina cikmadan sistem editorunde aciliyor.
+- Startup input dosyasi acma kanali Zod semalari, main-process path guard
+  kontrolu ve IPC testleriyle dogrulandi.
 - `010-Startup` akisi Job 4 `capture_git_state` ile genisletildi; Job 3
   `ready` oldugunda exe RULE-A05 algoritmasiyla secili run klasorune
   `git-head.txt`, `git-status.txt` ve `working-tree.patch` dosyalarini yaziyor.

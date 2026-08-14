@@ -50,6 +50,27 @@ export const appPingResponseSchema = z
 export type AppPingRequest = z.infer<typeof appPingRequestSchema>;
 export type AppPingResponse = z.infer<typeof appPingResponseSchema>;
 
+export const startupInputFileNameSchema = z.enum(["SCOPE.md", "BASELINE.md"]);
+
+export const startupOpenInputFileRequestSchema = z
+  .object({
+    fileName: startupInputFileNameSchema,
+    projectRootPath: z.string().min(1),
+    runId: z.string().min(1)
+  })
+  .strict();
+
+export const startupOpenInputFileResponseSchema = z
+  .object({
+    errorMessage: z.string().min(1).nullable(),
+    opened: z.boolean(),
+    path: z.string().min(1)
+  })
+  .strict();
+
+export type StartupOpenInputFileRequest = z.infer<typeof startupOpenInputFileRequestSchema>;
+export type StartupOpenInputFileResponse = z.infer<typeof startupOpenInputFileResponseSchema>;
+
 export const ipcSchemaMap = {
   app: {
     ping: {
@@ -115,6 +136,12 @@ export const ipcSchemaMap = {
     save: {
       request: settingsSaveRequestSchema,
       response: appSettingsSchema
+    }
+  },
+  startup: {
+    openInputFile: {
+      request: startupOpenInputFileRequestSchema,
+      response: startupOpenInputFileResponseSchema
     }
   },
   jobs: {

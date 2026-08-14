@@ -122,6 +122,7 @@ h1 {
 .primary-action,
 .project-actions button,
 .provider-panel-heading button,
+.startup-input-actions button,
 .task-runner-actions button {
   min-height: 38px;
   border: 1px solid #34373d;
@@ -140,6 +141,7 @@ h1 {
 .primary-action:hover:not(:disabled),
 .project-actions button:hover:not(:disabled),
 .provider-panel-heading button:hover:not(:disabled),
+.startup-input-actions button:hover:not(:disabled),
 .task-runner-actions button:hover:not(:disabled) {
   filter: brightness(1.12);
 }
@@ -147,6 +149,7 @@ h1 {
 .primary-action:disabled,
 .project-actions button:disabled,
 .provider-panel-heading button:disabled,
+.startup-input-actions button:disabled,
 .task-runner-actions button:disabled {
   cursor: wait;
   opacity: 0.6;
@@ -543,6 +546,28 @@ h1 {
   color: #d5d9e2;
   font-size: 13px;
   margin: 0;
+}
+
+.startup-input-actions {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid #26282c;
+  margin-top: 14px;
+  padding-top: 14px;
+}
+
+.startup-input-actions p,
+.startup-input-actions span {
+  color: #a8adb7;
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.startup-input-actions div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .cloud-run-panel,

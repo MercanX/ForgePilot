@@ -23,6 +23,9 @@ export const IPC_CHANNELS = {
     get: "settings:get",
     save: "settings:save"
   },
+  startup: {
+    openInputFile: "startup:open-input-file"
+  },
   jobs: {
     status: "jobs:status",
     runOnce: "jobs:run-once",

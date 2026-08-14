@@ -384,7 +384,7 @@ describe("jobService", () => {
     );
   });
 
-  it("requests select_run after startup verification returns ok true", async () => {
+  it("requests place_inputs after startup and select_run verification return ok true", async () => {
     const startupResult = {
       check_factory: {
         created: false,
@@ -399,6 +399,12 @@ describe("jobService", () => {
     const selectRunResult = {
       decision: "new" as const,
       run_id: "ForgePilot-20260814-001"
+    };
+    const placeInputsResult = {
+      baseline: "missing" as const,
+      run_id: "ForgePilot-20260814-001",
+      scope: "missing" as const,
+      status: "waiting_for_input" as const
     };
     const requestedLocalExecutions: unknown[] = [];
     let jobCounter = 0;
@@ -415,12 +421,14 @@ describe("jobService", () => {
       if (path === "/jobs/request") {
         requestedLocalExecutions.push((body as RequestJobRequest).localExecution);
         jobCounter += 1;
+        const ids = [
+          "11111111-1111-4111-8111-111111111111",
+          "55555555-5555-4555-8555-555555555555",
+          "88888888-8888-4888-8888-888888888888"
+        ];
         return Promise.resolve({
           ...job,
-          id:
-            jobCounter === 1
-              ? "11111111-1111-4111-8111-111111111111"
-              : "55555555-5555-4555-8555-555555555555",
+          id: ids[jobCounter - 1],
           task: null
         });
       }
@@ -476,16 +484,21 @@ describe("jobService", () => {
         const taskId =
           startCounter === 1
             ? "66666666-6666-4666-8666-666666666666"
-            : "77777777-7777-4777-8777-777777777777";
+            : startCounter === 2
+              ? "77777777-7777-4777-8777-777777777777"
+              : "99999999-9999-4999-8999-999999999999";
+        const output =
+          startCounter === 1
+            ? '{"ok":true,"check_factory":{"created":false,"path":"x"},"read_config":{"version":"unknown","mode":"unknown","locale":"tr-TR"}}\n'
+            : startCounter === 2
+              ? '{"ok":true,"decision":"new","run_id":"ForgePilot-20260814-001"}\n'
+              : '{"ok":true,"status":"waiting_for_input","scope":"missing","baseline":"missing","run_id":"ForgePilot-20260814-001"}\n';
         setTimeout(() => {
           for (const callback of outputCallbacks) {
             callback({
               chunk: {
                 stream: "stdout",
-                text:
-                  startCounter === 1
-                    ? '{"ok":true,"check_factory":{"created":false,"path":"x"},"read_config":{"version":"unknown","mode":"unknown","locale":"tr-TR"}}\n'
-                    : '{"ok":true,"decision":"new","run_id":"ForgePilot-20260814-001"}\n',
+                text: output,
                 timestamp: "2026-08-14T00:00:01.000Z"
               },
               providerId: PROVIDER_IDS.claudeCode,
@@ -518,6 +531,7 @@ describe("jobService", () => {
     };
     const service = createJobService({
       createClient: () => client,
+      runPlaceInputsJob: vi.fn(() => Promise.resolve(placeInputsResult)),
       runSelectRunJob: vi.fn(() => Promise.resolve(selectRunResult)),
       runStartupJob: vi.fn(() => Promise.resolve(startupResult)),
       taskExecutionService: taskService
@@ -533,13 +547,16 @@ describe("jobService", () => {
       timeoutMs: 1_000
     });
 
-    expect(taskService.start).toHaveBeenCalledTimes(2);
+    expect(taskService.start).toHaveBeenCalledTimes(3);
     expect(requestedLocalExecutions).toEqual([
       startupResult,
       {
         select_run: selectRunResult
+      },
+      {
+        place_inputs: placeInputsResult
       }
     ]);
-    expect(response.result.outputChunks.at(-1)?.text).toContain('"decision":"new"');
+    expect(response.result.outputChunks.at(-1)?.text).toContain('"waiting_for_input"');
   });
 });

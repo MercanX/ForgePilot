@@ -2,6 +2,20 @@
 
 ## 2026-08-14
 
+- Added place_inputs job to the startup flow that places SCOPE.md and BASELINE.md into the selected run folder using RULE-A04.
+- Implemented fallback logic that copies approved root files or writes tr-TR templates, reporting waiting_for_input status when review markers remain.
+- Extended the Dashboard to display place_inputs results including status, run ID, and file placement details.
+- Updated mock cloud to read the 040-place_inputs.rules.md file at runtime for LLM verification prompt generation.
+- Added unit tests covering template placement, root file copying, and the chained job service flow.
+
+- `010-Startup` akisi Job 3 `place_inputs` ile genisletildi; Job 2 LLM sonucu
+  `ok: true` ve karar `already_sealed` degilse exe RULE-A04 algoritmasiyla secili
+  run klasorune `SCOPE.md` ve `BASELINE.md` dosyalarini yerlestiriyor.
+- Proje kokunde onayli `SCOPE.md`/`BASELINE.md` varsa run klasorune kopyalaniyor;
+  yoksa sabit tr-TR template yaziliyor ve marker/bos dosya durumunda
+  `waiting_for_input` mesru bekleme sonucu olarak donduruluyor.
+- Mock cloud, `040-place_inputs.rules.md` dosyasini runtime'da okuyarak Job 3
+  LLM dogrulama prompt'unu olusturuyor.
 - Added select_run job to the startup flow that selects the AI Factory run folder using RULE-A03 after LLM verification passes
 - Extended the job service to chain a second provider verification when the first returns ok: true
 - Added run selection result display to the Dashboard with decision and run ID

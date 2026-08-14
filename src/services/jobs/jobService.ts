@@ -29,7 +29,7 @@ import type { Project } from "@shared/schemas/project";
 import type { ProviderId } from "@shared/schemas/provider";
 
 import { createHttpClient, type HttpClient } from "../api/httpClient";
-import { runSelectRunJob, runStartupJob } from "../startup/startupJobService";
+import { runPlaceInputsJob, runSelectRunJob, runStartupJob } from "../startup/startupJobService";
 import {
   createTaskExecutionService,
   type TaskExecutionService
@@ -53,6 +53,7 @@ export type JobService = {
 type JobServiceOptions = {
   createClient?: (serverUrl: string) => HttpClient;
   desktopVersion?: string;
+  runPlaceInputsJob?: typeof runPlaceInputsJob;
   runSelectRunJob?: typeof runSelectRunJob;
   runStartupJob?: typeof runStartupJob;
   taskExecutionService?: TaskExecutionService;
@@ -77,6 +78,7 @@ export const createJobService = (options: JobServiceOptions = {}): JobService =>
   const createClient = createClientFactory(options);
   const taskExecutionService = options.taskExecutionService ?? createTaskExecutionService();
   const desktopVersion = options.desktopVersion ?? "0.1.0";
+  const executePlaceInputsJob = options.runPlaceInputsJob ?? runPlaceInputsJob;
   const executeSelectRunJob = options.runSelectRunJob ?? runSelectRunJob;
   const executeStartupJob = options.runStartupJob ?? runStartupJob;
 
@@ -290,9 +292,22 @@ export const createJobService = (options: JobServiceOptions = {}): JobService =>
     }
 
     const selectRunResult = await executeSelectRunJob(request.project.rootPath, request.newRun);
+    const selectRunVerification = await runProviderVerification(request, {
+      select_run: selectRunResult
+    });
+    const selectRunJson = getLastJsonObject(selectRunVerification.result.outputChunks);
+
+    if (selectRunJson?.ok !== true || selectRunResult.decision === "already_sealed") {
+      return selectRunVerification;
+    }
+
+    const placeInputsResult = await executePlaceInputsJob(
+      request.project.rootPath,
+      selectRunResult.run_id
+    );
 
     return runProviderVerification(request, {
-      select_run: selectRunResult
+      place_inputs: placeInputsResult
     });
   };
 

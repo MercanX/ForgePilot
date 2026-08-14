@@ -2,7 +2,11 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { runSelectRunJob, runStartupJob } from "@services/startup/startupJobService";
+import {
+  runPlaceInputsJob,
+  runSelectRunJob,
+  runStartupJob
+} from "@services/startup/startupJobService";
 
 describe("startupJobService", () => {
   let tempRoot: string;
@@ -116,6 +120,45 @@ describe("startupJobService", () => {
     await expect(runSelectRunJob(tempRoot)).resolves.toEqual({
       decision: "already_sealed",
       run_id: "sample-20260814-001"
+    });
+  });
+
+  it("places template input files when root files are missing", async () => {
+    const runId = "sample-20260814-001";
+    const runPath = path.join(tempRoot, ".ai-factory-runs", runId);
+    await mkdir(runPath, { recursive: true });
+
+    const result = await runPlaceInputsJob(tempRoot, runId);
+    const scope = await readFile(path.join(runPath, "SCOPE.md"), "utf8");
+    const baseline = await readFile(path.join(runPath, "BASELINE.md"), "utf8");
+
+    expect(result).toEqual({
+      baseline: "missing",
+      run_id: runId,
+      scope: "missing",
+      status: "waiting_for_input"
+    });
+    expect(scope).toContain("STARTUP_REVIEW_REQUIRED");
+    expect(baseline).toContain("STARTUP_REVIEW_REQUIRED");
+  });
+
+  it("copies approved root input files into the selected run", async () => {
+    const runId = "sample-20260814-001";
+    const runPath = path.join(tempRoot, ".ai-factory-runs", runId);
+    await mkdir(runPath, { recursive: true });
+    await writeFile(path.join(tempRoot, "SCOPE.md"), "# Scope\n\nReal scope\n", "utf8");
+    await writeFile(path.join(tempRoot, "BASELINE.md"), "# Baseline\n\nReal baseline\n", "utf8");
+
+    const result = await runPlaceInputsJob(tempRoot, runId);
+
+    await expect(readFile(path.join(runPath, "SCOPE.md"), "utf8")).resolves.toBe(
+      "# Scope\n\nReal scope\n"
+    );
+    expect(result).toEqual({
+      baseline: "placed",
+      run_id: runId,
+      scope: "placed",
+      status: "ready"
     });
   });
 });

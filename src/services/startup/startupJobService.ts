@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 export type StartupJobResult = {
@@ -18,6 +18,15 @@ export type SelectRunResult = {
   run_id: string;
 };
 
+export type PlaceInputsResult = {
+  baseline: "missing" | "placed";
+  run_id: string;
+  scope: "missing" | "placed";
+  status: "ready" | "waiting_for_input";
+};
+
+const TEMPLATE_MARKER =
+  "<!-- STARTUP_REVIEW_REQUIRED: Bu dosyayi kontrol edin, gerekli degisiklikleri yaptiktan sonra onaylamak icin bu satiri silin. -->";
 const CONFIG_FILE = "factory.config.yaml";
 const FACTORY_DIR = ".ai-factory";
 const RUN_ID_PATTERN = /^.+-\d{8}-\d{3}$/;
@@ -29,6 +38,42 @@ const DEFAULT_CONFIG = [
   "factory:",
   "  mode: unknown",
   "  locale: tr-TR",
+  ""
+].join("\n");
+const SCOPE_TEMPLATE = [
+  TEMPLATE_MARKER,
+  "",
+  "# SCOPE",
+  "",
+  "## Include",
+  "",
+  "-",
+  "",
+  "## Exclude",
+  "",
+  "-",
+  "",
+  "## Rationale",
+  "",
+  "-",
+  ""
+].join("\n");
+const BASELINE_TEMPLATE = [
+  TEMPLATE_MARKER,
+  "",
+  "# BASELINE",
+  "",
+  "## Known Gaps",
+  "",
+  "-",
+  "",
+  "## Known Technical Debt",
+  "",
+  "-",
+  "",
+  "## Unfinished Work",
+  "",
+  "-",
   ""
 ].join("\n");
 
@@ -184,5 +229,61 @@ export const runSelectRunJob = async (
   return {
     decision: "continue",
     run_id: latest
+  };
+};
+
+const isFile = async (filePath: string): Promise<boolean> => {
+  try {
+    return (await stat(filePath)).isFile();
+  } catch {
+    return false;
+  }
+};
+
+const placeInputFile = async (
+  projectRootPath: string,
+  runPath: string,
+  fileName: "BASELINE.md" | "SCOPE.md",
+  template: string
+): Promise<"missing" | "placed"> => {
+  const targetPath = path.join(runPath, fileName);
+
+  if (!(await isFile(targetPath))) {
+    const fallbackPath = path.join(projectRootPath, fileName);
+
+    if (await isFile(fallbackPath)) {
+      await copyFile(fallbackPath, targetPath);
+    } else {
+      await writeFile(targetPath, template, "utf8");
+    }
+  }
+
+  const body = await readFile(targetPath, "utf8");
+
+  if (!body.trim() || body.includes(TEMPLATE_MARKER)) {
+    return "missing";
+  }
+
+  return "placed";
+};
+
+export const runPlaceInputsJob = async (
+  projectRootPath: string,
+  runId: string
+): Promise<PlaceInputsResult> => {
+  const runPath = path.join(projectRootPath, RUNS_DIR, runId);
+
+  if (!(await isDirectory(runPath))) {
+    throw new Error(`Run directory not found: ${runPath}`);
+  }
+
+  const scope = await placeInputFile(projectRootPath, runPath, "SCOPE.md", SCOPE_TEMPLATE);
+  const baseline = await placeInputFile(projectRootPath, runPath, "BASELINE.md", BASELINE_TEMPLATE);
+
+  return {
+    baseline,
+    run_id: runId,
+    scope,
+    status: scope === "placed" && baseline === "placed" ? "ready" : "waiting_for_input"
   };
 };

@@ -34,6 +34,12 @@ type StartupExecutionMetadata = {
     mode?: string;
     version?: string;
   };
+  place_inputs?: {
+    baseline?: string;
+    run_id?: string;
+    scope?: string;
+    status?: string;
+  };
   select_run?: {
     decision?: string;
     run_id?: string;
@@ -268,6 +274,29 @@ export const DashboardPage = (): ReactElement => {
                 <div>
                   <dt>Run ID</dt>
                   <dd>{startupExecution.select_run.run_id ?? "unknown"}</dd>
+                </div>
+              </dl>
+            </section>
+          ) : null}
+
+          {startupExecution?.place_inputs ? (
+            <section className="startup-result" aria-label="Place inputs result">
+              <h3>Place Inputs</h3>
+              <dl>
+                <div>
+                  <dt>Status</dt>
+                  <dd>{startupExecution.place_inputs.status ?? "unknown"}</dd>
+                </div>
+                <div>
+                  <dt>Run ID</dt>
+                  <dd>{startupExecution.place_inputs.run_id ?? "unknown"}</dd>
+                </div>
+                <div>
+                  <dt>Files</dt>
+                  <dd>
+                    SCOPE.md: {startupExecution.place_inputs.scope ?? "unknown"} · BASELINE.md:{" "}
+                    {startupExecution.place_inputs.baseline ?? "unknown"}
+                  </dd>
                 </div>
               </dl>
             </section>

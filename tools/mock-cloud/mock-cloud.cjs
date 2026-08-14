@@ -13,6 +13,9 @@ const READ_CONFIG_RULE_PATH =
 const SELECT_RUN_RULE_PATH =
   process.env.FORGEPILOT_STARTUP_SELECT_RUN_RULE ??
   "C:\\Github\\aiFactory\\.ai-factory\\010-Startup\\rules\\030-select_run.rules.md";
+const PLACE_INPUTS_RULE_PATH =
+  process.env.FORGEPILOT_STARTUP_PLACE_INPUTS_RULE ??
+  "C:\\Github\\aiFactory\\.ai-factory\\010-Startup\\rules\\040-place_inputs.rules.md";
 
 const sendJson = (response, statusCode, payload) => {
   response.writeHead(statusCode, {
@@ -89,10 +92,46 @@ const createSelectRunPrompt = (requestBody) => {
   ].join("\n");
 };
 
+const createPlaceInputsPrompt = (requestBody) => {
+  const placeInputsRule = readRule(PLACE_INPUTS_RULE_PATH);
+
+  return [
+    `Project root: ${requestBody.project.rootPath}`,
+    "",
+    "--- kural (RULE-A04, 040-place_inputs.rules.md) ---",
+    placeInputsRule,
+    "--- kural sonu ---",
+    "",
+    "Exe az once bu kuralin algoritmasini calistirdigini, su sonuca ulastigini iddia ediyor:",
+    "",
+    `exe_result: ${JSON.stringify(requestBody.localExecution?.place_inputs ?? null)}`,
+    "",
+    "Sen bunu yapmiyorsun - RULE-A04'un kontrol listesine gore, kendi Read/Bash'inle diske bakarak dogrula.",
+    "",
+    "Bitince, baska hicbir sey yazmadan, SON SATIRA tek satirlik JSON yaz:",
+    '- Kontrol gectiyse (ready ya da waiting_for_input, ikisi de gecerli sonuctur): exe_result\'u aynen ilet, {"ok": true, ...} ile sarmalayarak',
+    '- Kontrol gecmediyse: {"ok": false, "violation": "<hangi madde>", "detail": "<ne oldu>"}'
+  ].join("\n");
+};
+
 const createPrompt = (requestBody) =>
-  requestBody.localExecution?.select_run
-    ? createSelectRunPrompt(requestBody)
-    : createStartupPrompt(requestBody);
+  requestBody.localExecution?.place_inputs
+    ? createPlaceInputsPrompt(requestBody)
+    : requestBody.localExecution?.select_run
+      ? createSelectRunPrompt(requestBody)
+      : createStartupPrompt(requestBody);
+
+const getStageId = (requestBody) => {
+  if (requestBody.localExecution?.place_inputs) {
+    return "010-startup:place-inputs";
+  }
+
+  if (requestBody.localExecution?.select_run) {
+    return "010-startup:select-run";
+  }
+
+  return "010-startup";
+};
 
 const createTask = (jobId, requestBody) => ({
   id: randomUUID(),
@@ -103,7 +142,7 @@ const createTask = (jobId, requestBody) => ({
     metadata: {
       localExecution: requestBody.localExecution ?? null,
       source: "mock-cloud",
-      stageId: requestBody.localExecution?.select_run ? "010-startup:select-run" : "010-startup"
+      stageId: getStageId(requestBody)
     }
   },
   timeoutMs: 300000
@@ -117,7 +156,7 @@ const createJob = (requestBody) => {
   return {
     id: jobId,
     runId,
-    stageId: requestBody.localExecution?.select_run ? "010-startup:select-run" : "010-startup",
+    stageId: getStageId(requestBody),
     providerId: requestBody.providerId,
     status: "received",
     task,

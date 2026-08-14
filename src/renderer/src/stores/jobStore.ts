@@ -35,7 +35,8 @@ const getStartupActivity = (project: Project): string[] => [
   `Checking the .ai-factory directory under ${project.rootPath}.`,
   "Reading or creating factory.config.yaml according to RULE-A02.",
   "Reloading rule files in mock cloud and preparing the LLM verification prompt.",
-  "Waiting for the LLM verification result."
+  "Waiting for the LLM verification result.",
+  "If Job 1 passes, selecting the AI Factory run folder with RULE-A03."
 ];
 
 export const useJobStore = create<JobStoreState>((set) => ({
@@ -111,10 +112,12 @@ export const useJobStore = create<JobStoreState>((set) => ({
     queueProgress(900, 42, activityEntries[2] ?? "Reading config.");
     queueProgress(1_500, 62, activityEntries[3] ?? "Preparing prompt.");
     queueProgress(2_200, 78, activityEntries[4] ?? "Waiting for LLM result.");
+    queueProgress(3_200, 88, activityEntries[5] ?? "Selecting run folder.");
 
     try {
       const lastRun = await window.forgepilot.jobs.runOnce({
         model,
+        newRun: false,
         project,
         providerId: provider.id,
         serverUrl,

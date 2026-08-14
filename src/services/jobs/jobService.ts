@@ -29,7 +29,7 @@ import type { Project } from "@shared/schemas/project";
 import type { ProviderId } from "@shared/schemas/provider";
 
 import { createHttpClient, type HttpClient } from "../api/httpClient";
-import { runStartupJob } from "../startup/startupJobService";
+import { runSelectRunJob, runStartupJob } from "../startup/startupJobService";
 import {
   createTaskExecutionService,
   type TaskExecutionService
@@ -53,6 +53,7 @@ export type JobService = {
 type JobServiceOptions = {
   createClient?: (serverUrl: string) => HttpClient;
   desktopVersion?: string;
+  runSelectRunJob?: typeof runSelectRunJob;
   runStartupJob?: typeof runStartupJob;
   taskExecutionService?: TaskExecutionService;
 };
@@ -76,6 +77,7 @@ export const createJobService = (options: JobServiceOptions = {}): JobService =>
   const createClient = createClientFactory(options);
   const taskExecutionService = options.taskExecutionService ?? createTaskExecutionService();
   const desktopVersion = options.desktopVersion ?? "0.1.0";
+  const executeSelectRunJob = options.runSelectRunJob ?? runSelectRunJob;
   const executeStartupJob = options.runStartupJob ?? runStartupJob;
 
   const handshake = async (serverUrl: string): Promise<HandshakeResponse> =>
@@ -152,18 +154,39 @@ export const createJobService = (options: JobServiceOptions = {}): JobService =>
       syncFindingsResponseSchema
     );
 
-  const runOnce = async (request: JobRunRequest): Promise<JobRunResponse> => {
+  const getLastJsonObject = (outputChunks: ProviderOutputChunk[]): { ok?: unknown } | null => {
+    const lines = outputChunks
+      .map((chunk) => chunk.text)
+      .join("")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const jsonLine = [...lines]
+      .reverse()
+      .find((line) => line.startsWith("{") && line.endsWith("}"));
+
+    if (!jsonLine) {
+      return null;
+    }
+
+    try {
+      const parsed = JSON.parse(jsonLine) as unknown;
+
+      return typeof parsed === "object" && parsed !== null ? parsed : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const runProviderVerification = async (
+    request: JobRunRequest,
+    localExecution: unknown
+  ): Promise<JobRunResponse> => {
     const outputChunks: ProviderOutputChunk[] = [];
-    await handshake(request.serverUrl);
-    await getWorkflow(request.project.id, request.serverUrl);
-    const startupResult =
-      request.stageId === STARTUP_STAGE_ID
-        ? await executeStartupJob(request.project.rootPath)
-        : null;
     const job = await requestJob(
       {
         ...createRequestJobPayload(request.project, request.providerId),
-        localExecution: startupResult
+        localExecution
       },
       request.serverUrl
     );
@@ -173,6 +196,7 @@ export const createJobService = (options: JobServiceOptions = {}): JobService =>
       outputChunks.push(event.chunk);
     });
     let removeExitListener: (() => void) | undefined;
+    let heartbeat: NodeJS.Timeout | undefined;
 
     try {
       const startedTask = await taskExecutionService.start({
@@ -184,7 +208,7 @@ export const createJobService = (options: JobServiceOptions = {}): JobService =>
         timeoutMs: request.timeoutMs
       });
 
-      const heartbeat = setInterval(() => {
+      heartbeat = setInterval(() => {
         void createClient(request.serverUrl).post(
           `/jobs/${encodeURIComponent(job.id)}/heartbeat`,
           {
@@ -202,7 +226,6 @@ export const createJobService = (options: JobServiceOptions = {}): JobService =>
           }
         });
       });
-      clearInterval(heartbeat);
 
       const finishedAt = new Date().toISOString();
       const result: TaskResult = {
@@ -240,11 +263,37 @@ export const createJobService = (options: JobServiceOptions = {}): JobService =>
       );
       throw error;
     } finally {
+      if (heartbeat) {
+        clearInterval(heartbeat);
+      }
       removeOutputListener();
       if (removeExitListener) {
         removeExitListener();
       }
     }
+  };
+
+  const runOnce = async (request: JobRunRequest): Promise<JobRunResponse> => {
+    await handshake(request.serverUrl);
+    await getWorkflow(request.project.id, request.serverUrl);
+
+    if (request.stageId !== STARTUP_STAGE_ID) {
+      return runProviderVerification(request, null);
+    }
+
+    const startupResult = await executeStartupJob(request.project.rootPath);
+    const startupVerification = await runProviderVerification(request, startupResult);
+    const startupJson = getLastJsonObject(startupVerification.result.outputChunks);
+
+    if (startupJson?.ok !== true) {
+      return startupVerification;
+    }
+
+    const selectRunResult = await executeSelectRunJob(request.project.rootPath, request.newRun);
+
+    return runProviderVerification(request, {
+      select_run: selectRunResult
+    });
   };
 
   return {

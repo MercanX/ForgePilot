@@ -103,6 +103,7 @@ export const jobRunRequestSchema = z
     project: projectSchema,
     providerId: providerIdSchema,
     model: z.string().min(1).nullable().default(null),
+    newRun: z.boolean().default(false),
     stageId: z.string().min(1).nullable().default(null),
     serverUrl: z.string().url().default("http://localhost:4317"),
     timeoutMs: z.number().int().positive().default(300_000)

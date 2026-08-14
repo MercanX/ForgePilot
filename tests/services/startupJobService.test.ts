@@ -1,8 +1,8 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { runStartupJob } from "@services/startup/startupJobService";
+import { runSelectRunJob, runStartupJob } from "@services/startup/startupJobService";
 
 describe("startupJobService", () => {
   let tempRoot: string;
@@ -82,6 +82,40 @@ describe("startupJobService", () => {
         mode: "prod",
         version: "2"
       }
+    });
+  });
+
+  it("creates a new run directory and .gitignore when no run exists", async () => {
+    const result = await runSelectRunJob(tempRoot);
+    const gitignore = await readFile(path.join(tempRoot, ".ai-factory-runs", ".gitignore"), "utf8");
+
+    expect(result).toMatchObject({
+      decision: "new"
+    });
+    expect(result.run_id).toMatch(/^.+-\d{8}-001$/);
+    expect(gitignore).toBe("*\n");
+  });
+
+  it("continues the latest unsealed run", async () => {
+    const runsPath = path.join(tempRoot, ".ai-factory-runs");
+    await mkdir(path.join(runsPath, "sample-20260813-001"), { recursive: true });
+    await mkdir(path.join(runsPath, "sample-20260814-001"), { recursive: true });
+
+    await expect(runSelectRunJob(tempRoot)).resolves.toEqual({
+      decision: "continue",
+      run_id: "sample-20260814-001"
+    });
+  });
+
+  it("returns already_sealed for the latest PASS sealed run", async () => {
+    const runsPath = path.join(tempRoot, ".ai-factory-runs");
+    const runPath = path.join(runsPath, "sample-20260814-001");
+    await mkdir(runPath, { recursive: true });
+    await writeFile(path.join(runPath, "RUN_SEAL.json"), '{"decision":"PASS"}', "utf8");
+
+    await expect(runSelectRunJob(tempRoot)).resolves.toEqual({
+      decision: "already_sealed",
+      run_id: "sample-20260814-001"
     });
   });
 });

@@ -2,6 +2,19 @@
 
 ## 2026-08-14
 
+- Added select_run job to the startup flow that selects the AI Factory run folder using RULE-A03 after LLM verification passes
+- Extended the job service to chain a second provider verification when the first returns ok: true
+- Added run selection result display to the Dashboard with decision and run ID
+- Updated mock cloud to read the select_run rules file at runtime for the second job verification prompt
+- Added newRun option to job run requests and run selection logic supporting new, continue, and already_sealed decisions
+
+- `010-Startup` akisi Job 2 `select_run` ile genisletildi; Job 1 LLM sonucu
+  `ok: true` oldugunda exe RULE-A03 algoritmasiyla `.ai-factory-runs/`,
+  `.gitignore`, son kosu secimi ve `new`/`continue`/`already_sealed` kararini
+  uretiyor.
+- Mock cloud, `030-select_run.rules.md` dosyasini runtime'da okuyarak Job 2
+  LLM dogrulama prompt'unu olusturuyor; provider dogrulamasi ikinci job olarak
+  ayni run zincirinde calisiyor.
 - Added live activity panel to Dashboard showing step-by-step operation messages during stage runs
 - Added animated progress bar with scanning effect and real-time progress percentage updates
 - Added startup execution result section displaying `.ai-factory` directory and config file details

@@ -34,6 +34,10 @@ type StartupExecutionMetadata = {
     mode?: string;
     version?: string;
   };
+  select_run?: {
+    decision?: string;
+    run_id?: string;
+  };
 };
 
 const isStartupExecutionMetadata = (value: unknown): value is StartupExecutionMetadata =>
@@ -230,7 +234,7 @@ export const DashboardPage = (): ReactElement => {
             )}
           </section>
 
-          {startupExecution ? (
+          {startupExecution?.check_factory || startupExecution?.read_config ? (
             <section className="startup-result" aria-label="Startup execution result">
               <h3>Exe Result</h3>
               <dl>
@@ -248,6 +252,22 @@ export const DashboardPage = (): ReactElement => {
                     {startupExecution.read_config?.mode ?? "unknown"} · locale:{" "}
                     {startupExecution.read_config?.locale ?? "tr-TR"}
                   </dd>
+                </div>
+              </dl>
+            </section>
+          ) : null}
+
+          {startupExecution?.select_run ? (
+            <section className="startup-result" aria-label="Run selection result">
+              <h3>Run Selection</h3>
+              <dl>
+                <div>
+                  <dt>Decision</dt>
+                  <dd>{startupExecution.select_run.decision ?? "unknown"}</dd>
+                </div>
+                <div>
+                  <dt>Run ID</dt>
+                  <dd>{startupExecution.select_run.run_id ?? "unknown"}</dd>
                 </div>
               </dl>
             </section>

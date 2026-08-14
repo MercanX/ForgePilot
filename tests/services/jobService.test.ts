@@ -167,6 +167,7 @@ describe("jobService", () => {
 
     const response = await service.runOnce({
       model: "sonnet",
+      newRun: false,
       project: projectFixture,
       providerId: PROVIDER_IDS.claudeCode,
       serverUrl: "http://localhost:4317",
@@ -240,6 +241,7 @@ describe("jobService", () => {
     await expect(
       service.runOnce({
         model: "sonnet",
+        newRun: false,
         project: projectFixture,
         providerId: PROVIDER_IDS.claudeCode,
         serverUrl: "http://localhost:4317",
@@ -367,6 +369,7 @@ describe("jobService", () => {
 
     await service.runOnce({
       model: "sonnet",
+      newRun: false,
       project: projectFixture,
       providerId: PROVIDER_IDS.claudeCode,
       serverUrl: "http://localhost:4317",
@@ -379,5 +382,164 @@ describe("jobService", () => {
       "/jobs/request",
       expect.objectContaining({ localExecution: startupResult })
     );
+  });
+
+  it("requests select_run after startup verification returns ok true", async () => {
+    const startupResult = {
+      check_factory: {
+        created: false,
+        path: "C:\\Github\\ForgePilot\\.ai-factory"
+      },
+      read_config: {
+        locale: "tr-TR",
+        mode: "unknown",
+        version: "unknown"
+      }
+    };
+    const selectRunResult = {
+      decision: "new" as const,
+      run_id: "ForgePilot-20260814-001"
+    };
+    const requestedLocalExecutions: unknown[] = [];
+    let jobCounter = 0;
+    const postMock = vi.fn((path: string, body: unknown): Promise<unknown> => {
+      if (path === "/session/handshake") {
+        return Promise.resolve({
+          message: "ok",
+          protocolVersion: "1",
+          serverVersion: "mock-0.1.0",
+          status: "ok"
+        } satisfies HandshakeResponse);
+      }
+
+      if (path === "/jobs/request") {
+        requestedLocalExecutions.push((body as RequestJobRequest).localExecution);
+        jobCounter += 1;
+        return Promise.resolve({
+          ...job,
+          id:
+            jobCounter === 1
+              ? "11111111-1111-4111-8111-111111111111"
+              : "55555555-5555-4555-8555-555555555555",
+          task: null
+        });
+      }
+
+      if (path.endsWith("/result")) {
+        return Promise.resolve({
+          accepted: true,
+          findings: []
+        } satisfies SubmitResultResponse);
+      }
+
+      if (path === "/findings/sync" || path.endsWith("/heartbeat")) {
+        return Promise.resolve({ accepted: true });
+      }
+
+      return Promise.reject(new Error(`Unexpected POST ${path}`));
+    });
+    const client: HttpClient = {
+      get: (path, schema) => {
+        if (path.startsWith("/workflows/current")) {
+          return Promise.resolve(
+            schema.parse({
+              stages: [],
+              workflowId: "mock",
+              workflowVersion: "1.0.0"
+            })
+          );
+        }
+
+        if (path.startsWith("/jobs/")) {
+          return Promise.resolve(schema.parse(task));
+        }
+
+        return Promise.reject(new Error(`Unexpected GET ${path}`));
+      },
+      post: (path, body, schema) => postMock(path, body).then((payload) => schema.parse(payload))
+    };
+    const outputCallbacks = new Set<(event: TaskOutputEvent) => void>();
+    const exitCallbacks = new Set<(event: TaskExitEvent) => void>();
+    let startCounter = 0;
+    const taskService: TaskExecutionService = {
+      dispose: vi.fn(),
+      onExit: vi.fn((callback: (event: TaskExitEvent) => void): Unsubscribe => {
+        exitCallbacks.add(callback);
+        return () => exitCallbacks.delete(callback);
+      }),
+      onOutput: vi.fn((callback: (event: TaskOutputEvent) => void): Unsubscribe => {
+        outputCallbacks.add(callback);
+        return () => outputCallbacks.delete(callback);
+      }),
+      start: vi.fn(() => {
+        startCounter += 1;
+        const taskId =
+          startCounter === 1
+            ? "66666666-6666-4666-8666-666666666666"
+            : "77777777-7777-4777-8777-777777777777";
+        setTimeout(() => {
+          for (const callback of outputCallbacks) {
+            callback({
+              chunk: {
+                stream: "stdout",
+                text:
+                  startCounter === 1
+                    ? '{"ok":true,"check_factory":{"created":false,"path":"x"},"read_config":{"version":"unknown","mode":"unknown","locale":"tr-TR"}}\n'
+                    : '{"ok":true,"decision":"new","run_id":"ForgePilot-20260814-001"}\n',
+                timestamp: "2026-08-14T00:00:01.000Z"
+              },
+              providerId: PROVIDER_IDS.claudeCode,
+              taskId
+            });
+          }
+          for (const callback of exitCallbacks) {
+            callback({
+              exitInfo: {
+                exitCode: 0,
+                finishedAt: "2026-08-14T00:00:02.000Z",
+                signal: null
+              },
+              providerId: PROVIDER_IDS.claudeCode,
+              taskId
+            });
+          }
+        }, 0);
+
+        return Promise.resolve({
+          handle: {
+            id: taskId,
+            processId: 123,
+            providerId: PROVIDER_IDS.claudeCode
+          },
+          startedAt: "2026-08-14T00:00:01.000Z"
+        });
+      }),
+      stop: vi.fn(() => true)
+    };
+    const service = createJobService({
+      createClient: () => client,
+      runSelectRunJob: vi.fn(() => Promise.resolve(selectRunResult)),
+      runStartupJob: vi.fn(() => Promise.resolve(startupResult)),
+      taskExecutionService: taskService
+    });
+
+    const response = await service.runOnce({
+      model: "sonnet",
+      newRun: false,
+      project: projectFixture,
+      providerId: PROVIDER_IDS.claudeCode,
+      serverUrl: "http://localhost:4317",
+      stageId: "010-startup",
+      timeoutMs: 1_000
+    });
+
+    expect(taskService.start).toHaveBeenCalledTimes(2);
+    expect(requestedLocalExecutions).toEqual([
+      startupResult,
+      {
+        select_run: selectRunResult
+      }
+    ]);
+    expect(response.result.outputChunks.at(-1)?.text).toContain('"decision":"new"');
   });
 });

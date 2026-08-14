@@ -1,5 +1,5 @@
 {
-  "lastFingerprint": "289393efcf9ce2178c75aa4c4132eadf20a9a009",
+  "lastFingerprint": "2bfba39f173fac74ec29f402215600fe5d92a27b",
   "lastDate": "2026-08-14",
-  "lastContent": "- Added live activity panel to Dashboard showing step-by-step operation messages during stage runs\n- Added animated progress bar with scanning effect and real-time progress percentage updates\n- Added startup execution result section displaying `.ai-factory` directory and config file details\n- Added current operation status display that updates in real-time during job execution\n- Added activity tracking to job store with timed progress updates for startup stage runs"
+  "lastContent": "- Added select_run job to the startup flow that selects the AI Factory run folder using RULE-A03 after LLM verification passes\n- Extended the job service to chain a second provider verification when the first returns ok: true\n- Added run selection result display to the Dashboard with decision and run ID\n- Updated mock cloud to read the select_run rules file at runtime for the second job verification prompt\n- Added newRun option to job run requests and run selection logic supporting new, continue, and already_sealed decisions"
 }

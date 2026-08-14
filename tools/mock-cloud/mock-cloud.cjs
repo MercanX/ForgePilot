@@ -10,6 +10,9 @@ const CHECK_FACTORY_RULE_PATH =
 const READ_CONFIG_RULE_PATH =
   process.env.FORGEPILOT_STARTUP_READ_CONFIG_RULE ??
   "C:\\Github\\aiFactory\\.ai-factory\\010-Startup\\rules\\020-read_config.rules.md";
+const SELECT_RUN_RULE_PATH =
+  process.env.FORGEPILOT_STARTUP_SELECT_RUN_RULE ??
+  "C:\\Github\\aiFactory\\.ai-factory\\010-Startup\\rules\\030-select_run.rules.md";
 
 const sendJson = (response, statusCode, payload) => {
   response.writeHead(statusCode, {
@@ -64,16 +67,43 @@ const createStartupPrompt = (requestBody) => {
   ].join("\n");
 };
 
+const createSelectRunPrompt = (requestBody) => {
+  const selectRunRule = readRule(SELECT_RUN_RULE_PATH);
+
+  return [
+    `Project root: ${requestBody.project.rootPath}`,
+    "",
+    "--- kural (RULE-A03, 030-select_run.rules.md) ---",
+    selectRunRule,
+    "--- kural sonu ---",
+    "",
+    "Exe az once bu kuralin algoritmasini calistirdigini, su sonuca ulastigini iddia ediyor:",
+    "",
+    `exe_result: ${JSON.stringify(requestBody.localExecution?.select_run ?? null)}`,
+    "",
+    "Sen bunu yapmiyorsun - RULE-A03'un kontrol listesine gore, kendi Read/Bash'inle diske bakarak dogrula.",
+    "",
+    "Bitince, baska hicbir sey yazmadan, SON SATIRA tek satirlik JSON yaz:",
+    '- Gectiyse: exe_result\'u aynen ilet, {"ok": true, ...} ile sarmalayarak',
+    '- Gecmediyse: {"ok": false, "violation": "<hangi madde>", "detail": "<ne oldu>"}'
+  ].join("\n");
+};
+
+const createPrompt = (requestBody) =>
+  requestBody.localExecution?.select_run
+    ? createSelectRunPrompt(requestBody)
+    : createStartupPrompt(requestBody);
+
 const createTask = (jobId, requestBody) => ({
   id: randomUUID(),
   jobId,
   instructions: {
-    body: createStartupPrompt(requestBody),
+    body: createPrompt(requestBody),
     format: "plain-text",
     metadata: {
       localExecution: requestBody.localExecution ?? null,
       source: "mock-cloud",
-      stageId: "010-startup"
+      stageId: requestBody.localExecution?.select_run ? "010-startup:select-run" : "010-startup"
     }
   },
   timeoutMs: 300000
@@ -87,7 +117,7 @@ const createJob = (requestBody) => {
   return {
     id: jobId,
     runId,
-    stageId: "010-startup",
+    stageId: requestBody.localExecution?.select_run ? "010-startup:select-run" : "010-startup",
     providerId: requestBody.providerId,
     status: "received",
     task,

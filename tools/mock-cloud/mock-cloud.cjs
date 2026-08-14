@@ -71,6 +71,7 @@ const createTask = (jobId, requestBody) => ({
     body: createStartupPrompt(requestBody),
     format: "plain-text",
     metadata: {
+      localExecution: requestBody.localExecution ?? null,
       source: "mock-cloud",
       stageId: "010-startup"
     }

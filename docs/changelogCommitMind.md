@@ -2,6 +2,12 @@
 
 ## 2026-08-14
 
+- Added live activity panel to Dashboard showing step-by-step operation messages during stage runs
+- Added animated progress bar with scanning effect and real-time progress percentage updates
+- Added startup execution result section displaying `.ai-factory` directory and config file details
+- Added current operation status display that updates in real-time during job execution
+- Added activity tracking to job store with timed progress updates for startup stage runs
+
 - Added a project-specific dashboard page that displays AI Factory workflow stages and enables running the startup stage directly from the UI.
 - Introduced a new `jobs:workflow` IPC/preload surface for loading workflow data from the mock cloud.
 - Enhanced the startup job execution to perform local rule checks, ensuring the `.ai-factory` directory and configuration file exist before sending the cloud request.
@@ -16,6 +22,9 @@
   dosyalarini runtime'da okuyarak LLM dogrulama prompt'unu gercek rule
   icerikleriyle olusturuyor; Dashboard son satirdaki JSON sonucu ayiklayip
   gorunur hale getiriyor.
+- Dashboard'a `010-Startup` calisirken hareketli progress, guncel islem mesaji,
+  adim adim islem bilgisi ve exe'nin `.ai-factory`/config sonucunu gosteren
+  calisma geri bildirimi eklendi.
 - Proje listesindeki `Open` aksiyonu proje baglamli temiz Dashboard sayfasina
   gecis yapacak sekilde baglandi; Dashboard, mock cloud workflow stage listesini
   `jobs:workflow` IPC/preload yuzeyinden render ediyor ve ilk hazir stage olan

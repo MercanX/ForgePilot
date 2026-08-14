@@ -1,5 +1,5 @@
 {
-  "lastFingerprint": "1f2b112fe260a95271aecd7ac8d3dc0f5b49e1c8",
+  "lastFingerprint": "289393efcf9ce2178c75aa4c4132eadf20a9a009",
   "lastDate": "2026-08-14",
-  "lastContent": "- Added a project-specific dashboard page that displays AI Factory workflow stages and enables running the startup stage directly from the UI.\n- Introduced a new `jobs:workflow` IPC/preload surface for loading workflow data from the mock cloud.\n- Enhanced the startup job execution to perform local rule checks, ensuring the `.ai-factory` directory and configuration file exist before sending the cloud request.\n- Updated the project \"Open\" action to navigate to the dashboard and load the workflow for the selected project.\n- Added dashboard styling for stage lists, progress tracking, and responsive layout adjustments."
+  "lastContent": "- Added live activity panel to Dashboard showing step-by-step operation messages during stage runs\n- Added animated progress bar with scanning effect and real-time progress percentage updates\n- Added startup execution result section displaying `.ai-factory` directory and config file details\n- Added current operation status display that updates in real-time during job execution\n- Added activity tracking to job store with timed progress updates for startup stage runs"
 }

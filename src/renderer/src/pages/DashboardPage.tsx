@@ -24,16 +24,34 @@ const stageProgress = (stage: WorkflowStage): number => {
   return stage.status === "completed" ? 100 : 0;
 };
 
+type StartupExecutionMetadata = {
+  check_factory?: {
+    created?: boolean;
+    path?: string;
+  };
+  read_config?: {
+    locale?: string;
+    mode?: string;
+    version?: string;
+  };
+};
+
+const isStartupExecutionMetadata = (value: unknown): value is StartupExecutionMetadata =>
+  typeof value === "object" && value !== null;
+
 export const DashboardPage = (): ReactElement => {
   const activeProject = useProjectStore((state) => state.activeProject);
+  const activityEntries = useJobStore((state) => state.activityEntries);
   const providers = useProviderStore((state) => state.providers);
   const settings = useSettingsStore((state) => state.settings);
   const checkCloud = useJobStore((state) => state.checkCloud);
   const cloudMessage = useJobStore((state) => state.cloudMessage);
+  const currentOperation = useJobStore((state) => state.currentOperation);
   const errorMessage = useJobStore((state) => state.errorMessage);
   const isRunning = useJobStore((state) => state.isRunning);
   const lastRun = useJobStore((state) => state.lastRun);
   const loadWorkflow = useJobStore((state) => state.loadWorkflow);
+  const runProgress = useJobStore((state) => state.runProgress);
   const runCloudJob = useJobStore((state) => state.runCloudJob);
   const workflow = useJobStore((state) => state.workflow);
 
@@ -54,6 +72,16 @@ export const DashboardPage = (): ReactElement => {
     stages[0] ??
     null;
   const canStart = Boolean(activeProject && selectedProvider && activeStage && !isRunning);
+  const effectiveProgress = activeStage
+    ? isRunning
+      ? Math.max(stageProgress(activeStage), runProgress)
+      : stageProgress(activeStage)
+    : 0;
+  const startupExecution = useMemo(() => {
+    const metadata = lastRun?.job.task?.instructions.metadata.localExecution;
+
+    return isStartupExecutionMetadata(metadata) ? metadata : null;
+  }, [lastRun]);
   const validationJson = useMemo(() => {
     const text = lastRun?.result.outputChunks.map((chunk) => chunk.text).join("") ?? "";
     const lines = text
@@ -150,7 +178,11 @@ export const DashboardPage = (): ReactElement => {
                   <span className="stage-index">{String(index + 1).padStart(2, "0")}</span>
                   <div>
                     <strong>{stage.name}</strong>
-                    <span>{statusText[stage.status]}</span>
+                    <span>
+                      {isRunning && activeStage?.id === stage.id
+                        ? "Running"
+                        : statusText[stage.status]}
+                    </span>
                   </div>
                 </li>
               ))}
@@ -163,17 +195,64 @@ export const DashboardPage = (): ReactElement => {
             <p className="eyebrow">Current stage</p>
             <h2>{activeStage?.name ?? "Waiting for workflow"}</h2>
           </div>
-          <div className="progress-track" aria-label="Stage progress">
-            <span style={{ width: `${activeStage ? stageProgress(activeStage) : 0}%` }} />
+          <div
+            className={`progress-track${isRunning ? " is-running" : ""}`}
+            aria-label="Stage progress"
+          >
+            <span style={{ width: `${effectiveProgress}%` }} />
           </div>
           <div className="stage-detail-grid">
             <span>Agent</span>
             <strong>{activeStage?.currentAgent ?? "Not assigned"}</strong>
             <span>Operation</span>
-            <strong>{activeStage?.currentOperation ?? "Ready to start"}</strong>
+            <strong>
+              {isRunning ? currentOperation : (activeStage?.currentOperation ?? "Ready to start")}
+            </strong>
             <span>Model</span>
             <strong>{selectedModel ?? "No model selected"}</strong>
           </div>
+
+          <section className="activity-panel" aria-label="Stage activity">
+            <h3>Activity</h3>
+            {activityEntries.length === 0 ? (
+              <p>The stage has not started yet.</p>
+            ) : (
+              <ol>
+                {activityEntries.map((entry, index) => (
+                  <li
+                    className={isRunning && index === activityEntries.length - 1 ? "is-live" : ""}
+                    key={entry}
+                  >
+                    {entry}
+                  </li>
+                ))}
+              </ol>
+            )}
+          </section>
+
+          {startupExecution ? (
+            <section className="startup-result" aria-label="Startup execution result">
+              <h3>Exe Result</h3>
+              <dl>
+                <div>
+                  <dt>.ai-factory</dt>
+                  <dd>
+                    {startupExecution.check_factory?.created ? "Created" : "Already existed"} ·{" "}
+                    {startupExecution.check_factory?.path ?? "path yok"}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Config</dt>
+                  <dd>
+                    version: {startupExecution.read_config?.version ?? "unknown"} · mode:{" "}
+                    {startupExecution.read_config?.mode ?? "unknown"} · locale:{" "}
+                    {startupExecution.read_config?.locale ?? "tr-TR"}
+                  </dd>
+                </div>
+              </dl>
+            </section>
+          ) : null}
+
           <pre className="task-output" aria-live="polite">
             {validationJson
               ? JSON.stringify(validationJson, null, 2)

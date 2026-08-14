@@ -15,6 +15,9 @@ ile
 `C:\Github\aiFactory\.ai-factory\010-Startup\rules\020-read_config.rules.md`
 iceriklerini LLM dogrulama prompt'una yerlestirir.
 
+Dashboard, stage calisirken hareketli progress, guncel islem mesaji, adim adim
+islem bilgisi ve exe'nin `.ai-factory`/config sonucunu gosterir.
+
 ## Dogrulama
 
 - `corepack pnpm typecheck`

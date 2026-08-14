@@ -44,6 +44,9 @@ type StartupExecutionMetadata = {
   place_inputs?: {
     status?: string;
   };
+  seal_run?: {
+    decision?: string;
+  };
   select_run?: {
     decision?: string;
   };
@@ -52,28 +55,41 @@ type StartupExecutionMetadata = {
 const isStartupExecutionMetadata = (value: unknown): value is StartupExecutionMetadata =>
   typeof value === "object" && value !== null;
 
-const getFinalOperation = (lastRun: JobRunResponse): { message: string; progress: number } => {
+const getFinalOperation = (
+  lastRun: JobRunResponse
+): { message: string; progress: number; status: ActivityEntry["status"] } => {
   const metadata = lastRun.job.task?.instructions.metadata.localExecution;
 
   if (isStartupExecutionMetadata(metadata)) {
+    if (metadata.seal_run?.decision === "FAIL") {
+      return {
+        message: "Startup seal failed; review the missing files.",
+        progress: 100,
+        status: "blocked"
+      };
+    }
+
     if (metadata.place_inputs?.status === "waiting_for_input") {
       return {
         message: "Waiting for input review.",
-        progress: 86
+        progress: 86,
+        status: "blocked"
       };
     }
 
     if (metadata.select_run?.decision === "already_sealed") {
       return {
         message: "A valid sealed run already exists.",
-        progress: 100
+        progress: 100,
+        status: "completed"
       };
     }
   }
 
   return {
     message: "Stage completed.",
-    progress: 100
+    progress: 100,
+    status: "completed"
   };
 };
 
@@ -181,13 +197,10 @@ export const useJobStore = create<JobStoreState>((set) => ({
       set({
         activityEntries: [
           ...useJobStore.getState().activityEntries,
-          createActivityEntry(
-            "stage-result",
-            finalOperation.message,
-            finalOperation.progress === 100 ? "completed" : "blocked"
-          )
+          createActivityEntry("stage-result", finalOperation.message, finalOperation.status)
         ],
-        cloudMessage: finalOperation.progress === 100 ? "Last job completed" : "Waiting for input",
+        cloudMessage:
+          finalOperation.status === "completed" ? "Last job completed" : "Waiting for input",
         connected: true,
         currentOperation: finalOperation.message,
         isRunning: false,

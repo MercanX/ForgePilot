@@ -25,6 +25,14 @@ const stageProgress = (stage: WorkflowStage): number => {
 };
 
 type StartupExecutionMetadata = {
+  build_factory_manifest?: {
+    file_count?: number;
+    run_id?: string;
+  };
+  build_source_manifest?: {
+    file_count?: number;
+    run_id?: string;
+  };
   capture_git_state?: {
     has_git?: boolean;
     run_id?: string;
@@ -46,6 +54,12 @@ type StartupExecutionMetadata = {
   };
   select_run?: {
     decision?: string;
+    run_id?: string;
+  };
+  seal_run?: {
+    decision?: string;
+    missing?: string[];
+    pre_run_manifest_sha256?: string;
     run_id?: string;
   };
 };
@@ -388,6 +402,74 @@ export const DashboardPage = (): ReactElement => {
                 <div>
                   <dt>Files</dt>
                   <dd>git-head.txt · git-status.txt · working-tree.patch</dd>
+                </div>
+              </dl>
+            </section>
+          ) : null}
+
+          {startupExecution?.build_source_manifest ? (
+            <section className="startup-result" aria-label="Source manifest result">
+              <h3>Source Manifest</h3>
+              <dl>
+                <div>
+                  <dt>Files</dt>
+                  <dd>{startupExecution.build_source_manifest.file_count ?? "unknown"}</dd>
+                </div>
+                <div>
+                  <dt>Run ID</dt>
+                  <dd>{startupExecution.build_source_manifest.run_id ?? "unknown"}</dd>
+                </div>
+                <div>
+                  <dt>Output</dt>
+                  <dd>SOURCE_MANIFEST.csv</dd>
+                </div>
+              </dl>
+            </section>
+          ) : null}
+
+          {startupExecution?.build_factory_manifest ? (
+            <section className="startup-result" aria-label="Factory manifest result">
+              <h3>Factory Manifest</h3>
+              <dl>
+                <div>
+                  <dt>Files</dt>
+                  <dd>{startupExecution.build_factory_manifest.file_count ?? "unknown"}</dd>
+                </div>
+                <div>
+                  <dt>Run ID</dt>
+                  <dd>{startupExecution.build_factory_manifest.run_id ?? "unknown"}</dd>
+                </div>
+                <div>
+                  <dt>Output</dt>
+                  <dd>FACTORY_MANIFEST.csv</dd>
+                </div>
+              </dl>
+            </section>
+          ) : null}
+
+          {startupExecution?.seal_run ? (
+            <section className="startup-result" aria-label="Run seal result">
+              <h3>Run Seal</h3>
+              <dl>
+                <div>
+                  <dt>Decision</dt>
+                  <dd>{startupExecution.seal_run.decision ?? "unknown"}</dd>
+                </div>
+                <div>
+                  <dt>Run ID</dt>
+                  <dd>{startupExecution.seal_run.run_id ?? "unknown"}</dd>
+                </div>
+                <div>
+                  <dt>Manifest</dt>
+                  <dd>{startupExecution.seal_run.pre_run_manifest_sha256 ?? "unknown"}</dd>
+                </div>
+                <div>
+                  <dt>Missing</dt>
+                  <dd>
+                    {startupExecution.seal_run.missing?.length
+                      ? startupExecution.seal_run.missing.join(", ")
+                      : "None"}
+                  </dd>
                 </div>
               </dl>
             </section>

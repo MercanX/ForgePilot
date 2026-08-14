@@ -1,13 +1,19 @@
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 import {
+  runBuildFactoryManifestJob,
+  runBuildSourceManifestJob,
   runCaptureGitStateJob,
   runPlaceInputsJob,
+  runSealRunJob,
   runSelectRunJob,
   runStartupJob
 } from "@services/startup/startupJobService";
+
+const sha256 = (content: string): string => createHash("sha256").update(content).digest("hex");
 
 describe("startupJobService", () => {
   let tempRoot: string;
@@ -191,6 +197,98 @@ describe("startupJobService", () => {
     expect(result).toEqual({
       has_git: false,
       run_id: runId
+    });
+  });
+
+  it("builds a source manifest for non-excluded project files", async () => {
+    const runId = "sample-20260814-001";
+    const runPath = path.join(tempRoot, ".ai-factory-runs", runId);
+    await mkdir(path.join(tempRoot, "src"), { recursive: true });
+    await mkdir(path.join(tempRoot, "src", "vendor"), { recursive: true });
+    await mkdir(path.join(tempRoot, "node_modules"), { recursive: true });
+    await mkdir(runPath, { recursive: true });
+    await writeFile(path.join(tempRoot, "README.md"), "# Project\n", "utf8");
+    await writeFile(path.join(tempRoot, "src", "app.ts"), "console.log('ok');\n", "utf8");
+    await writeFile(path.join(tempRoot, "src", "vendor", "skip.ts"), "skip\n", "utf8");
+    await writeFile(path.join(tempRoot, "node_modules", "skip.js"), "skip\n", "utf8");
+
+    const result = await runBuildSourceManifestJob(tempRoot, runId);
+    const manifest = await readFile(path.join(runPath, "SOURCE_MANIFEST.csv"), "utf8");
+
+    expect(result).toEqual({
+      file_count: 2,
+      run_id: runId
+    });
+    expect(manifest).toContain("RelativePath,SHA256,Size\n");
+    expect(manifest).toContain(`README.md,${sha256("# Project\n")},10`);
+    expect(manifest).toContain(`src/app.ts,${sha256("console.log('ok');\n")},19`);
+    expect(manifest).not.toContain("vendor");
+    expect(manifest).not.toContain("node_modules");
+  });
+
+  it("builds a factory manifest with only top-level factory excludes", async () => {
+    const runId = "sample-20260814-001";
+    const runPath = path.join(tempRoot, ".ai-factory-runs", runId);
+    const factoryPath = path.join(tempRoot, ".ai-factory");
+    await mkdir(path.join(factoryPath, "reports"), { recursive: true });
+    await mkdir(path.join(factoryPath, "foo", "reports"), { recursive: true });
+    await mkdir(runPath, { recursive: true });
+    await writeFile(path.join(factoryPath, "factory.config.yaml"), "version: 1\n", "utf8");
+    await writeFile(path.join(factoryPath, "reports", "skip.txt"), "skip\n", "utf8");
+    await writeFile(path.join(factoryPath, "foo", "reports", "keep.txt"), "keep\n", "utf8");
+
+    const result = await runBuildFactoryManifestJob(tempRoot, runId);
+    const manifest = await readFile(path.join(runPath, "FACTORY_MANIFEST.csv"), "utf8");
+
+    expect(result).toEqual({
+      file_count: 2,
+      run_id: runId
+    });
+    expect(manifest).toContain(`factory.config.yaml,${sha256("version: 1\n")},11`);
+    expect(manifest).toContain(`foo/reports/keep.txt,${sha256("keep\n")},5`);
+    expect(manifest).not.toContain("reports/skip.txt");
+  });
+
+  it("seals a run when all startup outputs exist", async () => {
+    const runId = "sample-20260814-001";
+    const runPath = path.join(tempRoot, ".ai-factory-runs", runId);
+    await runStartupJob(tempRoot);
+    await mkdir(runPath, { recursive: true });
+
+    for (const fileName of [
+      "SCOPE.md",
+      "BASELINE.md",
+      "git-head.txt",
+      "git-status.txt",
+      "working-tree.patch",
+      "SOURCE_MANIFEST.csv",
+      "FACTORY_MANIFEST.csv"
+    ]) {
+      await writeFile(
+        path.join(runPath, fileName),
+        fileName.endsWith(".csv") ? "RelativePath,SHA256,Size\n" : `${fileName}\n`,
+        "utf8"
+      );
+    }
+
+    const result = await runSealRunJob(tempRoot, runId);
+    const preRunManifest = JSON.parse(
+      await readFile(path.join(runPath, "PRE_RUN_MANIFEST.json"), "utf8")
+    ) as { files: Record<string, string>; run_id: string };
+    const runSeal = JSON.parse(await readFile(path.join(runPath, "RUN_SEAL.json"), "utf8")) as {
+      decision: string;
+      missing: string[];
+      pre_run_manifest_sha256: string;
+    };
+
+    expect(result.decision).toBe("PASS");
+    expect(result.missing).toEqual([]);
+    expect(preRunManifest.run_id).toBe(runId);
+    expect(Object.keys(preRunManifest.files)).toHaveLength(7);
+    expect(runSeal).toMatchObject({
+      decision: "PASS",
+      missing: [],
+      pre_run_manifest_sha256: result.pre_run_manifest_sha256
     });
   });
 });

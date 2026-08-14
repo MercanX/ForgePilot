@@ -2,6 +2,14 @@
 
 ## 2026-08-14
 
+- `010-Startup` akisi `JOB.md` ile uyumlu olarak Job 5 `build_source_manifest`,
+  Job 6 `build_factory_manifest` ve Job 7 `seal_run` sonuna kadar baglandi.
+- Exe artik RULE-A06 ile `SOURCE_MANIFEST.csv`, RULE-A07 ile
+  `FACTORY_MANIFEST.csv`, RULE-A08 ile `PRE_RUN_MANIFEST.json` ve
+  `RUN_SEAL.json` uretiyor; her adimdan sonra mock cloud ilgili rule dosyasini
+  runtime'da okuyarak LLM dogrulama prompt'u olusturuyor.
+- Dashboard final manifest ve seal sonuclarini gosterecek sekilde genisletildi;
+  startup servis ve job zinciri testleri Job 7'ye kadar kapsandi.
 - Dashboard progress ve Activity listesi zamanlayici tahminlerinden cikarildi;
   `jobs:progress` push kanali ile JobService'in gercek handshake, workflow,
   local exe ve LLM dogrulama adimlarindan gelen olaylara baglandi.

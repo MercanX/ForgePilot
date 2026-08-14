@@ -560,7 +560,7 @@ describe("jobService", () => {
     expect(response.result.outputChunks.at(-1)?.text).toContain('"waiting_for_input"');
   });
 
-  it("requests capture_git_state after place_inputs verification is ready", async () => {
+  it("requests the remaining startup jobs after place_inputs verification is ready", async () => {
     const startupResult = {
       check_factory: {
         created: false,
@@ -586,6 +586,20 @@ describe("jobService", () => {
       has_git: false,
       run_id: "ForgePilot-20260814-001"
     };
+    const sourceManifestResult = {
+      file_count: 2,
+      run_id: "ForgePilot-20260814-001"
+    };
+    const factoryManifestResult = {
+      file_count: 1,
+      run_id: "ForgePilot-20260814-001"
+    };
+    const sealRunResult = {
+      decision: "PASS" as const,
+      missing: [],
+      pre_run_manifest_sha256: "abc123",
+      run_id: "ForgePilot-20260814-001"
+    };
     const requestedLocalExecutions: unknown[] = [];
     let jobCounter = 0;
     const postMock = vi.fn((path: string, body: unknown): Promise<unknown> => {
@@ -604,13 +618,15 @@ describe("jobService", () => {
         return Promise.resolve({
           ...job,
           id:
-            jobCounter === 1
-              ? "11111111-1111-4111-8111-111111111111"
-              : jobCounter === 2
-                ? "55555555-5555-4555-8555-555555555555"
-                : jobCounter === 3
-                  ? "88888888-8888-4888-8888-888888888888"
-                  : "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            [
+              "11111111-1111-4111-8111-111111111111",
+              "55555555-5555-4555-8555-555555555555",
+              "88888888-8888-4888-8888-888888888888",
+              "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+              "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+              "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+              "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+            ][jobCounter - 1] ?? "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
           task: null
         });
       }
@@ -667,13 +683,19 @@ describe("jobService", () => {
           "66666666-6666-4666-8666-666666666666",
           "77777777-7777-4777-8777-777777777777",
           "99999999-9999-4999-8999-999999999999",
-          "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+          "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+          "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+          "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
         ];
         const outputs = [
           '{"ok":true,"check_factory":{"created":false,"path":"x"},"read_config":{"version":"unknown","mode":"unknown","locale":"tr-TR"}}\n',
           '{"ok":true,"decision":"continue","run_id":"ForgePilot-20260814-001"}\n',
           '{"ok":true,"status":"ready","scope":"placed","baseline":"placed","run_id":"ForgePilot-20260814-001"}\n',
-          '{"ok":true,"has_git":false,"run_id":"ForgePilot-20260814-001"}\n'
+          '{"ok":true,"has_git":false,"run_id":"ForgePilot-20260814-001"}\n',
+          '{"ok":true,"file_count":2,"run_id":"ForgePilot-20260814-001"}\n',
+          '{"ok":true,"file_count":1,"run_id":"ForgePilot-20260814-001"}\n',
+          '{"ok":true,"decision":"PASS","missing":[],"pre_run_manifest_sha256":"abc123","run_id":"ForgePilot-20260814-001"}\n'
         ];
         const taskId = taskIds[startCounter - 1] ?? "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
         const output =
@@ -717,8 +739,11 @@ describe("jobService", () => {
     };
     const service = createJobService({
       createClient: () => client,
+      runBuildFactoryManifestJob: vi.fn(() => Promise.resolve(factoryManifestResult)),
+      runBuildSourceManifestJob: vi.fn(() => Promise.resolve(sourceManifestResult)),
       runCaptureGitStateJob: vi.fn(() => Promise.resolve(captureGitStateResult)),
       runPlaceInputsJob: vi.fn(() => Promise.resolve(placeInputsResult)),
+      runSealRunJob: vi.fn(() => Promise.resolve(sealRunResult)),
       runSelectRunJob: vi.fn(() => Promise.resolve(selectRunResult)),
       runStartupJob: vi.fn(() => Promise.resolve(startupResult)),
       taskExecutionService: taskService
@@ -734,7 +759,7 @@ describe("jobService", () => {
       timeoutMs: 1_000
     });
 
-    expect(taskService.start).toHaveBeenCalledTimes(4);
+    expect(taskService.start).toHaveBeenCalledTimes(7);
     expect(requestedLocalExecutions).toEqual([
       startupResult,
       {
@@ -745,8 +770,17 @@ describe("jobService", () => {
       },
       {
         capture_git_state: captureGitStateResult
+      },
+      {
+        build_source_manifest: sourceManifestResult
+      },
+      {
+        build_factory_manifest: factoryManifestResult
+      },
+      {
+        seal_run: sealRunResult
       }
     ]);
-    expect(response.result.outputChunks.at(-1)?.text).toContain('"has_git":false');
+    expect(response.result.outputChunks.at(-1)?.text).toContain('"decision":"PASS"');
   });
 });

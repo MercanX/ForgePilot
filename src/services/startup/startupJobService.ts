@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { copyFile, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -31,6 +32,18 @@ export type CaptureGitStateResult = {
   run_id: string;
 };
 
+export type ManifestResult = {
+  file_count: number;
+  run_id: string;
+};
+
+export type SealRunResult = {
+  decision: "FAIL" | "PASS";
+  missing: string[];
+  pre_run_manifest_sha256: string;
+  run_id: string;
+};
+
 const TEMPLATE_MARKER =
   "<!-- STARTUP_REVIEW_REQUIRED: Bu dosyayi kontrol edin, gerekli degisiklikleri yaptiktan sonra onaylamak icin bu satiri silin. -->";
 const CONFIG_FILE = "factory.config.yaml";
@@ -39,6 +52,7 @@ const RUN_ID_PATTERN = /^.+-\d{8}-\d{3}$/;
 const RUNS_DIR = ".ai-factory-runs";
 const RUN_SEAL_FILE = "RUN_SEAL.json";
 const NO_GIT_REPOSITORY = "NO GIT REPOSITORY\n";
+const MANIFEST_HEADER = "RelativePath,SHA256,Size";
 const SOURCE_EXCLUDE = new Set([
   ".ai-factory",
   ".ai-factory-runs",
@@ -47,6 +61,24 @@ const SOURCE_EXCLUDE = new Set([
   "node_modules",
   "vendor"
 ]);
+const FACTORY_TOP_LEVEL_EXCLUDE = new Set([
+  "artifacts",
+  "cache",
+  "context",
+  "logs",
+  "memory",
+  "reports",
+  "state"
+]);
+const SEALED_FILES = [
+  "SCOPE.md",
+  "BASELINE.md",
+  "git-head.txt",
+  "git-status.txt",
+  "working-tree.patch",
+  "SOURCE_MANIFEST.csv",
+  "FACTORY_MANIFEST.csv"
+];
 const SUPPORTED_LOCALES = new Set(["tr-TR", "en-US", "de-DE"]);
 const DEFAULT_CONFIG = [
   "version: unknown",
@@ -440,4 +472,239 @@ export const runCaptureGitStateJob = async (
       run_id: runId
     };
   }
+};
+
+type ManifestEntry = {
+  relativePath: string;
+  sha256: string;
+  size: number;
+};
+
+const toPosixRelative = (rootPath: string, filePath: string): string =>
+  path.relative(rootPath, filePath).split(path.sep).join("/");
+
+const sha256 = (content: Buffer): string => createHash("sha256").update(content).digest("hex");
+
+const collectManifestEntries = async (
+  rootPath: string,
+  shouldExcludeRelativePath: (relativePath: string) => boolean
+): Promise<ManifestEntry[]> => {
+  const entries: ManifestEntry[] = [];
+
+  const visit = async (directoryPath: string): Promise<void> => {
+    const directoryEntries = await readdir(directoryPath, { withFileTypes: true });
+
+    for (const entry of directoryEntries) {
+      if (entry.isSymbolicLink()) {
+        continue;
+      }
+
+      const entryPath = path.join(directoryPath, entry.name);
+      const relativePath = toPosixRelative(rootPath, entryPath);
+
+      if (entry.isDirectory()) {
+        await visit(entryPath);
+        continue;
+      }
+
+      if (!entry.isFile() || shouldExcludeRelativePath(relativePath)) {
+        continue;
+      }
+
+      const content = await readFile(entryPath);
+      entries.push({
+        relativePath,
+        sha256: sha256(content),
+        size: content.byteLength
+      });
+    }
+  };
+
+  await visit(rootPath);
+
+  return entries.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+};
+
+const writeCsvManifest = async (manifestPath: string, entries: ManifestEntry[]): Promise<void> => {
+  await writeFile(
+    manifestPath,
+    [
+      MANIFEST_HEADER,
+      ...entries.map((entry) => `${entry.relativePath},${entry.sha256},${entry.size}`),
+      ""
+    ].join("\n"),
+    "utf8"
+  );
+};
+
+export const runBuildSourceManifestJob = async (
+  projectRootPath: string,
+  runId: string
+): Promise<ManifestResult> => {
+  const runPath = path.join(projectRootPath, RUNS_DIR, runId);
+
+  if (!(await isDirectory(runPath))) {
+    throw new Error(`Run directory not found: ${runPath}`);
+  }
+
+  const entries = await collectManifestEntries(projectRootPath, (relativePath) =>
+    relativePath.split("/").some((part) => SOURCE_EXCLUDE.has(part))
+  );
+
+  await writeCsvManifest(path.join(runPath, "SOURCE_MANIFEST.csv"), entries);
+
+  return {
+    file_count: entries.length,
+    run_id: runId
+  };
+};
+
+export const runBuildFactoryManifestJob = async (
+  projectRootPath: string,
+  runId: string
+): Promise<ManifestResult> => {
+  const runPath = path.join(projectRootPath, RUNS_DIR, runId);
+  const factoryPath = path.join(projectRootPath, FACTORY_DIR);
+
+  if (!(await isDirectory(runPath))) {
+    throw new Error(`Run directory not found: ${runPath}`);
+  }
+
+  if (!(await isDirectory(factoryPath))) {
+    throw new Error(`Factory directory not found: ${factoryPath}`);
+  }
+
+  const entries = await collectManifestEntries(factoryPath, (relativePath) => {
+    const firstSegment = relativePath.split("/")[0] ?? "";
+
+    return FACTORY_TOP_LEVEL_EXCLUDE.has(firstSegment);
+  });
+
+  await writeCsvManifest(path.join(runPath, "FACTORY_MANIFEST.csv"), entries);
+
+  return {
+    file_count: entries.length,
+    run_id: runId
+  };
+};
+
+const countCsvDataRows = async (csvPath: string): Promise<number> => {
+  const content = await readFile(csvPath, "utf8");
+  const lines = content.split(/\r?\n/).filter((line) => line.length > 0);
+
+  return Math.max(0, lines.length - 1);
+};
+
+const findPreviousPassRun = async (
+  projectRootPath: string,
+  currentRunId: string
+): Promise<{ pre_run_manifest_sha256: string; run_id: string } | null> => {
+  const runsPath = path.join(projectRootPath, RUNS_DIR);
+  const previousRunIds = (await listRunIds(runsPath)).filter((runId) => runId < currentRunId);
+  const latestPreviousRunId = previousRunIds.at(-1);
+
+  if (!latestPreviousRunId) {
+    return null;
+  }
+
+  try {
+    const seal = JSON.parse(
+      await readFile(path.join(runsPath, latestPreviousRunId, RUN_SEAL_FILE), "utf8")
+    ) as unknown;
+
+    if (
+      typeof seal === "object" &&
+      seal !== null &&
+      (seal as { decision?: unknown }).decision === "PASS" &&
+      typeof (seal as { pre_run_manifest_sha256?: unknown }).pre_run_manifest_sha256 === "string"
+    ) {
+      return {
+        pre_run_manifest_sha256: (seal as { pre_run_manifest_sha256: string })
+          .pre_run_manifest_sha256,
+        run_id: latestPreviousRunId
+      };
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+};
+
+export const runSealRunJob = async (
+  projectRootPath: string,
+  runId: string
+): Promise<SealRunResult> => {
+  const runPath = path.join(projectRootPath, RUNS_DIR, runId);
+
+  if (!(await isDirectory(runPath))) {
+    throw new Error(`Run directory not found: ${runPath}`);
+  }
+
+  const config = parseFactoryConfig(
+    await readFile(path.join(projectRootPath, FACTORY_DIR, CONFIG_FILE), "utf8")
+  );
+  const files: Record<string, string> = {};
+  const missing: string[] = [];
+
+  for (const fileName of SEALED_FILES) {
+    const filePath = path.join(runPath, fileName);
+
+    if (await isFile(filePath)) {
+      files[fileName] = sha256(await readFile(filePath));
+    } else {
+      missing.push(`${fileName} uretilemedi`);
+    }
+  }
+
+  const previousRun =
+    config.mode === "continuation" ? await findPreviousPassRun(projectRootPath, runId) : null;
+  const warnings =
+    config.mode === "continuation" && !previousRun
+      ? ["mode continuation, ancak devam edilecek PASS muhur bulunamadi"]
+      : [];
+  const createdAt = new Date().toISOString();
+  const preRunManifest = {
+    counts: {
+      factory_files: await countCsvDataRows(path.join(runPath, "FACTORY_MANIFEST.csv")).catch(
+        () => 0
+      ),
+      source_files: await countCsvDataRows(path.join(runPath, "SOURCE_MANIFEST.csv")).catch(() => 0)
+    },
+    created_at: createdAt,
+    factory_version: config.version,
+    files,
+    previous_run: previousRun,
+    project_mode: config.mode,
+    project_root: path.basename(projectRootPath),
+    run_id: runId
+  };
+  const preRunManifestPath = path.join(runPath, "PRE_RUN_MANIFEST.json");
+  await writeFile(preRunManifestPath, `${JSON.stringify(preRunManifest, null, 2)}\n`, "utf8");
+
+  const preRunManifestSha256 = sha256(await readFile(preRunManifestPath));
+  const decision = missing.length === 0 ? "PASS" : "FAIL";
+  const runSeal = {
+    created_at: createdAt,
+    decision,
+    factory_version: config.version,
+    missing,
+    pre_run_manifest_sha256: preRunManifestSha256,
+    previous_run: previousRun,
+    project_mode: config.mode,
+    run_id: runId,
+    warnings
+  };
+  await writeFile(
+    path.join(runPath, RUN_SEAL_FILE),
+    `${JSON.stringify(runSeal, null, 2)}\n`,
+    "utf8"
+  );
+
+  return {
+    decision,
+    missing,
+    pre_run_manifest_sha256: preRunManifestSha256,
+    run_id: runId
+  };
 };

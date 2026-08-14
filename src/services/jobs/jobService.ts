@@ -31,8 +31,11 @@ import type { ProviderId } from "@shared/schemas/provider";
 
 import { createHttpClient, type HttpClient } from "../api/httpClient";
 import {
+  runBuildFactoryManifestJob,
+  runBuildSourceManifestJob,
   runCaptureGitStateJob,
   runPlaceInputsJob,
+  runSealRunJob,
   runSelectRunJob,
   runStartupJob
 } from "../startup/startupJobService";
@@ -61,8 +64,11 @@ export type JobRunProgressListener = (event: JobRunProgressEvent) => void;
 type JobServiceOptions = {
   createClient?: (serverUrl: string) => HttpClient;
   desktopVersion?: string;
+  runBuildFactoryManifestJob?: typeof runBuildFactoryManifestJob;
+  runBuildSourceManifestJob?: typeof runBuildSourceManifestJob;
   runCaptureGitStateJob?: typeof runCaptureGitStateJob;
   runPlaceInputsJob?: typeof runPlaceInputsJob;
+  runSealRunJob?: typeof runSealRunJob;
   runSelectRunJob?: typeof runSelectRunJob;
   runStartupJob?: typeof runStartupJob;
   taskExecutionService?: TaskExecutionService;
@@ -87,8 +93,13 @@ export const createJobService = (options: JobServiceOptions = {}): JobService =>
   const createClient = createClientFactory(options);
   const taskExecutionService = options.taskExecutionService ?? createTaskExecutionService();
   const desktopVersion = options.desktopVersion ?? "0.1.0";
+  const executeBuildFactoryManifestJob =
+    options.runBuildFactoryManifestJob ?? runBuildFactoryManifestJob;
+  const executeBuildSourceManifestJob =
+    options.runBuildSourceManifestJob ?? runBuildSourceManifestJob;
   const executeCaptureGitStateJob = options.runCaptureGitStateJob ?? runCaptureGitStateJob;
   const executePlaceInputsJob = options.runPlaceInputsJob ?? runPlaceInputsJob;
+  const executeSealRunJob = options.runSealRunJob ?? runSealRunJob;
   const executeSelectRunJob = options.runSelectRunJob ?? runSelectRunJob;
   const executeStartupJob = options.runStartupJob ?? runStartupJob;
 
@@ -233,7 +244,10 @@ export const createJobService = (options: JobServiceOptions = {}): JobService =>
       });
       onProgress?.({
         message: "LLM provider process is running; waiting for verification output.",
-        progress: Math.min(progressStarted + 4, progressCompleted - 1),
+        progress:
+          progressCompleted > progressStarted
+            ? Math.min(progressStarted + 4, progressCompleted - 1)
+            : progressStarted,
         projectId: request.project.id,
         stageId: request.stageId,
         status: "started",
@@ -493,7 +507,7 @@ export const createJobService = (options: JobServiceOptions = {}): JobService =>
       stepId: "job-4-local"
     });
 
-    return runProviderVerification(
+    const captureGitStateVerification = await runProviderVerification(
       request,
       {
         capture_git_state: captureGitStateResult
@@ -501,6 +515,118 @@ export const createJobService = (options: JobServiceOptions = {}): JobService =>
       onProgress,
       "job-4-llm",
       96,
+      97
+    );
+    const captureGitStateJson = getLastJsonObject(captureGitStateVerification.result.outputChunks);
+
+    if (captureGitStateJson?.ok !== true) {
+      emit(request, onProgress, {
+        message: "Job 4 verification did not pass; the stage stopped.",
+        progress: 97,
+        status: "failed",
+        stepId: "job-4-llm"
+      });
+      return captureGitStateVerification;
+    }
+
+    emit(request, onProgress, {
+      message: "Job 5 started: building SOURCE_MANIFEST.csv.",
+      progress: 97,
+      status: "started",
+      stepId: "job-5-local"
+    });
+    const sourceManifestResult = await executeBuildSourceManifestJob(
+      request.project.rootPath,
+      selectRunResult.run_id
+    );
+    emit(request, onProgress, {
+      message: `Job 5 local execution completed with ${sourceManifestResult.file_count} source files.`,
+      progress: 98,
+      status: "completed",
+      stepId: "job-5-local"
+    });
+    const sourceManifestVerification = await runProviderVerification(
+      request,
+      {
+        build_source_manifest: sourceManifestResult
+      },
+      onProgress,
+      "job-5-llm",
+      98,
+      98
+    );
+    const sourceManifestJson = getLastJsonObject(sourceManifestVerification.result.outputChunks);
+
+    if (sourceManifestJson?.ok !== true) {
+      emit(request, onProgress, {
+        message: "Job 5 verification did not pass; the stage stopped.",
+        progress: 98,
+        status: "failed",
+        stepId: "job-5-llm"
+      });
+      return sourceManifestVerification;
+    }
+
+    emit(request, onProgress, {
+      message: "Job 6 started: building FACTORY_MANIFEST.csv.",
+      progress: 98,
+      status: "started",
+      stepId: "job-6-local"
+    });
+    const factoryManifestResult = await executeBuildFactoryManifestJob(
+      request.project.rootPath,
+      selectRunResult.run_id
+    );
+    emit(request, onProgress, {
+      message: `Job 6 local execution completed with ${factoryManifestResult.file_count} factory files.`,
+      progress: 99,
+      status: "completed",
+      stepId: "job-6-local"
+    });
+    const factoryManifestVerification = await runProviderVerification(
+      request,
+      {
+        build_factory_manifest: factoryManifestResult
+      },
+      onProgress,
+      "job-6-llm",
+      99,
+      99
+    );
+    const factoryManifestJson = getLastJsonObject(factoryManifestVerification.result.outputChunks);
+
+    if (factoryManifestJson?.ok !== true) {
+      emit(request, onProgress, {
+        message: "Job 6 verification did not pass; the stage stopped.",
+        progress: 99,
+        status: "failed",
+        stepId: "job-6-llm"
+      });
+      return factoryManifestVerification;
+    }
+
+    emit(request, onProgress, {
+      message: "Job 7 started: sealing the startup run.",
+      progress: 99,
+      status: "started",
+      stepId: "job-7-local"
+    });
+    const sealRunResult = await executeSealRunJob(request.project.rootPath, selectRunResult.run_id);
+    emit(request, onProgress, {
+      message: `Job 7 local execution completed with decision: ${sealRunResult.decision}.`,
+      progress: 100,
+      status: sealRunResult.decision === "PASS" ? "completed" : "blocked",
+      stepId: "job-7-local"
+    });
+
+    return runProviderVerification(
+      request,
+      {
+        seal_run: sealRunResult
+      },
+      onProgress,
+      "job-7-llm",
+      100,
       100
     );
   };

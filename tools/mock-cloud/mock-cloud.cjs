@@ -19,6 +19,15 @@ const PLACE_INPUTS_RULE_PATH =
 const CAPTURE_GIT_STATE_RULE_PATH =
   process.env.FORGEPILOT_STARTUP_CAPTURE_GIT_STATE_RULE ??
   "C:\\Github\\aiFactory\\.ai-factory\\010-Startup\\rules\\050-capture_git_state.rules.md";
+const BUILD_SOURCE_MANIFEST_RULE_PATH =
+  process.env.FORGEPILOT_STARTUP_BUILD_SOURCE_MANIFEST_RULE ??
+  "C:\\Github\\aiFactory\\.ai-factory\\010-Startup\\rules\\060-build_source_manifest.rules.md";
+const BUILD_FACTORY_MANIFEST_RULE_PATH =
+  process.env.FORGEPILOT_STARTUP_BUILD_FACTORY_MANIFEST_RULE ??
+  "C:\\Github\\aiFactory\\.ai-factory\\010-Startup\\rules\\070-build_factory_manifest.rules.md";
+const SEAL_RUN_RULE_PATH =
+  process.env.FORGEPILOT_STARTUP_SEAL_RUN_RULE ??
+  "C:\\Github\\aiFactory\\.ai-factory\\010-Startup\\rules\\080-seal_run.rules.md";
 
 const sendJson = (response, statusCode, payload) => {
   response.writeHead(statusCode, {
@@ -139,16 +148,113 @@ const createCaptureGitStatePrompt = (requestBody) => {
   ].join("\n");
 };
 
-const createPrompt = (requestBody) =>
-  requestBody.localExecution?.capture_git_state
-    ? createCaptureGitStatePrompt(requestBody)
-    : requestBody.localExecution?.place_inputs
-      ? createPlaceInputsPrompt(requestBody)
-      : requestBody.localExecution?.select_run
-        ? createSelectRunPrompt(requestBody)
-        : createStartupPrompt(requestBody);
+const createBuildSourceManifestPrompt = (requestBody) => {
+  const rule = readRule(BUILD_SOURCE_MANIFEST_RULE_PATH);
+
+  return [
+    `Project root: ${requestBody.project.rootPath}`,
+    "",
+    "--- kural (RULE-A06, 060-build_source_manifest.rules.md) ---",
+    rule,
+    "--- kural sonu ---",
+    "",
+    "Exe az once bu kuralin algoritmasini calistirdigini, su sonuca ulastigini iddia ediyor:",
+    "",
+    `exe_result: ${JSON.stringify(requestBody.localExecution?.build_source_manifest ?? null)}`,
+    "",
+    "Sen bunu yapmiyorsun - RULE-A06'nin kontrol listesine gore, kendi Read/Bash'inle diske bakarak ve birkac dosyanin hash'ini kendin hesaplayarak dogrula.",
+    "",
+    "Bitince, baska hicbir sey yazmadan, SON SATIRA tek satirlik JSON yaz:",
+    '- Gectiyse: exe_result\'u aynen ilet, {"ok": true, ...} ile sarmalayarak',
+    '- Gecmediyse: {"ok": false, "violation": "<hangi madde>", "detail": "<ne oldu>"}'
+  ].join("\n");
+};
+
+const createBuildFactoryManifestPrompt = (requestBody) => {
+  const rule = readRule(BUILD_FACTORY_MANIFEST_RULE_PATH);
+
+  return [
+    `Project root: ${requestBody.project.rootPath}`,
+    "",
+    "--- kural (RULE-A07, 070-build_factory_manifest.rules.md) ---",
+    rule,
+    "--- kural sonu ---",
+    "",
+    "Exe az once bu kuralin algoritmasini calistirdigini, su sonuca ulastigini iddia ediyor:",
+    "",
+    `exe_result: ${JSON.stringify(requestBody.localExecution?.build_factory_manifest ?? null)}`,
+    "",
+    "Sen bunu yapmiyorsun - RULE-A07'nin kontrol listesine gore, kendi Read/Bash'inle diske bakarak ve birkac dosyanin hash'ini kendin hesaplayarak dogrula.",
+    "",
+    "Bitince, baska hicbir sey yazmadan, SON SATIRA tek satirlik JSON yaz:",
+    '- Gectiyse: exe_result\'u aynen ilet, {"ok": true, ...} ile sarmalayarak',
+    '- Gecmediyse: {"ok": false, "violation": "<hangi madde>", "detail": "<ne oldu>"}'
+  ].join("\n");
+};
+
+const createSealRunPrompt = (requestBody) => {
+  const rule = readRule(SEAL_RUN_RULE_PATH);
+
+  return [
+    `Project root: ${requestBody.project.rootPath}`,
+    "",
+    "--- kural (RULE-A08, 080-seal_run.rules.md) ---",
+    rule,
+    "--- kural sonu ---",
+    "",
+    "Exe az once bu kuralin algoritmasini calistirdigini, su sonuca ulastigini iddia ediyor:",
+    "",
+    `exe_result: ${JSON.stringify(requestBody.localExecution?.seal_run ?? null)}`,
+    "",
+    "Sen bunu yapmiyorsun - RULE-A08'in kontrol listesine gore, kendi Read/Bash'inle diske bakarak 7 dosyanin hash'ini kendin hesaplayarak dogrula.",
+    "",
+    "Bitince, baska hicbir sey yazmadan, SON SATIRA tek satirlik JSON yaz:",
+    '- Gectiyse: exe_result\'u aynen ilet, {"ok": true, ...} ile sarmalayarak',
+    '- Gecmediyse: {"ok": false, "violation": "<hangi madde>", "detail": "<ne oldu>"}'
+  ].join("\n");
+};
+
+const createPrompt = (requestBody) => {
+  if (requestBody.localExecution?.seal_run) {
+    return createSealRunPrompt(requestBody);
+  }
+
+  if (requestBody.localExecution?.build_factory_manifest) {
+    return createBuildFactoryManifestPrompt(requestBody);
+  }
+
+  if (requestBody.localExecution?.build_source_manifest) {
+    return createBuildSourceManifestPrompt(requestBody);
+  }
+
+  if (requestBody.localExecution?.capture_git_state) {
+    return createCaptureGitStatePrompt(requestBody);
+  }
+
+  if (requestBody.localExecution?.place_inputs) {
+    return createPlaceInputsPrompt(requestBody);
+  }
+
+  if (requestBody.localExecution?.select_run) {
+    return createSelectRunPrompt(requestBody);
+  }
+
+  return createStartupPrompt(requestBody);
+};
 
 const getStageId = (requestBody) => {
+  if (requestBody.localExecution?.seal_run) {
+    return "010-startup:seal-run";
+  }
+
+  if (requestBody.localExecution?.build_factory_manifest) {
+    return "010-startup:build-factory-manifest";
+  }
+
+  if (requestBody.localExecution?.build_source_manifest) {
+    return "010-startup:build-source-manifest";
+  }
+
   if (requestBody.localExecution?.capture_git_state) {
     return "010-startup:capture-git-state";
   }

@@ -10,7 +10,7 @@ type ProjectStoreState = {
   statusMessage: string;
   addProject: () => Promise<void>;
   loadProjects: () => Promise<void>;
-  openProject: (projectId: string) => Promise<void>;
+  openProject: (projectId: string) => Promise<boolean>;
   removeProject: (projectId: string) => Promise<void>;
 };
 
@@ -72,8 +72,10 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => ({
         projects,
         statusMessage: "Project opened"
       });
+      return true;
     } catch (error) {
       set({ errorMessage: getErrorMessage(error), isLoading: false, statusMessage: "Ready" });
+      return false;
     }
   },
 

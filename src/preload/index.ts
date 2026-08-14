@@ -5,7 +5,8 @@ import type {
   CloudConnectionStatus,
   CloudStatusRequest,
   JobRunRequest,
-  JobRunResponse
+  JobRunResponse,
+  WorkflowResponse
 } from "@shared/schemas/cloud-api";
 import type { AppPingResponse } from "@shared/schemas/ipc";
 import type {
@@ -66,6 +67,8 @@ const forgepilotApi = {
   jobs: {
     status: (request: CloudStatusRequest): Promise<CloudConnectionStatus> =>
       ipcRenderer.invoke(IPC_CHANNELS.jobs.status, request),
+    workflow: (projectId: string): Promise<WorkflowResponse> =>
+      ipcRenderer.invoke(IPC_CHANNELS.jobs.workflow, { projectId }),
     runOnce: (request: JobRunRequest): Promise<JobRunResponse> =>
       ipcRenderer.invoke(IPC_CHANNELS.jobs.runOnce, request)
   },

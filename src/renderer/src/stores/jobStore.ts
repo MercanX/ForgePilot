@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-import type { JobRunResponse } from "@shared/schemas/cloud-api";
+import type { JobRunResponse, WorkflowResponse } from "@shared/schemas/cloud-api";
 import type { Project } from "@shared/schemas/project";
 import type { ProviderDetectionResult } from "@shared/schemas/provider";
 
@@ -10,11 +10,14 @@ type JobStoreState = {
   errorMessage: string | null;
   isRunning: boolean;
   lastRun: JobRunResponse | null;
+  workflow: WorkflowResponse | null;
   checkCloud: (serverUrl?: string) => Promise<void>;
+  loadWorkflow: (projectId: string) => Promise<void>;
   runCloudJob: (
     project: Project,
     provider: ProviderDetectionResult,
     model: string | null,
+    stageId: string | null,
     serverUrl?: string
   ) => Promise<void>;
 };
@@ -30,6 +33,7 @@ export const useJobStore = create<JobStoreState>((set) => ({
   errorMessage: null,
   isRunning: false,
   lastRun: null,
+  workflow: null,
 
   checkCloud: async (serverUrl = DEFAULT_SERVER_URL) => {
     try {
@@ -50,7 +54,19 @@ export const useJobStore = create<JobStoreState>((set) => ({
     }
   },
 
-  runCloudJob: async (project, provider, model, serverUrl = DEFAULT_SERVER_URL) => {
+  loadWorkflow: async (projectId) => {
+    try {
+      const workflow = await window.forgepilot.jobs.workflow(projectId);
+      set({ errorMessage: null, workflow });
+    } catch (error) {
+      set({
+        errorMessage: getErrorMessage(error),
+        workflow: null
+      });
+    }
+  },
+
+  runCloudJob: async (project, provider, model, stageId, serverUrl = DEFAULT_SERVER_URL) => {
     set({ errorMessage: null, isRunning: true });
 
     try {
@@ -59,6 +75,7 @@ export const useJobStore = create<JobStoreState>((set) => ({
         project,
         providerId: provider.id,
         serverUrl,
+        stageId,
         timeoutMs: 300_000
       });
       set({
@@ -67,6 +84,7 @@ export const useJobStore = create<JobStoreState>((set) => ({
         isRunning: false,
         lastRun
       });
+      await useJobStore.getState().loadWorkflow(project.id);
     } catch (error) {
       set({
         cloudMessage: "Job failed",

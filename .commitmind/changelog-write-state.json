@@ -1,5 +1,5 @@
 {
-  "lastFingerprint": "49434a8f6569e92817b2067aa6ab0481ac80adec",
-  "lastDate": "2026-08-13",
-  "lastContent": "- Added AI Factory Cloud API client foundation with HTTPS-only enforcement and localhost dev exception.\n- Introduced Electron safeStorage-based credential store for secure token persistence.\n- Added job service orchestrating handshake, workflow, job request, task execution, result submission, and findings sync flows.\n- Added local mock cloud server with `dev:mock-cloud` script, supporting handshake, workflow, job, heartbeat, result, fail, and findings endpoints.\n- Added renderer Cloud Run panel and job store for running cloud jobs via selected provider/model from the UI."
+  "lastFingerprint": "1f2b112fe260a95271aecd7ac8d3dc0f5b49e1c8",
+  "lastDate": "2026-08-14",
+  "lastContent": "- Added a project-specific dashboard page that displays AI Factory workflow stages and enables running the startup stage directly from the UI.\n- Introduced a new `jobs:workflow` IPC/preload surface for loading workflow data from the mock cloud.\n- Enhanced the startup job execution to perform local rule checks, ensuring the `.ai-factory` directory and configuration file exist before sending the cloud request.\n- Updated the project \"Open\" action to navigate to the dashboard and load the workflow for the selected project.\n- Added dashboard styling for stage lists, progress tracking, and responsive layout adjustments."
 }

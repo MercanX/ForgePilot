@@ -2,6 +2,24 @@
 
 ## 2026-08-14
 
+- Added a project-specific dashboard page that displays AI Factory workflow stages and enables running the startup stage directly from the UI.
+- Introduced a new `jobs:workflow` IPC/preload surface for loading workflow data from the mock cloud.
+- Enhanced the startup job execution to perform local rule checks, ensuring the `.ai-factory` directory and configuration file exist before sending the cloud request.
+- Updated the project "Open" action to navigate to the dashboard and load the workflow for the selected project.
+- Added dashboard styling for stage lists, progress tracking, and responsive layout adjustments.
+
+- `010-Startup` stage baslatildiginda exe tarafinda RULE-A01/RULE-A02 mekanik
+  islemleri eklendi; aktif proje kokunde `.ai-factory/` klasoru ve
+  `.ai-factory/factory.config.yaml` garanti ediliyor, config degerleri okunup
+  `localExecution` olarak mock cloud job istegine ekleniyor.
+- Mock cloud, `010-check_factory.rules.md` ve `020-read_config.rules.md`
+  dosyalarini runtime'da okuyarak LLM dogrulama prompt'unu gercek rule
+  icerikleriyle olusturuyor; Dashboard son satirdaki JSON sonucu ayiklayip
+  gorunur hale getiriyor.
+- Proje listesindeki `Open` aksiyonu proje baglamli temiz Dashboard sayfasina
+  gecis yapacak sekilde baglandi; Dashboard, mock cloud workflow stage listesini
+  `jobs:workflow` IPC/preload yuzeyinden render ediyor ve ilk hazir stage olan
+  `010-Startup` icin provider calistirma butonu sunuyor.
 - Faz 6 kapsaminda AI Factory Cloud istemci temeli eklendi; HTTPS-only
   `httpClient`, `safeStorage` tabanli credential store, `jobService`,
   `jobs:*` IPC/preload yuzeyi ve mock cloud run paneli baglandi.

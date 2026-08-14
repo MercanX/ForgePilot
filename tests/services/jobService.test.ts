@@ -170,6 +170,7 @@ describe("jobService", () => {
       project: projectFixture,
       providerId: PROVIDER_IDS.claudeCode,
       serverUrl: "http://localhost:4317",
+      stageId: null,
       timeoutMs: 1_000
     });
 
@@ -242,6 +243,7 @@ describe("jobService", () => {
         project: projectFixture,
         providerId: PROVIDER_IDS.claudeCode,
         serverUrl: "http://localhost:4317",
+        stageId: null,
         timeoutMs: 1_000
       })
     ).rejects.toThrow("provider failed");
@@ -250,6 +252,132 @@ describe("jobService", () => {
         jobId: job.id,
         reason: "client-error"
       })
+    );
+  });
+
+  it("runs the local startup job before requesting the startup cloud task", async () => {
+    const startupResult = {
+      check_factory: {
+        created: true,
+        path: "C:\\Github\\ForgePilot\\.ai-factory"
+      },
+      read_config: {
+        locale: "tr-TR",
+        mode: "unknown",
+        version: "unknown"
+      }
+    };
+    const postMock = vi.fn((path: string, body: unknown): Promise<unknown> => {
+      if (path === "/session/handshake") {
+        return Promise.resolve({
+          message: "ok",
+          protocolVersion: "1",
+          serverVersion: "mock-0.1.0",
+          status: "ok"
+        } satisfies HandshakeResponse);
+      }
+
+      if (path === "/jobs/request") {
+        expect((body as RequestJobRequest).localExecution).toEqual(startupResult);
+        return Promise.resolve(job);
+      }
+
+      if (path.endsWith("/result")) {
+        return Promise.resolve({
+          accepted: true,
+          findings: []
+        } satisfies SubmitResultResponse);
+      }
+
+      if (path === "/findings/sync" || path.endsWith("/heartbeat")) {
+        return Promise.resolve({ accepted: true });
+      }
+
+      return Promise.reject(new Error(`Unexpected POST ${path}`));
+    });
+    const client: HttpClient = {
+      get: (path, schema) => {
+        if (path.startsWith("/workflows/current")) {
+          return Promise.resolve(
+            schema.parse({
+              stages: [
+                {
+                  currentAgent: "Startup Agent",
+                  currentOperation: "Waiting",
+                  id: "010-startup",
+                  name: "010-Startup",
+                  progress: 0,
+                  status: "ready"
+                }
+              ],
+              workflowId: "mock",
+              workflowVersion: "1.0.0"
+            })
+          );
+        }
+
+        if (path === `/jobs/${job.id}`) {
+          return Promise.resolve(schema.parse(task));
+        }
+
+        return Promise.reject(new Error(`Unexpected GET ${path}`));
+      },
+      post: (path, body, schema) => postMock(path, body).then((payload) => schema.parse(payload))
+    };
+    const exitCallbacks = new Set<(event: TaskExitEvent) => void>();
+    const taskService: TaskExecutionService = {
+      dispose: vi.fn(),
+      onExit: vi.fn((callback: (event: TaskExitEvent) => void): Unsubscribe => {
+        exitCallbacks.add(callback);
+        return () => exitCallbacks.delete(callback);
+      }),
+      onOutput: vi.fn(() => () => undefined),
+      start: vi.fn(() => {
+        setTimeout(() => {
+          for (const callback of exitCallbacks) {
+            callback({
+              exitInfo: {
+                exitCode: 0,
+                finishedAt: "2026-08-14T00:00:02.000Z",
+                signal: null
+              },
+              providerId: PROVIDER_IDS.claudeCode,
+              taskId: "44444444-4444-4444-8444-444444444444"
+            });
+          }
+        }, 0);
+
+        return Promise.resolve({
+          handle: {
+            id: "44444444-4444-4444-8444-444444444444",
+            processId: 123,
+            providerId: PROVIDER_IDS.claudeCode
+          },
+          startedAt: "2026-08-14T00:00:01.000Z"
+        });
+      }),
+      stop: vi.fn(() => true)
+    };
+    const runStartupJobMock = vi.fn(() => Promise.resolve(startupResult));
+    const service = createJobService({
+      createClient: () => client,
+      runStartupJob: runStartupJobMock,
+      taskExecutionService: taskService
+    });
+
+    await service.runOnce({
+      model: "sonnet",
+      project: projectFixture,
+      providerId: PROVIDER_IDS.claudeCode,
+      serverUrl: "http://localhost:4317",
+      stageId: "010-startup",
+      timeoutMs: 1_000
+    });
+
+    expect(runStartupJobMock).toHaveBeenCalledWith(projectFixture.rootPath);
+    expect(postMock).toHaveBeenCalledWith(
+      "/jobs/request",
+      expect.objectContaining({ localExecution: startupResult })
     );
   });
 });

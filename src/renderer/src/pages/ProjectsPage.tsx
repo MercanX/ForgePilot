@@ -1,8 +1,5 @@
 import { type ReactElement, useEffect } from "react";
 
-import { CloudRunPanel } from "@renderer/components/CloudRunPanel";
-import { ProviderPanel } from "@renderer/components/ProviderPanel";
-import { TaskRunnerPanel } from "@renderer/components/TaskRunnerPanel";
 import { useProjectStore } from "@renderer/stores/projectStore";
 import type { Project } from "@shared/schemas/project";
 
@@ -17,7 +14,13 @@ const formatDate = (value: string | null): string => {
   }).format(new Date(value));
 };
 
-const ProjectCard = ({ project }: { project: Project }): ReactElement => {
+const ProjectCard = ({
+  onOpened,
+  project
+}: {
+  onOpened: () => void;
+  project: Project;
+}): ReactElement => {
   const activeProject = useProjectStore((state) => state.activeProject);
   const isLoading = useProjectStore((state) => state.isLoading);
   const openProject = useProjectStore((state) => state.openProject);
@@ -41,7 +44,17 @@ const ProjectCard = ({ project }: { project: Project }): ReactElement => {
         </div>
       </dl>
       <div className="project-actions">
-        <button type="button" disabled={isLoading} onClick={() => void openProject(project.id)}>
+        <button
+          type="button"
+          disabled={isLoading}
+          onClick={() => {
+            void openProject(project.id).then((opened) => {
+              if (opened) {
+                onOpened();
+              }
+            });
+          }}
+        >
           Open
         </button>
         <button type="button" disabled={isLoading} onClick={() => void removeProject(project.id)}>
@@ -52,7 +65,11 @@ const ProjectCard = ({ project }: { project: Project }): ReactElement => {
   );
 };
 
-export const ProjectsPage = (): ReactElement => {
+export const ProjectsPage = ({
+  onProjectOpened
+}: {
+  onProjectOpened: () => void;
+}): ReactElement => {
   const addProject = useProjectStore((state) => state.addProject);
   const errorMessage = useProjectStore((state) => state.errorMessage);
   const isLoading = useProjectStore((state) => state.isLoading);
@@ -98,14 +115,10 @@ export const ProjectsPage = (): ReactElement => {
       ) : (
         <section className="project-list" aria-label="Known projects">
           {projects.map((project) => (
-            <ProjectCard key={project.id} project={project} />
+            <ProjectCard key={project.id} onOpened={onProjectOpened} project={project} />
           ))}
         </section>
       )}
-
-      <ProviderPanel />
-      <CloudRunPanel />
-      <TaskRunnerPanel />
     </div>
   );
 };

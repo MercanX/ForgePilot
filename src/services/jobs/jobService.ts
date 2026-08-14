@@ -29,6 +29,7 @@ import type { Project } from "@shared/schemas/project";
 import type { ProviderId } from "@shared/schemas/provider";
 
 import { createHttpClient, type HttpClient } from "../api/httpClient";
+import { runStartupJob } from "../startup/startupJobService";
 import {
   createTaskExecutionService,
   type TaskExecutionService
@@ -52,10 +53,12 @@ export type JobService = {
 type JobServiceOptions = {
   createClient?: (serverUrl: string) => HttpClient;
   desktopVersion?: string;
+  runStartupJob?: typeof runStartupJob;
   taskExecutionService?: TaskExecutionService;
 };
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
+const STARTUP_STAGE_ID = "010-startup";
 
 const createClientFactory =
   (options: JobServiceOptions): ((serverUrl: string) => HttpClient) =>
@@ -64,6 +67,7 @@ const createClientFactory =
 
 const createRequestJobPayload = (project: Project, providerId: ProviderId): RequestJobRequest => ({
   capabilities: [...SUPPORTED_CAPABILITIES],
+  localExecution: null,
   project,
   providerId
 });
@@ -72,6 +76,7 @@ export const createJobService = (options: JobServiceOptions = {}): JobService =>
   const createClient = createClientFactory(options);
   const taskExecutionService = options.taskExecutionService ?? createTaskExecutionService();
   const desktopVersion = options.desktopVersion ?? "0.1.0";
+  const executeStartupJob = options.runStartupJob ?? runStartupJob;
 
   const handshake = async (serverUrl: string): Promise<HandshakeResponse> =>
     createClient(serverUrl).post(
@@ -151,8 +156,15 @@ export const createJobService = (options: JobServiceOptions = {}): JobService =>
     const outputChunks: ProviderOutputChunk[] = [];
     await handshake(request.serverUrl);
     await getWorkflow(request.project.id, request.serverUrl);
+    const startupResult =
+      request.stageId === STARTUP_STAGE_ID
+        ? await executeStartupJob(request.project.rootPath)
+        : null;
     const job = await requestJob(
-      createRequestJobPayload(request.project, request.providerId),
+      {
+        ...createRequestJobPayload(request.project, request.providerId),
+        localExecution: startupResult
+      },
       request.serverUrl
     );
     const task = await getTask(job.id, request.serverUrl);

@@ -1,17 +1,20 @@
 import { type ReactElement, useEffect, useState } from "react";
 
+import { DashboardPage } from "@renderer/pages/DashboardPage";
 import { ProjectsPage } from "@renderer/pages/ProjectsPage";
 import { SettingsPage } from "@renderer/pages/SettingsPage";
 import { useJobStore } from "@renderer/stores/jobStore";
+import { useProjectStore } from "@renderer/stores/projectStore";
 import { useProviderStore } from "@renderer/stores/providerStore";
 import { useSettingsStore } from "@renderer/stores/settingsStore";
 
-type AppPage = "projects" | "settings";
+type AppPage = "dashboard" | "projects" | "settings";
 
 export const App = (): ReactElement => {
   const [activePage, setActivePage] = useState<AppPage>("projects");
   const [bridgeStatus, setBridgeStatus] = useState("Checking preload bridge");
   const cloudMessage = useJobStore((state) => state.cloudMessage);
+  const activeProject = useProjectStore((state) => state.activeProject);
   const providers = useProviderStore((state) => state.providers);
   const loadSettings = useSettingsStore((state) => state.loadSettings);
   const settings = useSettingsStore((state) => state.settings);
@@ -43,7 +46,12 @@ export const App = (): ReactElement => {
           >
             Projects
           </button>
-          <button className="nav-item" type="button" disabled>
+          <button
+            className={`nav-item${activePage === "dashboard" ? " is-active" : ""}`}
+            type="button"
+            disabled={!activeProject}
+            onClick={() => setActivePage("dashboard")}
+          >
             Dashboard
           </button>
           <button className="nav-item" type="button" disabled>
@@ -70,7 +78,11 @@ export const App = (): ReactElement => {
           <span>Provider: {selectedProvider?.label ?? "Not selected"}</span>
           <span>{bridgeStatus}</span>
         </header>
-        {activePage === "projects" ? <ProjectsPage /> : <SettingsPage />}
+        {activePage === "projects" ? (
+          <ProjectsPage onProjectOpened={() => setActivePage("dashboard")} />
+        ) : null}
+        {activePage === "dashboard" ? <DashboardPage /> : null}
+        {activePage === "settings" ? <SettingsPage /> : null}
       </section>
     </main>
   );

@@ -89,6 +89,7 @@ button {
   padding: 0 24px;
 }
 
+.dashboard-page,
 .projects-page,
 .settings-page {
   min-width: 0;
@@ -162,6 +163,25 @@ h1 {
   font-size: 13px;
   min-height: 44px;
   margin-bottom: 18px;
+}
+
+.dashboard-summary {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  overflow: hidden;
+  border-top: 1px solid #26282c;
+  border-bottom: 1px solid #26282c;
+  color: #a8adb7;
+  font-size: 13px;
+  min-height: 44px;
+  margin-bottom: 18px;
+}
+
+.dashboard-summary span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .error-message {
@@ -330,6 +350,123 @@ h1 {
   color: #fecaca;
 }
 
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.7fr) minmax(0, 1.3fr);
+  gap: 18px;
+}
+
+.stage-rail,
+.current-stage-panel {
+  min-width: 0;
+  border: 1px solid #2a2d33;
+  border-radius: 8px;
+  background: #15171a;
+  padding: 18px;
+}
+
+.section-title {
+  margin-bottom: 16px;
+}
+
+.section-title h2 {
+  color: #ffffff;
+  font-size: 20px;
+  margin: 0;
+}
+
+.stage-list {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.stage-item {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #2a2d33;
+  border-radius: 6px;
+  min-height: 58px;
+  padding: 8px 10px;
+}
+
+.stage-item.is-current {
+  border-color: #38bdf8;
+  background: #10232c;
+}
+
+.stage-index {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid #34373d;
+  border-radius: 6px;
+  color: #d5d9e2;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.stage-item strong,
+.stage-item span {
+  display: block;
+}
+
+.stage-item strong {
+  overflow-wrap: anywhere;
+  color: #ffffff;
+  font-size: 14px;
+  margin-bottom: 3px;
+}
+
+.stage-item div span {
+  color: #a8adb7;
+  font-size: 12px;
+}
+
+.stage-item-completed .stage-index {
+  border-color: #16a34a;
+  color: #86efac;
+}
+
+.stage-item-failed .stage-index {
+  border-color: #7f1d1d;
+  color: #fecaca;
+}
+
+.progress-track {
+  overflow: hidden;
+  height: 10px;
+  border-radius: 999px;
+  background: #08090b;
+  margin-bottom: 18px;
+}
+
+.progress-track span {
+  display: block;
+  height: 100%;
+  background: #38bdf8;
+}
+
+.stage-detail-grid {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 10px 14px;
+  color: #a8adb7;
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
+.stage-detail-grid strong {
+  overflow-wrap: anywhere;
+  color: #ffffff;
+  font-weight: 600;
+}
+
 .cloud-run-panel,
 .task-runner-panel {
   border-top: 1px solid #26282c;
@@ -453,6 +590,7 @@ h1 {
     overflow-x: auto;
   }
 
+  .dashboard-page,
   .projects-page,
   .settings-page {
     padding: 20px;
@@ -471,6 +609,17 @@ h1 {
   }
 
   .project-row {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-summary {
+    align-items: flex-start;
+    flex-direction: column;
+    justify-content: center;
+    padding: 10px 0;
+  }
+
+  .dashboard-grid {
     grid-template-columns: 1fr;
   }
 

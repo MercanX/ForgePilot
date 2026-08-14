@@ -50,7 +50,8 @@ export const requestJobRequestSchema = z
   .object({
     project: projectSchema,
     providerId: providerIdSchema,
-    capabilities: z.array(capabilitySchema)
+    capabilities: z.array(capabilitySchema),
+    localExecution: z.unknown().nullable().default(null)
   })
   .strict();
 
@@ -102,6 +103,7 @@ export const jobRunRequestSchema = z
     project: projectSchema,
     providerId: providerIdSchema,
     model: z.string().min(1).nullable().default(null),
+    stageId: z.string().min(1).nullable().default(null),
     serverUrl: z.string().url().default("http://localhost:4317"),
     timeoutMs: z.number().int().positive().default(300_000)
   })

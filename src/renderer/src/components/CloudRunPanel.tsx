@@ -49,7 +49,7 @@ export const CloudRunPanel = (): ReactElement => {
             disabled={!canRun}
             onClick={() => {
               if (selectedProject && selectedProvider) {
-                void runCloudJob(selectedProject, selectedProvider, selectedModel);
+                void runCloudJob(selectedProject, selectedProvider, selectedModel, null);
               }
             }}
           >

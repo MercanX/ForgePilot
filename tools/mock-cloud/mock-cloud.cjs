@@ -1,8 +1,15 @@
 const http = require("node:http");
 const { randomUUID } = require("node:crypto");
+const { readFileSync } = require("node:fs");
 
 const PORT = Number(process.env.FORGEPILOT_MOCK_CLOUD_PORT ?? 4317);
 const jobs = new Map();
+const CHECK_FACTORY_RULE_PATH =
+  process.env.FORGEPILOT_STARTUP_CHECK_FACTORY_RULE ??
+  "C:\\Github\\aiFactory\\.ai-factory\\010-Startup\\rules\\010-check_factory.rules.md";
+const READ_CONFIG_RULE_PATH =
+  process.env.FORGEPILOT_STARTUP_READ_CONFIG_RULE ??
+  "C:\\Github\\aiFactory\\.ai-factory\\010-Startup\\rules\\020-read_config.rules.md";
 
 const sendJson = (response, statusCode, payload) => {
   response.writeHead(statusCode, {
@@ -22,14 +29,50 @@ const readJson = async (request) =>
     });
   });
 
-const createTask = (jobId, projectName) => ({
+const readRule = (rulePath) => readFileSync(rulePath, "utf8");
+
+const createStartupPrompt = (requestBody) => {
+  const checkFactoryRule = readRule(CHECK_FACTORY_RULE_PATH);
+  const readConfigRule = readRule(READ_CONFIG_RULE_PATH);
+
+  return [
+    `Proje koku: ${requestBody.project.rootPath}`,
+    "",
+    `exe_result: ${JSON.stringify(requestBody.localExecution ?? null)}`,
+    "",
+    "--- kural (RULE-A01, 010-check_factory.rules.md) ---",
+    checkFactoryRule,
+    "--- kural sonu ---",
+    "",
+    "--- kural (RULE-A02, 020-read_config.rules.md) ---",
+    readConfigRule,
+    "--- kural sonu ---",
+    "",
+    "Exe az once bu iki kuralin gerektirdigi islemi tamamladigini iddia ediyor.",
+    "Sen bunu yapmiyorsun - yalnizca gercegi kontrol ediyorsun.",
+    "RULE-A01 icin klasor disi degisiklik kontrolunu check_factory adimi icin yorumla;",
+    "factory.config.yaml dosyasi varsa/olustuysa bu RULE-A02 read_config adiminin kapsamindadir.",
+    "",
+    "Sirayla dogrula: once RULE-A01, sonra RULE-A02. Kendi Read/Bash'inle diske bak.",
+    "Biri ihlal edilirse HEMEN dur, sonrakine gecme.",
+    "",
+    "Bitince, baska hicbir sey yazmadan, SON SATIRA tek satirlik JSON yaz:",
+    "- Ikisi de gectiyse:",
+    '{"ok": true, "check_factory": {"created": true|false, "path": "..."}, "read_config": {"version": "...", "mode": "...", "locale": "..."}}',
+    "- Biri gecmediyse:",
+    '{"ok": false, "failed_at": "RULE-A01"|"RULE-A02", "violation": "<hangi madde>", "detail": "<ne oldu>"}'
+  ].join("\n");
+};
+
+const createTask = (jobId, requestBody) => ({
   id: randomUUID(),
   jobId,
   instructions: {
-    body: `Summarize the local workspace named "${projectName}" in one short sentence. Do not modify files.`,
+    body: createStartupPrompt(requestBody),
     format: "plain-text",
     metadata: {
-      source: "mock-cloud"
+      source: "mock-cloud",
+      stageId: "010-startup"
     }
   },
   timeoutMs: 300000
@@ -38,12 +81,12 @@ const createTask = (jobId, projectName) => ({
 const createJob = (requestBody) => {
   const jobId = randomUUID();
   const runId = randomUUID();
-  const task = createTask(jobId, requestBody.project.name);
+  const task = createTask(jobId, requestBody);
 
   return {
     id: jobId,
     runId,
-    stageId: "mock-analysis",
+    stageId: "010-startup",
     providerId: requestBody.providerId,
     status: "received",
     task,
@@ -74,12 +117,44 @@ const server = http.createServer(async (request, response) => {
         workflowVersion: "1.0.0",
         stages: [
           {
-            id: "mock-analysis",
-            name: "Mock Analysis",
+            id: "010-startup",
+            name: "010-Startup",
             status: "ready",
             progress: 0,
-            currentAgent: "Mock Cloud",
-            currentOperation: "Waiting for provider execution"
+            currentAgent: "Startup Agent",
+            currentOperation: "Waiting to open the provider session"
+          },
+          {
+            id: "020-discovery",
+            name: "020-Discovery",
+            status: "waiting",
+            progress: 0,
+            currentAgent: null,
+            currentOperation: null
+          },
+          {
+            id: "030-context",
+            name: "030-Context",
+            status: "waiting",
+            progress: 0,
+            currentAgent: null,
+            currentOperation: null
+          },
+          {
+            id: "040-implementation",
+            name: "040-Implementation",
+            status: "waiting",
+            progress: 0,
+            currentAgent: null,
+            currentOperation: null
+          },
+          {
+            id: "050-validation",
+            name: "050-Validation",
+            status: "waiting",
+            progress: 0,
+            currentAgent: null,
+            currentOperation: null
           }
         ]
       });

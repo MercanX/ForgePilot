@@ -119,6 +119,17 @@ export const jobRunResponseSchema = z
   })
   .strict();
 
+export const jobRunProgressEventSchema = z
+  .object({
+    message: z.string().min(1),
+    progress: z.number().int().min(0).max(100),
+    projectId: z.string().uuid(),
+    stageId: z.string().min(1).nullable(),
+    status: z.enum(["started", "completed", "blocked", "failed", "skipped"]),
+    stepId: z.string().min(1)
+  })
+  .strict();
+
 export const cloudStatusRequestSchema = z
   .object({
     serverUrl: z.string().url().default("http://localhost:4317")
@@ -138,5 +149,6 @@ export type SyncFindingsRequest = z.infer<typeof syncFindingsRequestSchema>;
 export type SyncFindingsResponse = z.infer<typeof syncFindingsResponseSchema>;
 export type JobRunRequest = z.infer<typeof jobRunRequestSchema>;
 export type JobRunResponse = z.infer<typeof jobRunResponseSchema>;
+export type JobRunProgressEvent = z.infer<typeof jobRunProgressEventSchema>;
 export type CloudStatusRequest = z.infer<typeof cloudStatusRequestSchema>;
 export type CloudConnectionStatus = z.infer<typeof cloudConnectionStatusSchema>;

@@ -4,6 +4,7 @@ import { IPC_CHANNELS } from "@shared/constants/channels";
 import type {
   CloudConnectionStatus,
   CloudStatusRequest,
+  JobRunProgressEvent,
   JobRunRequest,
   JobRunResponse,
   WorkflowResponse
@@ -74,7 +75,9 @@ const forgepilotApi = {
     workflow: (projectId: string): Promise<WorkflowResponse> =>
       ipcRenderer.invoke(IPC_CHANNELS.jobs.workflow, { projectId }),
     runOnce: (request: JobRunRequest): Promise<JobRunResponse> =>
-      ipcRenderer.invoke(IPC_CHANNELS.jobs.runOnce, request)
+      ipcRenderer.invoke(IPC_CHANNELS.jobs.runOnce, request),
+    onProgress: (callback: (event: JobRunProgressEvent) => void): Unsubscribe =>
+      subscribe(IPC_CHANNELS.jobs.progress, callback)
   },
   settings: {
     get: (): Promise<AppSettings> => ipcRenderer.invoke(IPC_CHANNELS.settings.get, {}),

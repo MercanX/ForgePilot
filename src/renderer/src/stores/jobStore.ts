@@ -1,6 +1,10 @@
 import { create } from "zustand";
 
-import type { JobRunResponse, WorkflowResponse } from "@shared/schemas/cloud-api";
+import type {
+  JobRunProgressEvent,
+  JobRunResponse,
+  WorkflowResponse
+} from "@shared/schemas/cloud-api";
 import type { Project } from "@shared/schemas/project";
 import type { ProviderDetectionResult } from "@shared/schemas/provider";
 
@@ -30,16 +34,42 @@ const DEFAULT_SERVER_URL = "http://localhost:4317";
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : "Cloud job failed.";
 
-const getStartupActivity = (project: Project): string[] => [
-  "010-Startup started.",
-  `Checking the .ai-factory directory under ${project.rootPath}.`,
-  "Reading or creating factory.config.yaml according to RULE-A02.",
-  "Reloading rule files in mock cloud and preparing the LLM verification prompt.",
-  "Waiting for the LLM verification result.",
-  "If Job 1 passes, selecting the AI Factory run folder with RULE-A03.",
-  "If Job 2 passes, placing SCOPE.md and BASELINE.md with RULE-A04.",
-  "If inputs are ready, capturing git state with RULE-A05."
-];
+type StartupExecutionMetadata = {
+  place_inputs?: {
+    status?: string;
+  };
+  select_run?: {
+    decision?: string;
+  };
+};
+
+const isStartupExecutionMetadata = (value: unknown): value is StartupExecutionMetadata =>
+  typeof value === "object" && value !== null;
+
+const getFinalOperation = (lastRun: JobRunResponse): { message: string; progress: number } => {
+  const metadata = lastRun.job.task?.instructions.metadata.localExecution;
+
+  if (isStartupExecutionMetadata(metadata)) {
+    if (metadata.place_inputs?.status === "waiting_for_input") {
+      return {
+        message: "Waiting for input review.",
+        progress: 86
+      };
+    }
+
+    if (metadata.select_run?.decision === "already_sealed") {
+      return {
+        message: "A valid sealed run already exists.",
+        progress: 100
+      };
+    }
+  }
+
+  return {
+    message: "Stage completed.",
+    progress: 100
+  };
+};
 
 export const useJobStore = create<JobStoreState>((set) => ({
   activityEntries: [],
@@ -84,39 +114,28 @@ export const useJobStore = create<JobStoreState>((set) => ({
   },
 
   runCloudJob: async (project, provider, model, stageId, serverUrl = DEFAULT_SERVER_URL) => {
-    const isStartupStage = stageId === "010-startup";
-    const timers: NodeJS.Timeout[] = [];
-    const activityEntries = isStartupStage
-      ? getStartupActivity(project)
-      : ["Stage run started.", "Preparing the cloud job.", "Waiting for the LLM result."];
-
     set({
-      activityEntries,
-      currentOperation: activityEntries[0] ?? "Stage run started.",
+      activityEntries: ["Stage run requested."],
+      currentOperation: "Stage run requested.",
       errorMessage: null,
       isRunning: true,
-      runProgress: 8
+      lastRun: null,
+      runProgress: 2
     });
 
-    const queueProgress = (
-      delayMs: number,
-      runProgress: number,
-      currentOperation: string
-    ): void => {
-      timers.push(
-        setTimeout(() => {
-          set({ currentOperation, runProgress });
-        }, delayMs)
-      );
-    };
+    const removeProgressListener = window.forgepilot.jobs.onProgress(
+      (event: JobRunProgressEvent) => {
+        if (event.projectId !== project.id || event.stageId !== stageId) {
+          return;
+        }
 
-    queueProgress(350, 24, activityEntries[1] ?? "Preparing local files.");
-    queueProgress(900, 42, activityEntries[2] ?? "Reading config.");
-    queueProgress(1_500, 62, activityEntries[3] ?? "Preparing prompt.");
-    queueProgress(2_200, 78, activityEntries[4] ?? "Waiting for LLM result.");
-    queueProgress(3_200, 88, activityEntries[5] ?? "Selecting run folder.");
-    queueProgress(4_400, 94, activityEntries[6] ?? "Placing input files.");
-    queueProgress(5_600, 97, activityEntries[7] ?? "Capturing git state.");
+        set((state) => ({
+          activityEntries: [...state.activityEntries, event.message],
+          currentOperation: event.message,
+          runProgress: Math.max(state.runProgress, event.progress)
+        }));
+      }
+    );
 
     try {
       const lastRun = await window.forgepilot.jobs.runOnce({
@@ -128,19 +147,23 @@ export const useJobStore = create<JobStoreState>((set) => ({
         stageId,
         timeoutMs: 300_000
       });
+      const finalOperation = getFinalOperation(lastRun);
       set({
-        activityEntries: [...activityEntries, "Stage run completed; the result is shown below."],
-        cloudMessage: "Last job completed",
+        activityEntries: [...useJobStore.getState().activityEntries, finalOperation.message],
+        cloudMessage: finalOperation.progress === 100 ? "Last job completed" : "Waiting for input",
         connected: true,
-        currentOperation: "Stage completed",
+        currentOperation: finalOperation.message,
         isRunning: false,
         lastRun,
-        runProgress: 100
+        runProgress: finalOperation.progress
       });
       await useJobStore.getState().loadWorkflow(project.id);
     } catch (error) {
       set({
-        activityEntries: [...activityEntries, "Stage run stopped with an error."],
+        activityEntries: [
+          ...useJobStore.getState().activityEntries,
+          "Stage run stopped with an error."
+        ],
         cloudMessage: "Job failed",
         currentOperation: "Stage failed",
         errorMessage: getErrorMessage(error),
@@ -148,9 +171,7 @@ export const useJobStore = create<JobStoreState>((set) => ({
         runProgress: 0
       });
     } finally {
-      for (const timer of timers) {
-        clearTimeout(timer);
-      }
+      removeProgressListener();
     }
   }
 }));

@@ -85,6 +85,7 @@ describe("jobs IPC", () => {
 
     expect(handlers.has(IPC_CHANNELS.jobs.status)).toBe(true);
     expect(handlers.has(IPC_CHANNELS.jobs.runOnce)).toBe(true);
+    const send = vi.fn();
     await expect(
       handlers.get(IPC_CHANNELS.jobs.status)?.({}, { serverUrl: "http://localhost:4317" })
     ).resolves.toEqual({
@@ -94,7 +95,7 @@ describe("jobs IPC", () => {
     });
     await expect(
       handlers.get(IPC_CHANNELS.jobs.runOnce)?.(
-        {},
+        { sender: { send } },
         {
           model: "sonnet",
           project: projectFixture,
@@ -104,5 +105,6 @@ describe("jobs IPC", () => {
         }
       )
     ).resolves.toEqual(runResponse);
+    expect(service.runOnce).toHaveBeenCalledWith(expect.any(Object), expect.any(Function));
   });
 });

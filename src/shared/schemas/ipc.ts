@@ -5,6 +5,7 @@ import {
   getTaskResponseSchema,
   heartbeatRequestSchema,
   jobRunRequestSchema,
+  jobRunProgressEventSchema,
   jobRunResponseSchema,
   requestJobRequestSchema,
   requestJobResponseSchema,
@@ -164,6 +165,10 @@ export const ipcSchemaMap = {
     workflow: {
       request: z.object({ projectId: z.string().uuid() }).strict(),
       response: workflowResponseSchema
+    },
+    progress: {
+      request: z.object({}).strict(),
+      response: jobRunProgressEventSchema
     },
     heartbeat: {
       request: heartbeatRequestSchema,

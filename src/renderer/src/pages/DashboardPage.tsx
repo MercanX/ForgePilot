@@ -90,7 +90,7 @@ export const DashboardPage = (): ReactElement => {
   const effectiveProgress = activeStage
     ? isRunning
       ? Math.max(stageProgress(activeStage), runProgress)
-      : stageProgress(activeStage)
+      : Math.max(stageProgress(activeStage), runProgress)
     : 0;
   const startupExecution = useMemo(() => {
     const metadata = lastRun?.job.task?.instructions.metadata.localExecution;

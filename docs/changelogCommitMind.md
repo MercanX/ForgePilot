@@ -2,6 +2,11 @@
 
 ## 2026-08-14
 
+- Dashboard progress ve Activity listesi zamanlayici tahminlerinden cikarildi;
+  `jobs:progress` push kanali ile JobService'in gercek handshake, workflow,
+  local exe ve LLM dogrulama adimlarindan gelen olaylara baglandi.
+- `waiting_for_input` gibi ara duruslarda bar artik sona atlamiyor ve henuz
+  calismamis Job 4 gibi adimlar ekranda yapilmis gibi gosterilmiyor.
 - Job 3 `waiting_for_input` sonucunda Dashboard'a `Open SCOPE.md` ve
   `Open BASELINE.md` aksiyonlari eklendi; dosyalar tipli preload IPC uzerinden
   proje kokunun disina cikmadan sistem editorunde aciliyor.

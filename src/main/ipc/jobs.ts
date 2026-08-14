@@ -16,7 +16,10 @@ export const registerJobsIpc = (service: JobService = createJobService()): void 
     channel: IPC_CHANNELS.jobs.runOnce,
     requestSchema: ipcSchemaMap.jobs.runOnce.request,
     responseSchema: ipcSchemaMap.jobs.runOnce.response,
-    handler: (request) => service.runOnce(request)
+    handler: (request, event) =>
+      service.runOnce(request, (progressEvent) => {
+        event.sender.send(IPC_CHANNELS.jobs.progress, progressEvent);
+      })
   });
 
   defineIpcHandler({

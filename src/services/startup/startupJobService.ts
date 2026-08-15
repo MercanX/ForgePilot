@@ -261,6 +261,23 @@ export const runSelectRunJob = async (
   };
 };
 
+export const readStartupSealStatus = async (projectRootPath: string): Promise<boolean> => {
+  const runsPath = path.join(projectRootPath, RUNS_DIR);
+
+  try {
+    const runs = await listRunIds(runsPath);
+    const latest = runs.at(-1);
+
+    if (!latest) {
+      return false;
+    }
+
+    return (await readSealDecision(path.join(runsPath, latest))) === "PASS";
+  } catch {
+    return false;
+  }
+};
+
 const bulletList = (values: string[]): string =>
   values.length > 0 ? values.map((value) => `- \`${value}\``).join("\n") : "-";
 

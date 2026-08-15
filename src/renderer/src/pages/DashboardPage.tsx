@@ -165,7 +165,7 @@ export const DashboardPage = (): ReactElement => {
 
   useEffect(() => {
     if (activeProject) {
-      void loadWorkflow(activeProject.id);
+      void loadWorkflow(activeProject.id, activeProject.rootPath);
     }
   }, [activeProject, loadWorkflow]);
 

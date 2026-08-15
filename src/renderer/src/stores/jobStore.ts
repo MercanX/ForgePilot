@@ -25,7 +25,7 @@ type JobStoreState = {
   runProgress: number;
   workflow: WorkflowResponse | null;
   checkCloud: (serverUrl?: string) => Promise<void>;
-  loadWorkflow: (projectId: string) => Promise<void>;
+  loadWorkflow: (projectId: string, rootPath: string) => Promise<void>;
   runCloudJob: (
     project: Project,
     provider: ProviderDetectionResult,
@@ -147,9 +147,9 @@ export const useJobStore = create<JobStoreState>((set) => ({
     }
   },
 
-  loadWorkflow: async (projectId) => {
+  loadWorkflow: async (projectId, rootPath) => {
     try {
-      const workflow = await window.forgepilot.jobs.workflow(projectId);
+      const workflow = await window.forgepilot.jobs.workflow(projectId, rootPath);
       set({ errorMessage: null, workflow });
     } catch (error) {
       set({
@@ -207,7 +207,7 @@ export const useJobStore = create<JobStoreState>((set) => ({
         lastRun,
         runProgress: finalOperation.progress
       });
-      await useJobStore.getState().loadWorkflow(project.id);
+      await useJobStore.getState().loadWorkflow(project.id, project.rootPath);
     } catch (error) {
       set({
         activityEntries: [

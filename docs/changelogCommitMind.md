@@ -2,6 +2,12 @@
 
 ## 2026-08-15
 
+- Added root path propagation through IPC, preload, and job store for workflow requests
+- Implemented local seal status detection to override Startup stage completion in workflow responses
+- Added `readStartupSealStatus` service function that checks the latest run's seal decision without side effects
+- Updated workflow request schema to require root path validation
+- Added unit tests covering sealed, unsealed, and missing run directory scenarios
+
 - Added a "Project Context" section to the dashboard startup results, displaying module, entity, user role, and unresolved field counts.
 - Implemented build context preparation service that analyzes file inventories, classifies files into modules, and extracts manifest descriptions.
 - Added build context finalization service that validates semantic evidence and generates PROJECT_CONTEXT.json with resolved project type, purpose, and domain information.

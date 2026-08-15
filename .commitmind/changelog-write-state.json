@@ -1,5 +1,5 @@
 {
-  "lastFingerprint": "f6d5294c9e6b2540fe949aec895f4a6c3ad253e2",
+  "lastFingerprint": "a1ba4fd9af25463936afd847b0d4a6868094a00f",
   "lastDate": "2026-08-15",
-  "lastContent": "- Added a \"Project Context\" section to the dashboard startup results, displaying module, entity, user role, and unresolved field counts.\n- Implemented build context preparation service that analyzes file inventories, classifies files into modules, and extracts manifest descriptions.\n- Added build context finalization service that validates semantic evidence and generates PROJECT_CONTEXT.json with resolved project type, purpose, and domain information.\n- Introduced module assignment logic that groups files by manifest roots with fallback to top-level directories.\n- Added support for extracting and validating descriptions from common manifest formats including package.json, composer.json, pyproject.toml, and Cargo.toml."
+  "lastContent": "- Added root path propagation through IPC, preload, and job store for workflow requests\n- Implemented local seal status detection to override Startup stage completion in workflow responses\n- Added `readStartupSealStatus` service function that checks the latest run's seal decision without side effects\n- Updated workflow request schema to require root path validation\n- Added unit tests covering sealed, unsealed, and missing run directory scenarios"
 }

@@ -40,7 +40,7 @@ export const registerJobsIpc = (service: JobService = createJobService()): void 
     channel: IPC_CHANNELS.jobs.workflow,
     requestSchema: ipcSchemaMap.jobs.workflow.request,
     responseSchema: ipcSchemaMap.jobs.workflow.response,
-    handler: ({ projectId }) => service.getWorkflow(projectId, "http://localhost:4317")
+    handler: ({ projectId, rootPath }) => service.getWorkflow(projectId, rootPath, "http://localhost:4317")
   });
 
   defineIpcHandler({

@@ -48,6 +48,74 @@ const task: GetTaskResponse = {
   timeoutMs: 300_000
 };
 
+describe("jobService.getWorkflow", () => {
+  const buildWorkflowClient = (): HttpClient => ({
+    get: (requestPath, schema) => {
+      if (requestPath.startsWith("/workflows/current")) {
+        return Promise.resolve(
+          schema.parse({
+            stages: [
+              {
+                currentAgent: "Startup Agent",
+                currentOperation: "Waiting to open the provider session",
+                id: "010-startup",
+                name: "010-Startup",
+                progress: 0,
+                status: "ready"
+              },
+              {
+                currentAgent: null,
+                currentOperation: null,
+                id: "020-discovery",
+                name: "020-Discovery",
+                progress: 0,
+                status: "waiting"
+              }
+            ],
+            workflowId: "mock-workflow",
+            workflowVersion: "1.0.0"
+          })
+        );
+      }
+
+      return Promise.reject(new Error(`Unexpected GET ${requestPath}`));
+    },
+    post: () => Promise.reject(new Error("Unexpected POST"))
+  });
+
+  it("overrides the Startup stage to completed when a local sealed run exists, even if the cloud says otherwise", async () => {
+    const service = createJobService({
+      createClient: () => buildWorkflowClient(),
+      readStartupSealStatus: vi.fn(() => Promise.resolve(true))
+    });
+
+    const workflow = await service.getWorkflow(
+      projectFixture.id,
+      projectFixture.rootPath,
+      "http://localhost:4317"
+    );
+    const startupStage = workflow.stages.find((stage) => stage.id === "010-startup");
+
+    expect(startupStage).toMatchObject({ progress: 100, status: "completed" });
+  });
+
+  it("leaves the cloud-reported stage status untouched when no local sealed run exists", async () => {
+    const service = createJobService({
+      createClient: () => buildWorkflowClient(),
+      readStartupSealStatus: vi.fn(() => Promise.resolve(false))
+    });
+
+    const workflow = await service.getWorkflow(
+      projectFixture.id,
+      projectFixture.rootPath,
+      "http://localhost:4317"
+    );
+    const startupStage = workflow.stages.find((stage) => stage.id === "010-startup");
+
+    expect(startupStage).toMatchObject({ progress: 0, status: "ready" });
+  });
+});
+
 describe("jobService", () => {
   it("runs a cloud job through the selected provider and submits the result", async () => {
     const postMock = vi.fn((path: string, body: unknown): Promise<unknown> => {

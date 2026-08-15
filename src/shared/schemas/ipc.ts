@@ -163,7 +163,7 @@ export const ipcSchemaMap = {
       response: getTaskResponseSchema
     },
     workflow: {
-      request: z.object({ projectId: z.string().uuid() }).strict(),
+      request: z.object({ projectId: z.string().uuid(), rootPath: z.string().min(1) }).strict(),
       response: workflowResponseSchema
     },
     progress: {

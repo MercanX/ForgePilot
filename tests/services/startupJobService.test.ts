@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 
 import {
+  readStartupSealStatus,
   runBuildFactoryManifestJob,
   runBuildSourceManifestJob,
   runCaptureGitStateJob,
@@ -128,6 +129,27 @@ describe("startupJobService", () => {
       decision: "already_sealed",
       run_id: "sample-20260814-001"
     });
+  });
+
+  it("readStartupSealStatus reports false when no run directory exists yet", async () => {
+    await expect(readStartupSealStatus(tempRoot)).resolves.toBe(false);
+  });
+
+  it("readStartupSealStatus reports true for a PASS-sealed latest run, without creating anything", async () => {
+    const runsPath = path.join(tempRoot, ".ai-factory-runs");
+    const runPath = path.join(runsPath, "sample-20260814-001");
+    await mkdir(runPath, { recursive: true });
+    await writeFile(path.join(runPath, "RUN_SEAL.json"), '{"decision":"PASS"}', "utf8");
+
+    await expect(readStartupSealStatus(tempRoot)).resolves.toBe(true);
+    await expect(readFile(path.join(runsPath, ".gitignore"), "utf8")).rejects.toThrow();
+  });
+
+  it("readStartupSealStatus reports false when the latest run is not sealed", async () => {
+    const runsPath = path.join(tempRoot, ".ai-factory-runs");
+    await mkdir(path.join(runsPath, "sample-20260814-001"), { recursive: true });
+
+    await expect(readStartupSealStatus(tempRoot)).resolves.toBe(false);
   });
 
   it("places template input files when root files are missing", async () => {

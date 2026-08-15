@@ -41,6 +41,7 @@ import {
   runScanProjectJob
 } from "../discovery/discoveryJobService";
 import {
+  readStartupSealStatus,
   runBuildFactoryManifestJob,
   runBuildSourceManifestJob,
   runCaptureGitStateJob,
@@ -58,7 +59,7 @@ export type JobService = {
   fail: (request: FailJobRequest, serverUrl: string) => Promise<{ accepted: true }>;
   getStatus: (request: CloudStatusRequest) => Promise<CloudConnectionStatus>;
   getTask: (jobId: string, serverUrl: string) => Promise<GetTaskResponse>;
-  getWorkflow: (projectId: string, serverUrl: string) => Promise<WorkflowResponse>;
+  getWorkflow: (projectId: string, rootPath: string, serverUrl: string) => Promise<WorkflowResponse>;
   requestJob: (request: RequestJobRequest, serverUrl: string) => Promise<RequestJobResponse>;
   runOnce: (request: JobRunRequest, onProgress?: JobRunProgressListener) => Promise<JobRunResponse>;
   submitResult: (result: TaskResult, serverUrl: string) => Promise<SubmitResultResponse>;
@@ -78,6 +79,7 @@ type JobServiceOptions = {
   finalizeIndexDocumentsJob?: typeof finalizeIndexDocumentsJob;
   prepareBuildContextJob?: typeof prepareBuildContextJob;
   prepareIndexDocumentsJob?: typeof prepareIndexDocumentsJob;
+  readStartupSealStatus?: typeof readStartupSealStatus;
   runBuildFactoryManifestJob?: typeof runBuildFactoryManifestJob;
   runBuildSourceManifestJob?: typeof runBuildSourceManifestJob;
   runCaptureGitStateJob?: typeof runCaptureGitStateJob;
@@ -127,6 +129,7 @@ export const createJobService = (options: JobServiceOptions = {}): JobService =>
     options.prepareBuildContextJob ?? prepareBuildContextJob;
   const executePrepareIndexDocumentsJob =
     options.prepareIndexDocumentsJob ?? prepareIndexDocumentsJob;
+  const executeReadStartupSealStatus = options.readStartupSealStatus ?? readStartupSealStatus;
   const executeScanProjectJob = options.runScanProjectJob ?? runScanProjectJob;
   const executeSealRunJob = options.runSealRunJob ?? runSealRunJob;
   const executeSelectRunJob = options.runSelectRunJob ?? runSelectRunJob;
@@ -160,11 +163,30 @@ export const createJobService = (options: JobServiceOptions = {}): JobService =>
     }
   };
 
-  const getWorkflow = async (projectId: string, serverUrl: string): Promise<WorkflowResponse> =>
-    createClient(serverUrl).get(
+  const getWorkflow = async (
+    projectId: string,
+    rootPath: string,
+    serverUrl: string
+  ): Promise<WorkflowResponse> => {
+    const workflow = await createClient(serverUrl).get(
       `/workflows/current?projectId=${encodeURIComponent(projectId)}`,
       workflowResponseSchema
     );
+    const startupSealed = await executeReadStartupSealStatus(rootPath);
+
+    if (!startupSealed) {
+      return workflow;
+    }
+
+    return {
+      ...workflow,
+      stages: workflow.stages.map((stage) =>
+        stage.id === STARTUP_STAGE_ID
+          ? { ...stage, currentOperation: "Run sealed.", progress: 100, status: "completed" as const }
+          : stage
+      )
+    };
+  };
 
   const requestJob = async (
     request: RequestJobRequest,
@@ -529,7 +551,7 @@ export const createJobService = (options: JobServiceOptions = {}): JobService =>
       status: "started",
       stepId: "load-workflow"
     });
-    await getWorkflow(request.project.id, request.serverUrl);
+    await getWorkflow(request.project.id, request.project.rootPath, request.serverUrl);
     emit(request, onProgress, {
       message: "Workflow loaded.",
       progress: 16,

@@ -21,6 +21,8 @@
 - Activity satirlari `stepId` bazli duruma cevrildi; ayni is devam ederken yeni
   satira gecmek yerine mevcut satir guncelleniyor ve yeni satir yalnizca gercek
   yeni is basladiginda aciliyor.
+- Activity paneli yalnizca en son 10 islemi, en yeni islem en ustte olacak
+  sekilde gosteriyor; panel icindeki scroll kaldirildi.
 - Job 3 `waiting_for_input` sonucunda Dashboard'a `Open SCOPE.md` ve
   `Open BASELINE.md` aksiyonlari eklendi; dosyalar tipli preload IPC uzerinden
   proje kokunun disina cikmadan sistem editorunde aciliyor.

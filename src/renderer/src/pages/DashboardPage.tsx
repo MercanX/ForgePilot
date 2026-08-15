@@ -111,6 +111,10 @@ export const DashboardPage = (): ReactElement => {
 
     return isStartupExecutionMetadata(metadata) ? metadata : null;
   }, [lastRun]);
+  const visibleActivityEntries = useMemo(
+    () => activityEntries.slice(-10).reverse(),
+    [activityEntries]
+  );
   const validationJson = useMemo(() => {
     const text = lastRun?.result.outputChunks.map((chunk) => chunk.text).join("") ?? "";
     const lines = text
@@ -274,18 +278,14 @@ export const DashboardPage = (): ReactElement => {
 
           <section className="activity-panel" aria-label="Stage activity">
             <h3>Activity</h3>
-            {activityEntries.length === 0 ? (
+            {visibleActivityEntries.length === 0 ? (
               <p>The stage has not started yet.</p>
             ) : (
               <ol>
-                {activityEntries.map((entry, index) => (
+                {visibleActivityEntries.map((entry, index) => (
                   <li
                     className={`activity-item activity-item-${entry.status}${
-                      isRunning &&
-                      index === activityEntries.length - 1 &&
-                      entry.status === "started"
-                        ? " is-live"
-                        : ""
+                      isRunning && index === 0 && entry.status === "started" ? " is-live" : ""
                     }`}
                     key={entry.stepId}
                   >

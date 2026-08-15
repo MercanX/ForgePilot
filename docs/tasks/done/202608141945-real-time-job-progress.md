@@ -20,6 +20,8 @@ olaylarina tasindi.
   hale getirildi.
 - Activity listesi `stepId` bazli duruma cevrildi; ayni is devam ederken mevcut
   satir guncelleniyor, yeni satir yalnizca gercek yeni is basladiginda aciliyor.
+- Panel yalnizca en son 10 Activity satirini gosteriyor; en yeni islem en ustte
+  yer aliyor ve panel ici scroll kullanilmiyor.
 
 ## Dogrulama
 

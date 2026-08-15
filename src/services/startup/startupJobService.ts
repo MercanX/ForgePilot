@@ -522,7 +522,9 @@ const collectManifestEntries = async (
 
   await visit(rootPath);
 
-  return entries.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+  return entries.sort((left, right) =>
+    left.relativePath < right.relativePath ? -1 : left.relativePath > right.relativePath ? 1 : 0
+  );
 };
 
 const writeCsvManifest = async (manifestPath: string, entries: ManifestEntry[]): Promise<void> => {

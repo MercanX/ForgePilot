@@ -533,12 +533,9 @@ h1 {
 .activity-panel ol {
   display: grid;
   gap: 7px;
-  max-height: 230px;
   margin: 0;
-  overflow: auto;
   padding-bottom: 2px;
   padding-left: 20px;
-  padding-right: 8px;
 }
 
 .activity-panel li {

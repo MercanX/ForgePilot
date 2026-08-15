@@ -62,6 +62,14 @@ type StartupExecutionMetadata = {
     pre_run_manifest_sha256?: string;
     run_id?: string;
   };
+  scan_project?: {
+    directory_count?: number;
+    file_count?: number;
+  };
+  classify_files?: {
+    file_count?: number;
+    unknown_count?: number;
+  };
 };
 
 const isStartupExecutionMetadata = (value: unknown): value is StartupExecutionMetadata =>
@@ -470,6 +478,46 @@ export const DashboardPage = (): ReactElement => {
                       ? startupExecution.seal_run.missing.join(", ")
                       : "None"}
                   </dd>
+                </div>
+              </dl>
+            </section>
+          ) : null}
+
+          {startupExecution?.scan_project ? (
+            <section className="startup-result" aria-label="Scan project result">
+              <h3>Project Scan</h3>
+              <dl>
+                <div>
+                  <dt>Files</dt>
+                  <dd>{startupExecution.scan_project.file_count ?? "unknown"}</dd>
+                </div>
+                <div>
+                  <dt>Directories</dt>
+                  <dd>{startupExecution.scan_project.directory_count ?? "unknown"}</dd>
+                </div>
+                <div>
+                  <dt>Output</dt>
+                  <dd>FILE_INVENTORY.json · FOLDER_STRUCTURE.json</dd>
+                </div>
+              </dl>
+            </section>
+          ) : null}
+
+          {startupExecution?.classify_files ? (
+            <section className="startup-result" aria-label="Classify files result">
+              <h3>File Classification</h3>
+              <dl>
+                <div>
+                  <dt>Classified</dt>
+                  <dd>{startupExecution.classify_files.file_count ?? "unknown"}</dd>
+                </div>
+                <div>
+                  <dt>Unknown</dt>
+                  <dd>{startupExecution.classify_files.unknown_count ?? "unknown"}</dd>
+                </div>
+                <div>
+                  <dt>Output</dt>
+                  <dd>CLASSIFIED_FILES.json · UNKNOWN_FILES.json</dd>
                 </div>
               </dl>
             </section>

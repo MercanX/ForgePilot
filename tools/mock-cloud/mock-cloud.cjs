@@ -28,6 +28,12 @@ const BUILD_FACTORY_MANIFEST_RULE_PATH =
 const SEAL_RUN_RULE_PATH =
   process.env.FORGEPILOT_STARTUP_SEAL_RUN_RULE ??
   "C:\\Github\\aiFactory\\.ai-factory\\010-Startup\\rules\\080-seal_run.rules.md";
+const SCAN_PROJECT_RULE_PATH =
+  process.env.FORGEPILOT_DISCOVERY_SCAN_PROJECT_RULE ??
+  "C:\\Github\\aiFactory\\.ai-factory\\020-Discovery\\rules\\005-scan_project.rules.md";
+const CLASSIFY_FILES_RULE_PATH =
+  process.env.FORGEPILOT_DISCOVERY_CLASSIFY_FILES_RULE ??
+  "C:\\Github\\aiFactory\\.ai-factory\\020-Discovery\\rules\\010-classify_files.rules.md";
 
 const sendJson = (response, statusCode, payload) => {
   response.writeHead(statusCode, {
@@ -214,7 +220,70 @@ const createSealRunPrompt = (requestBody) => {
   ].join("\n");
 };
 
+const createScanProjectPrompt = (requestBody) => {
+  const rule = readRule(SCAN_PROJECT_RULE_PATH);
+
+  return [
+    `Proje koku: ${requestBody.project.rootPath}`,
+    "",
+    `exe_result: ${JSON.stringify(requestBody.localExecution?.scan_project ?? null)}`,
+    "",
+    "--- kural (RULE-D01, 005-scan_project.rules.md) ---",
+    rule,
+    "--- kural sonu ---",
+    "",
+    "EXE RULE-D01 islemini tamamladigini iddia ediyor.",
+    "",
+    "Sen uretim yapmiyorsun. Dosya yazma/degistirme.",
+    "RULE-D01 Verification bolumunu ve invariant'larini bagimsiz dogrula.",
+    "",
+    "Ozellikle gercek traversal kapsamini, exclusion, path canonicalization,",
+    "FILE_INVENTORY/FOLDER_STRUCTURE exact iliskisini ve Git status davranisini kontrol et.",
+    "",
+    "Son satira yalniz:",
+    '{"ok":true,"job":"scan_project","verified_rules":["RULE-D01"]}',
+    "veya",
+    '{"ok":false,"job":"scan_project","failed_at":"RULE-D01","violation":"...","detail":"..."}',
+    "yaz."
+  ].join("\n");
+};
+
+const createClassifyFilesPrompt = (requestBody) => {
+  const rule = readRule(CLASSIFY_FILES_RULE_PATH);
+
+  return [
+    `Proje koku: ${requestBody.project.rootPath}`,
+    "",
+    `exe_result: ${JSON.stringify(requestBody.localExecution?.classify_files ?? null)}`,
+    "",
+    "--- kural (RULE-D02, 010-classify_files.rules.md) ---",
+    rule,
+    "--- kural sonu ---",
+    "",
+    "EXE RULE-D02 islemini tamamladigini iddia ediyor.",
+    "Uretim yapma; yalniz RULE-D02 Verification listesini bagimsiz uygula.",
+    "",
+    "Inventory/classified path exact esitligini, kapali kind/format/signals",
+    "sozluklerini, manifest precedence'i, signal tokenizer fixture'larini ve",
+    "UNKNOWN_FILES esitligini kontrol et.",
+    "",
+    "Son satira yalniz:",
+    '{"ok":true,"job":"classify_files","verified_rules":["RULE-D02"]}',
+    "veya",
+    '{"ok":false,"job":"classify_files","failed_at":"RULE-D02","violation":"...","detail":"..."}',
+    "yaz."
+  ].join("\n");
+};
+
 const createPrompt = (requestBody) => {
+  if (requestBody.localExecution?.classify_files) {
+    return createClassifyFilesPrompt(requestBody);
+  }
+
+  if (requestBody.localExecution?.scan_project) {
+    return createScanProjectPrompt(requestBody);
+  }
+
   if (requestBody.localExecution?.seal_run) {
     return createSealRunPrompt(requestBody);
   }
@@ -243,6 +312,14 @@ const createPrompt = (requestBody) => {
 };
 
 const getStageId = (requestBody) => {
+  if (requestBody.localExecution?.classify_files) {
+    return "020-discovery:classify-files";
+  }
+
+  if (requestBody.localExecution?.scan_project) {
+    return "020-discovery:scan-project";
+  }
+
   if (requestBody.localExecution?.seal_run) {
     return "010-startup:seal-run";
   }

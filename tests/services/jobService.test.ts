@@ -783,4 +783,264 @@ describe("jobService", () => {
     ]);
     expect(response.result.outputChunks.at(-1)?.text).toContain('"decision":"PASS"');
   });
+
+  describe("020-discovery", () => {
+    const scanProjectResult = {
+      directory_count: 3,
+      file_count: 10
+    };
+    const classifyFilesResult = {
+      file_count: 10,
+      unknown_count: 1
+    };
+
+    const buildClient = (
+      postMock: (path: string, body: unknown) => Promise<unknown>
+    ): HttpClient => ({
+      get: (path, schema) => {
+        if (path.startsWith("/workflows/current")) {
+          return Promise.resolve(
+            schema.parse({
+              stages: [],
+              workflowId: "mock",
+              workflowVersion: "1.0.0"
+            })
+          );
+        }
+
+        if (path.startsWith("/jobs/")) {
+          return Promise.resolve(schema.parse(task));
+        }
+
+        return Promise.reject(new Error(`Unexpected GET ${path}`));
+      },
+      post: (path, body, schema) => postMock(path, body).then((payload) => schema.parse(payload))
+    });
+
+    it("runs scan_project then classify_files when both verifications pass", async () => {
+      const requestedLocalExecutions: unknown[] = [];
+      let jobCounter = 0;
+      const postMock = vi.fn((path: string, body: unknown): Promise<unknown> => {
+        if (path === "/session/handshake") {
+          return Promise.resolve({
+            message: "ok",
+            protocolVersion: "1",
+            serverVersion: "mock-0.1.0",
+            status: "ok"
+          } satisfies HandshakeResponse);
+        }
+
+        if (path === "/jobs/request") {
+          requestedLocalExecutions.push((body as RequestJobRequest).localExecution);
+          jobCounter += 1;
+          return Promise.resolve({
+            ...job,
+            id:
+              [
+                "11111111-1111-4111-8111-111111111111",
+                "55555555-5555-4555-8555-555555555555"
+              ][jobCounter - 1] ?? "55555555-5555-4555-8555-555555555555",
+            task: null
+          });
+        }
+
+        if (path.endsWith("/result")) {
+          return Promise.resolve({
+            accepted: true,
+            findings: []
+          } satisfies SubmitResultResponse);
+        }
+
+        if (path === "/findings/sync" || path.endsWith("/heartbeat")) {
+          return Promise.resolve({ accepted: true });
+        }
+
+        return Promise.reject(new Error(`Unexpected POST ${path}`));
+      });
+      const client = buildClient(postMock);
+      const outputCallbacks = new Set<(event: TaskOutputEvent) => void>();
+      const exitCallbacks = new Set<(event: TaskExitEvent) => void>();
+      let startCounter = 0;
+      const taskService: TaskExecutionService = {
+        dispose: vi.fn(),
+        onExit: vi.fn((callback: (event: TaskExitEvent) => void): Unsubscribe => {
+          exitCallbacks.add(callback);
+          return () => exitCallbacks.delete(callback);
+        }),
+        onOutput: vi.fn((callback: (event: TaskOutputEvent) => void): Unsubscribe => {
+          outputCallbacks.add(callback);
+          return () => outputCallbacks.delete(callback);
+        }),
+        start: vi.fn(() => {
+          startCounter += 1;
+          const taskId =
+            startCounter === 1
+              ? "66666666-6666-4666-8666-666666666666"
+              : "77777777-7777-4777-8777-777777777777";
+          const output =
+            startCounter === 1
+              ? '{"ok":true,"job":"scan_project","verified_rules":["RULE-D01"]}\n'
+              : '{"ok":true,"job":"classify_files","verified_rules":["RULE-D02"]}\n';
+          setTimeout(() => {
+            for (const callback of outputCallbacks) {
+              callback({
+                chunk: {
+                  stream: "stdout",
+                  text: output,
+                  timestamp: "2026-08-14T00:00:01.000Z"
+                },
+                providerId: PROVIDER_IDS.claudeCode,
+                taskId
+              });
+            }
+            for (const callback of exitCallbacks) {
+              callback({
+                exitInfo: {
+                  exitCode: 0,
+                  finishedAt: "2026-08-14T00:00:02.000Z",
+                  signal: null
+                },
+                providerId: PROVIDER_IDS.claudeCode,
+                taskId
+              });
+            }
+          }, 0);
+
+          return Promise.resolve({
+            handle: {
+              id: taskId,
+              processId: 123,
+              providerId: PROVIDER_IDS.claudeCode
+            },
+            startedAt: "2026-08-14T00:00:01.000Z"
+          });
+        }),
+        stop: vi.fn(() => true)
+      };
+      const service = createJobService({
+        createClient: () => client,
+        runClassifyFilesJob: vi.fn(() => Promise.resolve(classifyFilesResult)),
+        runScanProjectJob: vi.fn(() => Promise.resolve(scanProjectResult)),
+        taskExecutionService: taskService
+      });
+
+      const response = await service.runOnce({
+        model: "sonnet",
+        newRun: false,
+        project: projectFixture,
+        providerId: PROVIDER_IDS.claudeCode,
+        serverUrl: "http://localhost:4317",
+        stageId: "020-discovery",
+        timeoutMs: 1_000
+      });
+
+      expect(taskService.start).toHaveBeenCalledTimes(2);
+      expect(requestedLocalExecutions).toEqual([
+        { scan_project: scanProjectResult },
+        { classify_files: classifyFilesResult }
+      ]);
+      expect(response.result.outputChunks.at(-1)?.text).toContain('"job":"classify_files"');
+    });
+
+    it("stops before classify_files when scan_project verification fails", async () => {
+      const postMock = vi.fn((path: string): Promise<unknown> => {
+        if (path === "/session/handshake") {
+          return Promise.resolve({
+            message: "ok",
+            protocolVersion: "1",
+            serverVersion: "mock-0.1.0",
+            status: "ok"
+          } satisfies HandshakeResponse);
+        }
+
+        if (path === "/jobs/request") {
+          return Promise.resolve(job);
+        }
+
+        if (path.endsWith("/result")) {
+          return Promise.resolve({
+            accepted: true,
+            findings: []
+          } satisfies SubmitResultResponse);
+        }
+
+        if (path === "/findings/sync" || path.endsWith("/heartbeat")) {
+          return Promise.resolve({ accepted: true });
+        }
+
+        return Promise.reject(new Error(`Unexpected POST ${path}`));
+      });
+      const client = buildClient(postMock);
+      const outputCallbacks = new Set<(event: TaskOutputEvent) => void>();
+      const exitCallbacks = new Set<(event: TaskExitEvent) => void>();
+      const taskService: TaskExecutionService = {
+        dispose: vi.fn(),
+        onExit: vi.fn((callback: (event: TaskExitEvent) => void): Unsubscribe => {
+          exitCallbacks.add(callback);
+          return () => exitCallbacks.delete(callback);
+        }),
+        onOutput: vi.fn((callback: (event: TaskOutputEvent) => void): Unsubscribe => {
+          outputCallbacks.add(callback);
+          return () => outputCallbacks.delete(callback);
+        }),
+        start: vi.fn(() => {
+          setTimeout(() => {
+            for (const callback of outputCallbacks) {
+              callback({
+                chunk: {
+                  stream: "stdout",
+                  text: '{"ok":false,"job":"scan_project","failed_at":"RULE-D01","violation":"x","detail":"y"}\n',
+                  timestamp: "2026-08-14T00:00:01.000Z"
+                },
+                providerId: PROVIDER_IDS.claudeCode,
+                taskId: "66666666-6666-4666-8666-666666666666"
+              });
+            }
+            for (const callback of exitCallbacks) {
+              callback({
+                exitInfo: {
+                  exitCode: 0,
+                  finishedAt: "2026-08-14T00:00:02.000Z",
+                  signal: null
+                },
+                providerId: PROVIDER_IDS.claudeCode,
+                taskId: "66666666-6666-4666-8666-666666666666"
+              });
+            }
+          }, 0);
+
+          return Promise.resolve({
+            handle: {
+              id: "66666666-6666-4666-8666-666666666666",
+              processId: 123,
+              providerId: PROVIDER_IDS.claudeCode
+            },
+            startedAt: "2026-08-14T00:00:01.000Z"
+          });
+        }),
+        stop: vi.fn(() => true)
+      };
+      const classifyFilesMock = vi.fn(() => Promise.resolve(classifyFilesResult));
+      const service = createJobService({
+        createClient: () => client,
+        runClassifyFilesJob: classifyFilesMock,
+        runScanProjectJob: vi.fn(() => Promise.resolve(scanProjectResult)),
+        taskExecutionService: taskService
+      });
+
+      const response = await service.runOnce({
+        model: "sonnet",
+        newRun: false,
+        project: projectFixture,
+        providerId: PROVIDER_IDS.claudeCode,
+        serverUrl: "http://localhost:4317",
+        stageId: "020-discovery",
+        timeoutMs: 1_000
+      });
+
+      expect(classifyFilesMock).not.toHaveBeenCalled();
+      expect(taskService.start).toHaveBeenCalledTimes(1);
+      expect(response.result.outputChunks.at(-1)?.text).toContain('"ok":false');
+    });
+  });
 });

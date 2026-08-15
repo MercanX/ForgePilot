@@ -30,6 +30,7 @@ import type { Project } from "@shared/schemas/project";
 import type { ProviderId } from "@shared/schemas/provider";
 
 import { createHttpClient, type HttpClient } from "../api/httpClient";
+import { runClassifyFilesJob, runScanProjectJob } from "../discovery/discoveryJobService";
 import {
   runBuildFactoryManifestJob,
   runBuildSourceManifestJob,
@@ -67,7 +68,9 @@ type JobServiceOptions = {
   runBuildFactoryManifestJob?: typeof runBuildFactoryManifestJob;
   runBuildSourceManifestJob?: typeof runBuildSourceManifestJob;
   runCaptureGitStateJob?: typeof runCaptureGitStateJob;
+  runClassifyFilesJob?: typeof runClassifyFilesJob;
   runPlaceInputsJob?: typeof runPlaceInputsJob;
+  runScanProjectJob?: typeof runScanProjectJob;
   runSealRunJob?: typeof runSealRunJob;
   runSelectRunJob?: typeof runSelectRunJob;
   runStartupJob?: typeof runStartupJob;
@@ -76,6 +79,7 @@ type JobServiceOptions = {
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const STARTUP_STAGE_ID = "010-startup";
+const DISCOVERY_STAGE_ID = "020-discovery";
 
 const createClientFactory =
   (options: JobServiceOptions): ((serverUrl: string) => HttpClient) =>
@@ -98,7 +102,9 @@ export const createJobService = (options: JobServiceOptions = {}): JobService =>
   const executeBuildSourceManifestJob =
     options.runBuildSourceManifestJob ?? runBuildSourceManifestJob;
   const executeCaptureGitStateJob = options.runCaptureGitStateJob ?? runCaptureGitStateJob;
+  const executeClassifyFilesJob = options.runClassifyFilesJob ?? runClassifyFilesJob;
   const executePlaceInputsJob = options.runPlaceInputsJob ?? runPlaceInputsJob;
+  const executeScanProjectJob = options.runScanProjectJob ?? runScanProjectJob;
   const executeSealRunJob = options.runSealRunJob ?? runSealRunJob;
   const executeSelectRunJob = options.runSelectRunJob ?? runSelectRunJob;
   const executeStartupJob = options.runStartupJob ?? runStartupJob;
@@ -373,6 +379,64 @@ export const createJobService = (options: JobServiceOptions = {}): JobService =>
       status: "completed",
       stepId: "load-workflow"
     });
+
+    if (request.stageId === DISCOVERY_STAGE_ID) {
+      emit(request, onProgress, {
+        message: "Job 1 started: scanning the project tree.",
+        progress: 22,
+        status: "started",
+        stepId: "job-1-local"
+      });
+      const scanProjectResult = await executeScanProjectJob(request.project.rootPath);
+      emit(request, onProgress, {
+        message: "Job 1 local execution completed.",
+        progress: 30,
+        status: "completed",
+        stepId: "job-1-local"
+      });
+      const scanProjectVerification = await runProviderVerification(
+        request,
+        { scan_project: scanProjectResult },
+        onProgress,
+        "job-1-llm",
+        34,
+        50
+      );
+      const scanProjectJson = getLastJsonObject(scanProjectVerification.result.outputChunks);
+
+      if (scanProjectJson?.ok !== true) {
+        emit(request, onProgress, {
+          message: "Job 1 verification did not pass; the stage stopped.",
+          progress: 50,
+          status: "failed",
+          stepId: "job-1-llm"
+        });
+        return scanProjectVerification;
+      }
+
+      emit(request, onProgress, {
+        message: "Job 2 started: classifying inventoried files.",
+        progress: 54,
+        status: "started",
+        stepId: "job-2-local"
+      });
+      const classifyFilesResult = await executeClassifyFilesJob(request.project.rootPath);
+      emit(request, onProgress, {
+        message: "Job 2 local execution completed.",
+        progress: 70,
+        status: "completed",
+        stepId: "job-2-local"
+      });
+
+      return runProviderVerification(
+        request,
+        { classify_files: classifyFilesResult },
+        onProgress,
+        "job-2-llm",
+        74,
+        100
+      );
+    }
 
     if (request.stageId !== STARTUP_STAGE_ID) {
       return runProviderVerification(request, null, onProgress, "provider-verification", 30, 100);

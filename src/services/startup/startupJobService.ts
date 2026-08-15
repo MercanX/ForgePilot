@@ -1,7 +1,16 @@
-import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
-import { copyFile, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+
+import {
+  collectManifestEntries,
+  ignoredByProject,
+  isDirectory,
+  isFile,
+  readGitignorePatterns,
+  runGit,
+  sha256,
+  writeCsvManifest
+} from "../shared/fsUtils";
 
 export type StartupJobResult = {
   check_factory: {
@@ -52,7 +61,6 @@ const RUN_ID_PATTERN = /^.+-\d{8}-\d{3}$/;
 const RUNS_DIR = ".ai-factory-runs";
 const RUN_SEAL_FILE = "RUN_SEAL.json";
 const NO_GIT_REPOSITORY = "NO GIT REPOSITORY\n";
-const MANIFEST_HEADER = "RelativePath,SHA256,Size";
 const SOURCE_EXCLUDE = new Set([
   ".ai-factory",
   ".ai-factory-runs",
@@ -163,14 +171,6 @@ export const runStartupJob = async (projectRootPath: string): Promise<StartupJob
   };
 };
 
-const isDirectory = async (directoryPath: string): Promise<boolean> => {
-  try {
-    return (await stat(directoryPath)).isDirectory();
-  } catch {
-    return false;
-  }
-};
-
 const listRunIds = async (runsPath: string): Promise<string[]> => {
   const entries = await readdir(runsPath, { withFileTypes: true });
 
@@ -259,63 +259,6 @@ export const runSelectRunJob = async (
     decision: "continue",
     run_id: latest
   };
-};
-
-const isFile = async (filePath: string): Promise<boolean> => {
-  try {
-    return (await stat(filePath)).isFile();
-  } catch {
-    return false;
-  }
-};
-
-const readGitignorePatterns = async (projectRootPath: string): Promise<string[]> => {
-  try {
-    const content = await readFile(path.join(projectRootPath, ".gitignore"), "utf8");
-
-    return content
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => line && !line.startsWith("#") && !line.startsWith("!"))
-      .map((line) => line.replace(/^\/+/, ""))
-      .filter(Boolean);
-  } catch {
-    return [];
-  }
-};
-
-const wildcardToRegex = (pattern: string): RegExp => {
-  const escaped = pattern.replace(/[|\\{}()[\]^$+?.]/g, "\\$&").replaceAll("*", ".*");
-
-  return new RegExp(`^${escaped}$`);
-};
-
-const ignoredByProject = (relativeName: string, patterns: string[]): boolean => {
-  const relativeDirectory = `${relativeName}/`;
-
-  for (const pattern of patterns) {
-    const cleanPattern = pattern.replace(/\/+$/, "");
-
-    if (!cleanPattern) {
-      continue;
-    }
-
-    if (
-      !cleanPattern.includes("/") &&
-      (relativeName === cleanPattern || relativeDirectory.startsWith(`${cleanPattern}/`))
-    ) {
-      return true;
-    }
-
-    if (
-      wildcardToRegex(cleanPattern).test(relativeName) ||
-      wildcardToRegex(`${cleanPattern}/`).test(relativeDirectory)
-    ) {
-      return true;
-    }
-  }
-
-  return false;
 };
 
 const bulletList = (values: string[]): string =>
@@ -412,29 +355,6 @@ export const runPlaceInputsJob = async (
   };
 };
 
-const runGit = async (projectRootPath: string, args: string[]): Promise<Buffer> =>
-  new Promise((resolve, reject) => {
-    execFile(
-      "git",
-      args,
-      {
-        cwd: projectRootPath,
-        encoding: "buffer",
-        maxBuffer: 50 * 1024 * 1024,
-        shell: false,
-        windowsHide: true
-      },
-      (error, stdout) => {
-        if (error) {
-          reject(new Error(error.message));
-          return;
-        }
-
-        resolve(Buffer.isBuffer(stdout) ? stdout : Buffer.from(stdout));
-      }
-    );
-  });
-
 export const runCaptureGitStateJob = async (
   projectRootPath: string,
   runId: string
@@ -472,71 +392,6 @@ export const runCaptureGitStateJob = async (
       run_id: runId
     };
   }
-};
-
-type ManifestEntry = {
-  relativePath: string;
-  sha256: string;
-  size: number;
-};
-
-const toPosixRelative = (rootPath: string, filePath: string): string =>
-  path.relative(rootPath, filePath).split(path.sep).join("/");
-
-const sha256 = (content: Buffer): string => createHash("sha256").update(content).digest("hex");
-
-const collectManifestEntries = async (
-  rootPath: string,
-  shouldExcludeRelativePath: (relativePath: string) => boolean
-): Promise<ManifestEntry[]> => {
-  const entries: ManifestEntry[] = [];
-
-  const visit = async (directoryPath: string): Promise<void> => {
-    const directoryEntries = await readdir(directoryPath, { withFileTypes: true });
-
-    for (const entry of directoryEntries) {
-      if (entry.isSymbolicLink()) {
-        continue;
-      }
-
-      const entryPath = path.join(directoryPath, entry.name);
-      const relativePath = toPosixRelative(rootPath, entryPath);
-
-      if (entry.isDirectory()) {
-        await visit(entryPath);
-        continue;
-      }
-
-      if (!entry.isFile() || shouldExcludeRelativePath(relativePath)) {
-        continue;
-      }
-
-      const content = await readFile(entryPath);
-      entries.push({
-        relativePath,
-        sha256: sha256(content),
-        size: content.byteLength
-      });
-    }
-  };
-
-  await visit(rootPath);
-
-  return entries.sort((left, right) =>
-    left.relativePath < right.relativePath ? -1 : left.relativePath > right.relativePath ? 1 : 0
-  );
-};
-
-const writeCsvManifest = async (manifestPath: string, entries: ManifestEntry[]): Promise<void> => {
-  await writeFile(
-    manifestPath,
-    [
-      MANIFEST_HEADER,
-      ...entries.map((entry) => `${entry.relativePath},${entry.sha256},${entry.size}`),
-      ""
-    ].join("\n"),
-    "utf8"
-  );
 };
 
 export const runBuildSourceManifestJob = async (

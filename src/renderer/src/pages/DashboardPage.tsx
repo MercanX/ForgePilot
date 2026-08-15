@@ -70,6 +70,16 @@ type StartupExecutionMetadata = {
     file_count?: number;
     unknown_count?: number;
   };
+  index_documents?: {
+    document_count?: number;
+    glossary_term_count?: number;
+    missing_document_count?: number;
+    reference_count?: number;
+  };
+  map_dependencies?: {
+    package_count?: number;
+    technology_count?: number;
+  };
 };
 
 const isStartupExecutionMetadata = (value: unknown): value is StartupExecutionMetadata =>
@@ -518,6 +528,57 @@ export const DashboardPage = (): ReactElement => {
                 <div>
                   <dt>Output</dt>
                   <dd>CLASSIFIED_FILES.json · UNKNOWN_FILES.json</dd>
+                </div>
+              </dl>
+            </section>
+          ) : null}
+
+          {startupExecution?.index_documents ? (
+            <section className="startup-result" aria-label="Document index result">
+              <h3>Document Index</h3>
+              <dl>
+                <div>
+                  <dt>Documents</dt>
+                  <dd>{startupExecution.index_documents.document_count ?? "unknown"}</dd>
+                </div>
+                <div>
+                  <dt>References</dt>
+                  <dd>{startupExecution.index_documents.reference_count ?? "unknown"}</dd>
+                </div>
+                <div>
+                  <dt>Missing documents</dt>
+                  <dd>{startupExecution.index_documents.missing_document_count ?? "unknown"}</dd>
+                </div>
+                <div>
+                  <dt>Glossary terms</dt>
+                  <dd>{startupExecution.index_documents.glossary_term_count ?? "unknown"}</dd>
+                </div>
+                <div>
+                  <dt>Output</dt>
+                  <dd>
+                    DOCUMENT_INDEX.json · DOCUMENT_STRUCTURE.json · DOCUMENT_REFERENCES.json ·
+                    MISSING_DOCUMENTS.json · DOMAIN_GLOSSARY.json
+                  </dd>
+                </div>
+              </dl>
+            </section>
+          ) : null}
+
+          {startupExecution?.map_dependencies ? (
+            <section className="startup-result" aria-label="Dependency map result">
+              <h3>Dependency Map</h3>
+              <dl>
+                <div>
+                  <dt>Packages</dt>
+                  <dd>{startupExecution.map_dependencies.package_count ?? "unknown"}</dd>
+                </div>
+                <div>
+                  <dt>Technologies</dt>
+                  <dd>{startupExecution.map_dependencies.technology_count ?? "unknown"}</dd>
+                </div>
+                <div>
+                  <dt>Output</dt>
+                  <dd>DEPENDENCY_MAP.json · TECHNOLOGY_STACK.json</dd>
                 </div>
               </dl>
             </section>

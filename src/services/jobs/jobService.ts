@@ -30,7 +30,14 @@ import type { Project } from "@shared/schemas/project";
 import type { ProviderId } from "@shared/schemas/provider";
 
 import { createHttpClient, type HttpClient } from "../api/httpClient";
-import { runClassifyFilesJob, runScanProjectJob } from "../discovery/discoveryJobService";
+import {
+  finalizeIndexDocumentsJob,
+  type GlossaryCandidateInput,
+  prepareIndexDocumentsJob,
+  runClassifyFilesJob,
+  runMapDependenciesJob,
+  runScanProjectJob
+} from "../discovery/discoveryJobService";
 import {
   runBuildFactoryManifestJob,
   runBuildSourceManifestJob,
@@ -65,10 +72,13 @@ export type JobRunProgressListener = (event: JobRunProgressEvent) => void;
 type JobServiceOptions = {
   createClient?: (serverUrl: string) => HttpClient;
   desktopVersion?: string;
+  finalizeIndexDocumentsJob?: typeof finalizeIndexDocumentsJob;
+  prepareIndexDocumentsJob?: typeof prepareIndexDocumentsJob;
   runBuildFactoryManifestJob?: typeof runBuildFactoryManifestJob;
   runBuildSourceManifestJob?: typeof runBuildSourceManifestJob;
   runCaptureGitStateJob?: typeof runCaptureGitStateJob;
   runClassifyFilesJob?: typeof runClassifyFilesJob;
+  runMapDependenciesJob?: typeof runMapDependenciesJob;
   runPlaceInputsJob?: typeof runPlaceInputsJob;
   runScanProjectJob?: typeof runScanProjectJob;
   runSealRunJob?: typeof runSealRunJob;
@@ -103,7 +113,12 @@ export const createJobService = (options: JobServiceOptions = {}): JobService =>
     options.runBuildSourceManifestJob ?? runBuildSourceManifestJob;
   const executeCaptureGitStateJob = options.runCaptureGitStateJob ?? runCaptureGitStateJob;
   const executeClassifyFilesJob = options.runClassifyFilesJob ?? runClassifyFilesJob;
+  const executeFinalizeIndexDocumentsJob =
+    options.finalizeIndexDocumentsJob ?? finalizeIndexDocumentsJob;
+  const executeMapDependenciesJob = options.runMapDependenciesJob ?? runMapDependenciesJob;
   const executePlaceInputsJob = options.runPlaceInputsJob ?? runPlaceInputsJob;
+  const executePrepareIndexDocumentsJob =
+    options.prepareIndexDocumentsJob ?? prepareIndexDocumentsJob;
   const executeScanProjectJob = options.runScanProjectJob ?? runScanProjectJob;
   const executeSealRunJob = options.runSealRunJob ?? runSealRunJob;
   const executeSelectRunJob = options.runSelectRunJob ?? runSelectRunJob;
@@ -336,6 +351,141 @@ export const createJobService = (options: JobServiceOptions = {}): JobService =>
     }
   };
 
+  const runProviderSemantic = async (
+    request: JobRunRequest,
+    localExecution: unknown,
+    onProgress: JobRunProgressListener | undefined,
+    stepId: string,
+    progressStarted: number,
+    progressCompleted: number
+  ): Promise<{ candidates: unknown[]; response: JobRunResponse }> => {
+    const outputChunks: ProviderOutputChunk[] = [];
+    onProgress?.({
+      message: "Requesting LLM semantic-production job from the cloud.",
+      progress: progressStarted,
+      projectId: request.project.id,
+      stageId: request.stageId,
+      status: "started",
+      stepId
+    });
+    const job = await requestJob(
+      {
+        ...createRequestJobPayload(request.project, request.providerId),
+        localExecution
+      },
+      request.serverUrl
+    );
+    const task = await getTask(job.id, request.serverUrl);
+
+    const removeOutputListener = taskExecutionService.onOutput((event) => {
+      outputChunks.push(event.chunk);
+    });
+    let removeExitListener: (() => void) | undefined;
+    let heartbeat: NodeJS.Timeout | undefined;
+
+    try {
+      const startedTask = await taskExecutionService.start({
+        instructions: task.instructions,
+        mode: "provider",
+        model: request.model,
+        projectRootPath: request.project.rootPath,
+        providerId: request.providerId,
+        timeoutMs: request.timeoutMs
+      });
+      onProgress?.({
+        message: "LLM provider process is running; waiting for candidate output.",
+        progress:
+          progressCompleted > progressStarted
+            ? Math.min(progressStarted + 4, progressCompleted - 1)
+            : progressStarted,
+        projectId: request.project.id,
+        stageId: request.stageId,
+        status: "started",
+        stepId
+      });
+
+      heartbeat = setInterval(() => {
+        void createClient(request.serverUrl).post(
+          `/jobs/${encodeURIComponent(job.id)}/heartbeat`,
+          {
+            jobId: job.id,
+            timestamp: new Date().toISOString()
+          },
+          syncFindingsResponseSchema
+        );
+      }, HEARTBEAT_INTERVAL_MS);
+
+      const exitInfo = await new Promise<TaskResult["exitCode"]>((resolve) => {
+        removeExitListener = taskExecutionService.onExit((event) => {
+          if (event.taskId === startedTask.handle.id) {
+            resolve(event.exitInfo.exitCode);
+          }
+        });
+      });
+
+      const finishedAt = new Date().toISOString();
+      const result: TaskResult = {
+        exitCode: exitInfo,
+        findings: [],
+        finishedAt,
+        jobId: job.id,
+        outputChunks,
+        providerId: request.providerId,
+        startedAt: startedTask.startedAt,
+        status: exitInfo === 0 ? "completed" : "failed",
+        taskId: startedTask.handle.id
+      };
+      const submitResponse = await submitResult(result, request.serverUrl);
+      const syncResponse = await syncFindings(
+        job.runId,
+        submitResponse.findings,
+        request.serverUrl
+      );
+      const parsed = getLastJsonObject(outputChunks) as { candidates?: unknown } | null;
+      const candidates = Array.isArray(parsed?.candidates) ? parsed.candidates : [];
+
+      onProgress?.({
+        message:
+          result.status === "completed"
+            ? "LLM candidate generation completed."
+            : "LLM candidate generation failed.",
+        progress: progressCompleted,
+        projectId: request.project.id,
+        stageId: request.stageId,
+        status: result.status === "completed" ? "completed" : "failed",
+        stepId
+      });
+
+      return {
+        candidates,
+        response: {
+          job,
+          result,
+          submitAccepted: submitResponse.accepted,
+          syncedFindings: syncResponse.accepted ? submitResponse.findings : []
+        }
+      };
+    } catch (error) {
+      await fail(
+        {
+          jobId: job.id,
+          message: error instanceof Error ? error.message : "Unknown client error.",
+          reason: "client-error"
+        },
+        request.serverUrl
+      );
+      throw error;
+    } finally {
+      if (heartbeat) {
+        clearInterval(heartbeat);
+      }
+      removeOutputListener();
+      if (removeExitListener) {
+        removeExitListener();
+      }
+    }
+  };
+
   const emit = (
     request: JobRunRequest,
     onProgress: JobRunProgressListener | undefined,
@@ -427,13 +577,69 @@ export const createJobService = (options: JobServiceOptions = {}): JobService =>
         status: "completed",
         stepId: "job-2-local"
       });
-
-      return runProviderVerification(
+      const classifyFilesVerification = await runProviderVerification(
         request,
         { classify_files: classifyFilesResult },
         onProgress,
         "job-2-llm",
         74,
+        82
+      );
+      const classifyFilesJson = getLastJsonObject(classifyFilesVerification.result.outputChunks);
+
+      if (classifyFilesJson?.ok !== true) {
+        emit(request, onProgress, {
+          message: "Job 2 verification did not pass; the stage stopped.",
+          progress: 82,
+          status: "failed",
+          stepId: "job-2-llm"
+        });
+        return classifyFilesVerification;
+      }
+
+      emit(request, onProgress, {
+        message: "Job 3 started: indexing documents and mapping dependencies.",
+        progress: 84,
+        status: "started",
+        stepId: "job-3-local"
+      });
+      const [indexDocumentsPreparation, mapDependenciesResult] = await Promise.all([
+        executePrepareIndexDocumentsJob(request.project.rootPath),
+        executeMapDependenciesJob(request.project.rootPath)
+      ]);
+      emit(request, onProgress, {
+        message: "Job 3 local execution completed; requesting domain glossary candidates.",
+        progress: 88,
+        status: "completed",
+        stepId: "job-3-local"
+      });
+
+      const glossarySemantic = await runProviderSemantic(
+        request,
+        { index_documents_candidates: indexDocumentsPreparation.candidateDocuments },
+        onProgress,
+        "job-3-semantic",
+        88,
+        92
+      );
+      const indexDocumentsResult = await executeFinalizeIndexDocumentsJob(
+        request.project.rootPath,
+        indexDocumentsPreparation,
+        glossarySemantic.candidates as GlossaryCandidateInput[]
+      );
+      emit(request, onProgress, {
+        message: "Job 3 finalized; verifying index_documents and map_dependencies.",
+        progress: 94,
+        status: "started",
+        stepId: "job-3-llm"
+      });
+
+      return runProviderVerification(
+        request,
+        { index_documents: indexDocumentsResult, map_dependencies: mapDependenciesResult },
+        onProgress,
+        "job-3-llm",
+        94,
         100
       );
     }

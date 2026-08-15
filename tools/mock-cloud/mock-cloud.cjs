@@ -37,6 +37,12 @@ const SCAN_PROJECT_RULE_PATH =
 const CLASSIFY_FILES_RULE_PATH =
   process.env.FORGEPILOT_DISCOVERY_CLASSIFY_FILES_RULE ??
   "C:\\Github\\aiFactory\\.ai-factory\\020-Discovery\\rules\\010-classify_files.rules.md";
+const INDEX_DOCUMENTS_RULE_PATH =
+  process.env.FORGEPILOT_DISCOVERY_INDEX_DOCUMENTS_RULE ??
+  "C:\\Github\\aiFactory\\.ai-factory\\020-Discovery\\rules\\015-index_documents.rules.md";
+const MAP_DEPENDENCIES_RULE_PATH =
+  process.env.FORGEPILOT_DISCOVERY_MAP_DEPENDENCIES_RULE ??
+  "C:\\Github\\aiFactory\\.ai-factory\\020-Discovery\\rules\\017-map_dependencies.rules.md";
 
 const sendJson = (response, statusCode, payload) => {
   response.writeHead(statusCode, {
@@ -352,7 +358,75 @@ const createClassifyFilesPrompt = (requestBody) => {
   ].join("\n");
 };
 
+const createIndexDocumentsCandidatesPrompt = (requestBody) => {
+  const rule = readRule(INDEX_DOCUMENTS_RULE_PATH);
+  const candidateDocuments = requestBody.localExecution?.index_documents_candidates ?? [];
+  const canonicalView = candidateDocuments
+    .map((doc) => {
+      const numberedLines = (doc.lines ?? []).map((line, index) => `${index + 1}: ${line}`).join("\n");
+      return `--- document (${doc.source}) ---\n${numberedLines}\n--- document sonu ---`;
+    })
+    .join("\n\n");
+
+  return [
+    "--- kural (RULE-D03, 015-index_documents.rules.md) ---",
+    rule,
+    "--- kural sonu ---",
+    "",
+    "Asagidaki canonical document view uzerinden yalniz DOMAIN_GLOSSARY candidate'lari uret.",
+    "",
+    canonicalView,
+    "",
+    "Filesystem'e yazma.",
+    "Excerpt uretme.",
+    "Yalniz su kapali category degerlerini kullan:",
+    "business_term, module_name, entity_name, role, service_name, api_name.",
+    "",
+    "Yalniz JSON dondur:",
+    '{"candidates":[{"term":"...","category":"...","evidence":{"source":"...","line":1}}]}'
+  ].join("\n");
+};
+
+const createIndexDocumentsAndMapDependenciesVerificationPrompt = (requestBody) => {
+  const d03Rule = readRule(INDEX_DOCUMENTS_RULE_PATH);
+  const d09Rule = readRule(MAP_DEPENDENCIES_RULE_PATH);
+
+  return [
+    "--- kural (RULE-D03, 015-index_documents.rules.md) ---",
+    d03Rule,
+    "--- kural sonu ---",
+    "",
+    "--- kural (RULE-D09, 017-map_dependencies.rules.md) ---",
+    d09Rule,
+    "--- kural sonu ---",
+    "",
+    `exe_result (index_documents): ${JSON.stringify(requestBody.localExecution?.index_documents ?? null)}`,
+    `exe_result (map_dependencies): ${JSON.stringify(requestBody.localExecution?.map_dependencies ?? null)}`,
+    "",
+    "EXE iki branch'in final output'larini tamamladigini iddia ediyor.",
+    "Uretim yapma, dosya degistirme.",
+    "",
+    "Once RULE-D03 Verification listesini uygula.",
+    "FAIL ise hemen dur.",
+    "Gecerse RULE-D09 Verification listesini uygula.",
+    "",
+    "Ikisi de gecerse son satira yalniz:",
+    '{"ok":true,"job":"index_documents_and_map_dependencies","verified_rules":["RULE-D03","RULE-D09"]}',
+    "Biri gecmezse:",
+    '{"ok":false,"job":"index_documents_and_map_dependencies","failed_at":"RULE-D03|RULE-D09","violation":"...","detail":"..."}',
+    "yaz."
+  ].join("\n");
+};
+
 const createPrompt = (requestBody) => {
+  if (requestBody.localExecution?.index_documents_candidates) {
+    return createIndexDocumentsCandidatesPrompt(requestBody);
+  }
+
+  if (requestBody.localExecution?.index_documents || requestBody.localExecution?.map_dependencies) {
+    return createIndexDocumentsAndMapDependenciesVerificationPrompt(requestBody);
+  }
+
   if (requestBody.localExecution?.classify_files) {
     return createClassifyFilesPrompt(requestBody);
   }
@@ -389,6 +463,14 @@ const createPrompt = (requestBody) => {
 };
 
 const getStageId = (requestBody) => {
+  if (requestBody.localExecution?.index_documents_candidates) {
+    return "020-discovery:index-documents-candidates";
+  }
+
+  if (requestBody.localExecution?.index_documents || requestBody.localExecution?.map_dependencies) {
+    return "020-discovery:index-documents-and-map-dependencies";
+  }
+
   if (requestBody.localExecution?.classify_files) {
     return "020-discovery:classify-files";
   }

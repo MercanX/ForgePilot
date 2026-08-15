@@ -1,5 +1,5 @@
 {
-  "lastFingerprint": "90090f5bdb7793391784a393adc1e08e82cecaab",
+  "lastFingerprint": "e5ecfb62c6ca285f270775640dd8d33681f6da03",
   "lastDate": "2026-08-15",
-  "lastContent": "- Added dynamic stage status tracking to the mock cloud server for realistic workflow simulation\n- Implemented stage completion detection based on job acknowledgment and verification results\n- Updated workflow stage responses to reflect actual progress of startup and discovery phases"
+  "lastContent": "- Added document index result section to dashboard showing document, reference, missing document, and glossary term counts\n- Added dependency map result section to dashboard displaying package and technology counts\n- Extended startup execution metadata type definitions to support new index and dependency map result data\n- Added support for parsing package manifests including package.json, pyproject.toml, and other dependency files\n- Integrated document parsing capabilities for PDF and DOCX file formats"
 }

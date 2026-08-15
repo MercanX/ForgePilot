@@ -1,6 +1,12 @@
 # Changelog CommitMind
 
 ## 2026-08-15
+
+- Added document index result section to dashboard showing document, reference, missing document, and glossary term counts
+- Added dependency map result section to dashboard displaying package and technology counts
+- Extended startup execution metadata type definitions to support new index and dependency map result data
+- Added support for parsing package manifests including package.json, pyproject.toml, and other dependency files
+- Integrated document parsing capabilities for PDF and DOCX file formats
 - Added dynamic stage status tracking to the mock cloud server for realistic workflow simulation
 - Implemented stage completion detection based on job acknowledgment and verification results
 - Updated workflow stage responses to reflect actual progress of startup and discovery phases

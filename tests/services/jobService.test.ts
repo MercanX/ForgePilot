@@ -817,8 +817,34 @@ describe("jobService", () => {
       post: (path, body, schema) => postMock(path, body).then((payload) => schema.parse(payload))
     });
 
-    it("runs scan_project then classify_files when both verifications pass", async () => {
+    const preparationResult = {
+      candidateDocuments: [],
+      documentIndexEntries: [],
+      documentStructureEntries: [],
+      missingDocuments: [],
+      preparedDocuments: [],
+      references: [],
+      standardDocumentsInventory: {}
+    };
+    const mapDependenciesResult = {
+      package_count: 2,
+      technology_count: 1
+    };
+    const indexDocumentsResult = {
+      document_count: 1,
+      glossary_term_count: 0,
+      missing_document_count: 0,
+      reference_count: 0
+    };
+
+    it("runs Job 1-3 through to the index_documents+map_dependencies verification when everything passes", async () => {
       const requestedLocalExecutions: unknown[] = [];
+      const jobIds = [
+        "11111111-1111-4111-8111-111111111111",
+        "55555555-5555-4555-8555-555555555555",
+        "22222222-2222-4222-8222-222222222222",
+        "33333333-3333-4333-8333-333333333333"
+      ];
       let jobCounter = 0;
       const postMock = vi.fn((path: string, body: unknown): Promise<unknown> => {
         if (path === "/session/handshake") {
@@ -835,11 +861,7 @@ describe("jobService", () => {
           jobCounter += 1;
           return Promise.resolve({
             ...job,
-            id:
-              [
-                "11111111-1111-4111-8111-111111111111",
-                "55555555-5555-4555-8555-555555555555"
-              ][jobCounter - 1] ?? "55555555-5555-4555-8555-555555555555",
+            id: jobIds[jobCounter - 1] ?? jobIds.at(-1),
             task: null
           });
         }
@@ -860,6 +882,18 @@ describe("jobService", () => {
       const client = buildClient(postMock);
       const outputCallbacks = new Set<(event: TaskOutputEvent) => void>();
       const exitCallbacks = new Set<(event: TaskExitEvent) => void>();
+      const taskIds = [
+        "66666666-6666-4666-8666-666666666666",
+        "77777777-7777-4777-8777-777777777777",
+        "88888888-8888-4888-8888-888888888888",
+        "99999999-9999-4999-8999-999999999999"
+      ];
+      const taskOutputs = [
+        '{"ok":true,"job":"scan_project","verified_rules":["RULE-D01"]}\n',
+        '{"ok":true,"job":"classify_files","verified_rules":["RULE-D02"]}\n',
+        '{"candidates":[]}\n',
+        '{"ok":true,"job":"index_documents_and_map_dependencies","verified_rules":["RULE-D03","RULE-D09"]}\n'
+      ];
       let startCounter = 0;
       const taskService: TaskExecutionService = {
         dispose: vi.fn(),
@@ -872,15 +906,9 @@ describe("jobService", () => {
           return () => outputCallbacks.delete(callback);
         }),
         start: vi.fn(() => {
+          const taskId = taskIds[startCounter] ?? taskIds.at(-1) ?? "";
+          const output = taskOutputs[startCounter] ?? taskOutputs.at(-1) ?? "";
           startCounter += 1;
-          const taskId =
-            startCounter === 1
-              ? "66666666-6666-4666-8666-666666666666"
-              : "77777777-7777-4777-8777-777777777777";
-          const output =
-            startCounter === 1
-              ? '{"ok":true,"job":"scan_project","verified_rules":["RULE-D01"]}\n'
-              : '{"ok":true,"job":"classify_files","verified_rules":["RULE-D02"]}\n';
           setTimeout(() => {
             for (const callback of outputCallbacks) {
               callback({
@@ -919,7 +947,10 @@ describe("jobService", () => {
       };
       const service = createJobService({
         createClient: () => client,
+        finalizeIndexDocumentsJob: vi.fn(() => Promise.resolve(indexDocumentsResult)),
+        prepareIndexDocumentsJob: vi.fn(() => Promise.resolve(preparationResult)),
         runClassifyFilesJob: vi.fn(() => Promise.resolve(classifyFilesResult)),
+        runMapDependenciesJob: vi.fn(() => Promise.resolve(mapDependenciesResult)),
         runScanProjectJob: vi.fn(() => Promise.resolve(scanProjectResult)),
         taskExecutionService: taskService
       });
@@ -934,12 +965,16 @@ describe("jobService", () => {
         timeoutMs: 1_000
       });
 
-      expect(taskService.start).toHaveBeenCalledTimes(2);
+      expect(taskService.start).toHaveBeenCalledTimes(4);
       expect(requestedLocalExecutions).toEqual([
         { scan_project: scanProjectResult },
-        { classify_files: classifyFilesResult }
+        { classify_files: classifyFilesResult },
+        { index_documents_candidates: preparationResult.candidateDocuments },
+        { index_documents: indexDocumentsResult, map_dependencies: mapDependenciesResult }
       ]);
-      expect(response.result.outputChunks.at(-1)?.text).toContain('"job":"classify_files"');
+      expect(response.result.outputChunks.at(-1)?.text).toContain(
+        '"job":"index_documents_and_map_dependencies"'
+      );
     });
 
     it("stops before classify_files when scan_project verification fails", async () => {

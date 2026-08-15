@@ -1,6 +1,10 @@
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
+import mammoth from "mammoth";
+import { PDFParse } from "pdf-parse";
+import { parse as parseToml } from "smol-toml";
+
 import { isDirectory, runGit, toPosixRelative } from "../shared/fsUtils";
 
 export type ScanProjectResult = {
@@ -576,5 +580,1231 @@ export const runClassifyFilesJob = async (
   return {
     file_count: classifiedFiles.length,
     unknown_count: unknownFiles.length
+  };
+};
+
+// ---------------------------------------------------------------------------
+// RULE-D09 — map_dependencies
+// ---------------------------------------------------------------------------
+
+export type MapDependenciesResult = {
+  package_count: number;
+  technology_count: number;
+};
+
+type ManifestEvidence = {
+  field?: string;
+  note: string;
+  source: string;
+};
+
+type DependencyPackage = {
+  evidence: ManifestEvidence;
+  name: string;
+  scopes: string[];
+};
+
+type TechnologyStackCategory = "Build Backend" | "Language" | "Package Manager" | "Runtime";
+
+type TechnologyStackEntry = {
+  category: TechnologyStackCategory;
+  evidence: ManifestEvidence;
+  name: string;
+};
+
+type ClassifiedFilesDocument = {
+  files: ClassifiedFile[];
+};
+
+const LANGUAGE_BY_FORMAT: Partial<Record<NonNullable<FileFormat>, string>> = {
+  csharp: "C#",
+  go: "Go",
+  java: "Java",
+  javascript: "JavaScript",
+  jsx: "JavaScript",
+  kotlin: "Kotlin",
+  php: "PHP",
+  python: "Python",
+  ruby: "Ruby",
+  rust: "Rust",
+  tsx: "TypeScript",
+  typescript: "TypeScript"
+};
+
+const TECH_STACK_CATEGORY_ORDER: TechnologyStackCategory[] = [
+  "Language",
+  "Runtime",
+  "Package Manager",
+  "Build Backend"
+];
+
+const PYPROJECT_BUILD_BACKENDS: Array<{ match: (value: string) => boolean; name: string }> = [
+  { match: (value) => value === "poetry.core.masonry.api", name: "Poetry" },
+  { match: (value) => value.startsWith("setuptools."), name: "setuptools" },
+  { match: (value) => value === "hatchling.build", name: "Hatch" },
+  { match: (value) => value === "flit_core.buildapi", name: "Flit" },
+  { match: (value) => value === "pdm.backend", name: "PDM" }
+];
+
+const PEP508_NAME_BOUNDARY_PATTERN = /[[;=<>!~\s]/;
+
+const extractPep508Name = (requirement: string): string | null => {
+  const boundaryIndex = requirement.search(PEP508_NAME_BOUNDARY_PATTERN);
+  const name = (boundaryIndex === -1 ? requirement : requirement.slice(0, boundaryIndex)).trim();
+
+  return name.length > 0 ? name : null;
+};
+
+const readJsonFile = async <T>(filePath: string): Promise<T> => {
+  const raw = await readFile(filePath, "utf8");
+
+  try {
+    return JSON.parse(raw) as T;
+  } catch (error) {
+    throw new Error(`Unable to parse ${filePath}: ${(error as Error).message}`);
+  }
+};
+
+const extractScopedPackages = (
+  source: string,
+  runtimeDeps: Record<string, unknown>,
+  devDeps: Record<string, unknown>,
+  note: string,
+  exclude?: (name: string) => boolean
+): DependencyPackage[] => {
+  const runtimeNames = new Set(Object.keys(runtimeDeps).filter((name) => !exclude?.(name)));
+  const devNames = new Set(Object.keys(devDeps).filter((name) => !exclude?.(name)));
+  const allNames = new Set([...runtimeNames, ...devNames]);
+
+  return [...allNames].sort().map((name) => {
+    const scopes: string[] = [];
+
+    if (devNames.has(name)) {
+      scopes.push("development");
+    }
+
+    if (runtimeNames.has(name)) {
+      scopes.push("runtime");
+    }
+
+    return { evidence: { note, source }, name, scopes: scopes.sort() };
+  });
+};
+
+const buildPackageJsonRecords = (
+  manifestPaths: Set<string>,
+  packageJson: Record<string, unknown>
+): { packages: DependencyPackage[]; stack: TechnologyStackEntry[] } => {
+  const stack: TechnologyStackEntry[] = [];
+  const packageManagerField =
+    typeof packageJson.packageManager === "string" ? packageJson.packageManager : null;
+
+  if (packageManagerField) {
+    stack.push({
+      category: "Package Manager",
+      evidence: { field: "packageManager", note: "packageManager alani.", source: "package.json" },
+      name: packageManagerField.split("@")[0] ?? packageManagerField
+    });
+  } else if (manifestPaths.has("pnpm-lock.yaml")) {
+    stack.push({
+      category: "Package Manager",
+      evidence: { note: "lockfile bulundu.", source: "pnpm-lock.yaml" },
+      name: "pnpm"
+    });
+  } else if (manifestPaths.has("yarn.lock")) {
+    stack.push({
+      category: "Package Manager",
+      evidence: { note: "lockfile bulundu.", source: "yarn.lock" },
+      name: "Yarn"
+    });
+  } else if (manifestPaths.has("package-lock.json") || manifestPaths.has("npm-shrinkwrap.json")) {
+    stack.push({
+      category: "Package Manager",
+      evidence: {
+        note: "lockfile bulundu.",
+        source: manifestPaths.has("package-lock.json") ? "package-lock.json" : "npm-shrinkwrap.json"
+      },
+      name: "npm"
+    });
+  }
+
+  const engines = packageJson.engines;
+  const nodeEngine =
+    engines && typeof engines === "object" && !Array.isArray(engines)
+      ? (engines as Record<string, unknown>).node
+      : undefined;
+
+  if (typeof nodeEngine === "string") {
+    stack.push({
+      category: "Runtime",
+      evidence: { field: "engines.node", note: "engines.node alani.", source: "package.json" },
+      name: "Node.js"
+    });
+  }
+
+  const packages = extractScopedPackages(
+    "package.json",
+    (packageJson.dependencies as Record<string, unknown>) ?? {},
+    (packageJson.devDependencies as Record<string, unknown>) ?? {},
+    "package dependency kaydi."
+  );
+
+  return { packages, stack };
+};
+
+const buildComposerJsonRecords = (
+  manifestPaths: Set<string>,
+  composerJson: Record<string, unknown>
+): { packages: DependencyPackage[]; stack: TechnologyStackEntry[] } => {
+  const stack: TechnologyStackEntry[] = [];
+
+  if (manifestPaths.has("composer.lock")) {
+    stack.push({
+      category: "Package Manager",
+      evidence: { note: "lockfile bulundu.", source: "composer.lock" },
+      name: "Composer"
+    });
+  }
+
+  const packages = extractScopedPackages(
+    "composer.json",
+    (composerJson.require as Record<string, unknown>) ?? {},
+    (composerJson["require-dev"] as Record<string, unknown>) ?? {},
+    "composer dependency kaydi.",
+    (name) => name === "php" || name.startsWith("ext-")
+  );
+
+  return { packages, stack };
+};
+
+const buildPyprojectTomlRecords = (
+  pyproject: Record<string, unknown>
+): { packages: DependencyPackage[]; stack: TechnologyStackEntry[] } => {
+  const stack: TechnologyStackEntry[] = [];
+  const packages: DependencyPackage[] = [];
+
+  const buildSystem = pyproject["build-system"];
+  const buildBackend =
+    buildSystem && typeof buildSystem === "object" && !Array.isArray(buildSystem)
+      ? (buildSystem as Record<string, unknown>)["build-backend"]
+      : undefined;
+
+  if (typeof buildBackend === "string") {
+    const matched = PYPROJECT_BUILD_BACKENDS.find((entry) => entry.match(buildBackend));
+
+    if (matched) {
+      stack.push({
+        category: "Build Backend",
+        evidence: {
+          field: "build-system.build-backend",
+          note: "pyproject build-backend kaydi.",
+          source: "pyproject.toml"
+        },
+        name: matched.name
+      });
+    }
+  }
+
+  const project = pyproject.project;
+  const projectDependencies =
+    project && typeof project === "object" && !Array.isArray(project)
+      ? (project as Record<string, unknown>).dependencies
+      : undefined;
+
+  if (Array.isArray(projectDependencies)) {
+    const names = new Set<string>();
+
+    for (const requirement of projectDependencies) {
+      if (typeof requirement !== "string") {
+        continue;
+      }
+
+      const name = extractPep508Name(requirement);
+
+      if (name) {
+        names.add(name);
+      }
+    }
+
+    for (const name of [...names].sort()) {
+      packages.push({
+        evidence: { note: "pyproject dependency kaydi.", source: "pyproject.toml" },
+        name,
+        scopes: ["runtime"]
+      });
+    }
+  } else {
+    const tool = pyproject.tool;
+    const poetry =
+      tool && typeof tool === "object" && !Array.isArray(tool)
+        ? (tool as Record<string, unknown>).poetry
+        : undefined;
+    const poetryDependencies =
+      poetry && typeof poetry === "object" && !Array.isArray(poetry)
+        ? (poetry as Record<string, unknown>).dependencies
+        : undefined;
+
+    if (poetryDependencies && typeof poetryDependencies === "object" && !Array.isArray(poetryDependencies)) {
+      const names = Object.keys(poetryDependencies as Record<string, unknown>).filter(
+        (name) => name !== "python"
+      );
+
+      for (const name of names.sort()) {
+        packages.push({
+          evidence: { note: "pyproject dependency kaydi.", source: "pyproject.toml" },
+          name,
+          scopes: ["runtime"]
+        });
+      }
+    }
+  }
+
+  return { packages, stack };
+};
+
+const buildLanguageStack = (files: ClassifiedFile[]): TechnologyStackEntry[] => {
+  const seen = new Set<string>();
+  const entries: TechnologyStackEntry[] = [];
+
+  for (const file of files) {
+    if (file.kind !== "source" || !file.format) {
+      continue;
+    }
+
+    const languageName = LANGUAGE_BY_FORMAT[file.format];
+
+    if (!languageName || seen.has(languageName)) {
+      continue;
+    }
+
+    seen.add(languageName);
+    entries.push({
+      category: "Language",
+      evidence: { note: `${file.format} source dosyasi sinyali.`, source: "CLASSIFIED_FILES.json" },
+      name: languageName
+    });
+  }
+
+  return entries;
+};
+
+export const runMapDependenciesJob = async (
+  projectRootPath: string
+): Promise<MapDependenciesResult> => {
+  const reportsDir = discoveryReportsDir(projectRootPath);
+  const classifiedPath = path.join(reportsDir, "CLASSIFIED_FILES.json");
+  let classified: ClassifiedFilesDocument;
+
+  try {
+    classified = JSON.parse(await readFile(classifiedPath, "utf8")) as ClassifiedFilesDocument;
+  } catch (error) {
+    throw new Error(`Unable to read CLASSIFIED_FILES.json: ${(error as Error).message}`);
+  }
+
+  const seenPaths = new Set<string>();
+
+  for (const file of classified.files) {
+    if (seenPaths.has(file.path)) {
+      throw new Error(`Duplicate classified path: ${file.path}`);
+    }
+
+    seenPaths.add(file.path);
+  }
+
+  const manifests = classified.files
+    .filter((file) => file.kind === "manifest")
+    .map((file) => file.path)
+    .sort();
+  const manifestPathSet = new Set(manifests);
+
+  const packages: DependencyPackage[] = [];
+  const stack: TechnologyStackEntry[] = [...buildLanguageStack(classified.files)];
+  const parsedManifests: string[] = [];
+
+  if (manifestPathSet.has("package.json")) {
+    parsedManifests.push("package.json");
+    const packageJson = await readJsonFile<Record<string, unknown>>(
+      path.join(projectRootPath, "package.json")
+    );
+    const result = buildPackageJsonRecords(manifestPathSet, packageJson);
+    packages.push(...result.packages);
+    stack.push(...result.stack);
+  }
+
+  if (manifestPathSet.has("composer.json")) {
+    parsedManifests.push("composer.json");
+    const composerJson = await readJsonFile<Record<string, unknown>>(
+      path.join(projectRootPath, "composer.json")
+    );
+    const result = buildComposerJsonRecords(manifestPathSet, composerJson);
+    packages.push(...result.packages);
+    stack.push(...result.stack);
+  }
+
+  if (manifestPathSet.has("pyproject.toml")) {
+    parsedManifests.push("pyproject.toml");
+    let pyproject: Record<string, unknown>;
+
+    try {
+      const raw = await readFile(path.join(projectRootPath, "pyproject.toml"), "utf8");
+      pyproject = parseToml(raw);
+    } catch (error) {
+      throw new Error(`Unable to parse pyproject.toml: ${(error as Error).message}`);
+    }
+
+    const result = buildPyprojectTomlRecords(pyproject);
+    packages.push(...result.packages);
+    stack.push(...result.stack);
+  }
+
+  parsedManifests.sort();
+  const parsedManifestSet = new Set(parsedManifests);
+  const unparsedManifests = manifests.filter((manifestPath) => !parsedManifestSet.has(manifestPath));
+
+  const dedupedPackagesMap = new Map<string, DependencyPackage>();
+
+  for (const pkg of packages) {
+    dedupedPackagesMap.set(`${pkg.name} ${pkg.evidence.source}`, pkg);
+  }
+
+  const dedupedPackages = [...dedupedPackagesMap.values()].sort((left, right) =>
+    left.name === right.name
+      ? left.evidence.source < right.evidence.source
+        ? -1
+        : 1
+      : left.name < right.name
+        ? -1
+        : 1
+  );
+
+  const dedupedStackMap = new Map<string, TechnologyStackEntry>();
+
+  for (const entry of stack) {
+    dedupedStackMap.set(`${entry.category} ${entry.name}`, entry);
+  }
+
+  const dedupedStack = [...dedupedStackMap.values()].sort((left, right) => {
+    const categoryDiff =
+      TECH_STACK_CATEGORY_ORDER.indexOf(left.category) - TECH_STACK_CATEGORY_ORDER.indexOf(right.category);
+
+    return categoryDiff !== 0 ? categoryDiff : left.name < right.name ? -1 : left.name > right.name ? 1 : 0;
+  });
+
+  await mkdir(reportsDir, { recursive: true });
+
+  await writeJson(path.join(reportsDir, "DEPENDENCY_MAP.json"), {
+    manifests,
+    metadata: buildMetadata(),
+    packages: dedupedPackages,
+    parsed_manifests: parsedManifests,
+    unparsed_manifests: unparsedManifests
+  });
+
+  await writeJson(path.join(reportsDir, "TECHNOLOGY_STACK.json"), {
+    metadata: buildMetadata(),
+    stack: dedupedStack
+  });
+
+  return {
+    package_count: dedupedPackages.length,
+    technology_count: dedupedStack.length
+  };
+};
+
+// ---------------------------------------------------------------------------
+// RULE-D03 — index_documents
+// ---------------------------------------------------------------------------
+
+export type IndexDocumentsResult = {
+  document_count: number;
+  glossary_term_count: number;
+  missing_document_count: number;
+  reference_count: number;
+};
+
+type DocumentCapabilities = {
+  anchors: boolean;
+  code_blocks: boolean;
+  headings: boolean;
+  links: boolean;
+  tables: boolean;
+};
+
+type DocumentHeading = {
+  anchor: string;
+  level: number;
+  line: number;
+  text: string;
+};
+
+type DocumentCodeBlock = {
+  language: string | null;
+  line: number;
+};
+
+type DocumentTable = {
+  columns: number;
+  line: number;
+};
+
+type ReferenceLinkType = "external" | "internal" | "relative";
+type ReferenceStatus = "broken" | "ok" | "outside_project" | "unchecked";
+type ReferenceFailureKind = "missing_anchor" | "missing_target" | "outside_project" | null;
+
+type DocumentReference = {
+  failure_kind: ReferenceFailureKind;
+  fragment: string | null;
+  line: number;
+  link_type: ReferenceLinkType;
+  raw_target: string;
+  resolved_path: string | null;
+  source: string;
+  status: ReferenceStatus;
+};
+
+type MissingDocumentEntry = {
+  evidence: { line: number; source: string };
+  referenced_from: string;
+  resolved_path: string;
+  target: string;
+};
+
+type GlossaryCategory =
+  | "api_name"
+  | "business_term"
+  | "entity_name"
+  | "module_name"
+  | "role"
+  | "service_name";
+
+type GlossaryTerm = {
+  category: GlossaryCategory;
+  evidence: { excerpt: string; line: number; source: string };
+  term: string;
+};
+
+export type GlossaryCandidateInput = {
+  category?: unknown;
+  evidence?: { line?: unknown; source?: unknown };
+  term?: unknown;
+};
+
+type PreparedDocument = {
+  capabilities: DocumentCapabilities;
+  codeBlocks: DocumentCodeBlock[];
+  format: FileFormat;
+  headings: DocumentHeading[];
+  lines: string[];
+  links: Array<{ line: number; rawTarget: string }>;
+  path: string;
+  tables: DocumentTable[];
+};
+
+export type IndexDocumentsCandidateDocument = {
+  lines: string[];
+  source: string;
+};
+
+export type IndexDocumentsPreparation = {
+  candidateDocuments: IndexDocumentsCandidateDocument[];
+  documentIndexEntries: Array<{ capabilities: DocumentCapabilities; format: FileFormat; path: string }>;
+  documentStructureEntries: Array<{
+    codeBlocks: DocumentCodeBlock[];
+    headings: DocumentHeading[];
+    path: string;
+    tables: DocumentTable[];
+  }>;
+  missingDocuments: MissingDocumentEntry[];
+  preparedDocuments: PreparedDocument[];
+  references: DocumentReference[];
+  standardDocumentsInventory: Record<string, { paths: string[]; present: boolean }>;
+};
+
+const SUPPORTED_DOCUMENTATION_FORMATS = new Set(["asciidoc", "docx", "markdown", "pdf", "plain_text", "rst"]);
+const GLOSSARY_CATEGORIES = new Set<GlossaryCategory>([
+  "api_name",
+  "business_term",
+  "entity_name",
+  "module_name",
+  "role",
+  "service_name"
+]);
+const CANDIDATE_VIEW_MAX_LINES_PER_DOCUMENT = 2000;
+const CANDIDATE_VIEW_MAX_DOCUMENTS = 200;
+const EXTERNAL_SCHEME_PATTERN = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
+const PARAGRAPH_ANCHOR_PATTERN = /[^\w\s-]/g;
+
+const normalizeCanonicalText = (raw: string): string => raw.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+
+const extractCanonicalText = async (absolutePath: string, format: FileFormat): Promise<string> => {
+  if (format === "pdf") {
+    const buffer = await readFile(absolutePath);
+    const parser = new PDFParse({ data: buffer });
+
+    try {
+      const result = await parser.getText();
+      return normalizeCanonicalText(result.text);
+    } finally {
+      await parser.destroy();
+    }
+  }
+
+  if (format === "docx") {
+    const result = await mammoth.extractRawText({ path: absolutePath });
+    return normalizeCanonicalText(result.value);
+  }
+
+  return normalizeCanonicalText(await readFile(absolutePath, "utf8"));
+};
+
+const slugify = (text: string): string =>
+  text.toLowerCase().trim().replace(PARAGRAPH_ANCHOR_PATTERN, "").replace(/\s+/g, "-");
+
+const makeAnchorAllocator = (): ((text: string) => string) => {
+  const seen = new Map<string, number>();
+
+  return (text: string): string => {
+    const base = slugify(text);
+    const count = seen.get(base) ?? 0;
+    seen.set(base, count + 1);
+    return count === 0 ? base : `${base}-${count}`;
+  };
+};
+
+const extractHeadings = (lines: string[]): DocumentHeading[] => {
+  const headings: DocumentHeading[] = [];
+  const allocateAnchor = makeAnchorAllocator();
+
+  lines.forEach((line, index) => {
+    const match = /^(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line);
+
+    if (!match) {
+      return;
+    }
+
+    const level = match[1]?.length ?? 1;
+    const text = (match[2] ?? "").trim();
+
+    if (!text) {
+      return;
+    }
+
+    headings.push({ anchor: allocateAnchor(text), level, line: index + 1, text });
+  });
+
+  return headings;
+};
+
+const extractCodeBlocks = (lines: string[]): DocumentCodeBlock[] => {
+  const blocks: DocumentCodeBlock[] = [];
+  let openLine: number | null = null;
+  let language: string | null = null;
+
+  lines.forEach((line, index) => {
+    const fenceMatch = /^```(.*)$/.exec(line);
+
+    if (!fenceMatch) {
+      return;
+    }
+
+    if (openLine === null) {
+      openLine = index + 1;
+      language = (fenceMatch[1] ?? "").trim() || null;
+      return;
+    }
+
+    blocks.push({ language, line: openLine });
+    openLine = null;
+    language = null;
+  });
+
+  return blocks;
+};
+
+const isTableSeparatorLine = (line: string): boolean =>
+  line.includes("-") && /^\s*\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)*\|?\s*$/.test(line);
+
+const countTableColumns = (headerLine: string): number => {
+  let trimmed = headerLine.trim();
+
+  if (trimmed.startsWith("|")) {
+    trimmed = trimmed.slice(1);
+  }
+
+  if (trimmed.endsWith("|")) {
+    trimmed = trimmed.slice(0, -1);
+  }
+
+  return trimmed.split("|").length;
+};
+
+const extractTables = (lines: string[]): DocumentTable[] => {
+  const tables: DocumentTable[] = [];
+
+  for (let index = 0; index < lines.length - 1; index += 1) {
+    const header = lines[index] ?? "";
+    const separator = lines[index + 1] ?? "";
+
+    if (header.includes("|") && isTableSeparatorLine(separator)) {
+      tables.push({ columns: countTableColumns(header), line: index + 1 });
+    }
+  }
+
+  return tables;
+};
+
+const extractLinks = (lines: string[]): Array<{ line: number; rawTarget: string }> => {
+  const links: Array<{ line: number; rawTarget: string }> = [];
+  const inlinePattern = /\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
+  const autolinkPattern = /<((?:https?|mailto):[^>\s]+)>/g;
+
+  lines.forEach((line, index) => {
+    for (const match of line.matchAll(inlinePattern)) {
+      if (match[1]) {
+        links.push({ line: index + 1, rawTarget: match[1] });
+      }
+    }
+
+    for (const match of line.matchAll(autolinkPattern)) {
+      if (match[1]) {
+        links.push({ line: index + 1, rawTarget: match[1] });
+      }
+    }
+  });
+
+  return links;
+};
+
+const buildPreparedDocument = async (
+  projectRootPath: string,
+  file: { format: FileFormat; path: string }
+): Promise<PreparedDocument> => {
+  const absolutePath = path.join(projectRootPath, file.path);
+  let canonicalText: string;
+
+  try {
+    canonicalText = await extractCanonicalText(absolutePath, file.format);
+  } catch (error) {
+    throw new Error(`Unable to extract canonical text for ${file.path}: ${(error as Error).message}`);
+  }
+
+  const lines = canonicalText.split("\n");
+  const isMarkdown = file.format === "markdown";
+
+  return {
+    capabilities: {
+      anchors: isMarkdown,
+      code_blocks: isMarkdown,
+      headings: isMarkdown,
+      links: isMarkdown,
+      tables: isMarkdown
+    },
+    codeBlocks: isMarkdown ? extractCodeBlocks(lines) : [],
+    format: file.format,
+    headings: isMarkdown ? extractHeadings(lines) : [],
+    lines,
+    links: isMarkdown ? extractLinks(lines) : [],
+    path: file.path,
+    tables: isMarkdown ? extractTables(lines) : []
+  };
+};
+
+const classifyLinkType = (rawTarget: string): ReferenceLinkType => {
+  if (EXTERNAL_SCHEME_PATTERN.test(rawTarget)) {
+    return "external";
+  }
+
+  if (rawTarget.startsWith("#")) {
+    return "internal";
+  }
+
+  return "relative";
+};
+
+const splitFragmentAndQuery = (rawTarget: string): { fragment: string | null; pathAndQuery: string } => {
+  const hashIndex = rawTarget.indexOf("#");
+
+  if (hashIndex === -1) {
+    return { fragment: null, pathAndQuery: rawTarget };
+  }
+
+  return { fragment: rawTarget.slice(hashIndex + 1) || null, pathAndQuery: rawTarget.slice(0, hashIndex) };
+};
+
+const stripQuery = (pathAndQuery: string): string => {
+  const queryIndex = pathAndQuery.indexOf("?");
+  return queryIndex === -1 ? pathAndQuery : pathAndQuery.slice(0, queryIndex);
+};
+
+const decodePathSegment = (value: string): string => {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+};
+
+const resolveRelativeTarget = (
+  sourcePath: string,
+  decodedPath: string
+): { escapesRoot: boolean; resolvedPath: string } => {
+  if (decodedPath === "") {
+    return { escapesRoot: false, resolvedPath: sourcePath };
+  }
+
+  const sourceDir = path.posix.dirname(sourcePath);
+  const joined = decodedPath.startsWith("/")
+    ? decodedPath.slice(1)
+    : path.posix.join(sourceDir, decodedPath);
+  const normalized = path.posix.normalize(joined);
+  const escapesRoot = normalized === ".." || normalized.startsWith("../");
+
+  return { escapesRoot, resolvedPath: normalized };
+};
+
+const isFileAt = async (projectRootPath: string, relativePath: string): Promise<boolean> => {
+  try {
+    return (await stat(path.join(projectRootPath, relativePath))).isFile();
+  } catch {
+    return false;
+  }
+};
+
+const resolveDocumentReferences = async (
+  projectRootPath: string,
+  documents: PreparedDocument[]
+): Promise<DocumentReference[]> => {
+  const documentsByPath = new Map(documents.map((doc) => [doc.path, doc]));
+  const references: DocumentReference[] = [];
+
+  for (const doc of documents) {
+    if (!doc.capabilities.links) {
+      continue;
+    }
+
+    for (const link of doc.links) {
+      const linkType = classifyLinkType(link.rawTarget);
+
+      if (linkType === "external") {
+        references.push({
+          failure_kind: null,
+          fragment: null,
+          line: link.line,
+          link_type: "external",
+          raw_target: link.rawTarget,
+          resolved_path: null,
+          source: doc.path,
+          status: "unchecked"
+        });
+        continue;
+      }
+
+      if (linkType === "internal") {
+        const fragment = link.rawTarget.slice(1) || null;
+
+        if (!fragment) {
+          references.push({
+            failure_kind: null,
+            fragment: null,
+            line: link.line,
+            link_type: "internal",
+            raw_target: link.rawTarget,
+            resolved_path: null,
+            source: doc.path,
+            status: "unchecked"
+          });
+          continue;
+        }
+
+        if (doc.capabilities.anchors) {
+          const matches = doc.headings.some((heading) => heading.anchor === fragment);
+          references.push({
+            failure_kind: matches ? null : "missing_anchor",
+            fragment,
+            line: link.line,
+            link_type: "internal",
+            raw_target: link.rawTarget,
+            resolved_path: null,
+            source: doc.path,
+            status: matches ? "ok" : "broken"
+          });
+        } else {
+          references.push({
+            failure_kind: null,
+            fragment,
+            line: link.line,
+            link_type: "internal",
+            raw_target: link.rawTarget,
+            resolved_path: null,
+            source: doc.path,
+            status: "unchecked"
+          });
+        }
+        continue;
+      }
+
+      const { fragment, pathAndQuery } = splitFragmentAndQuery(link.rawTarget);
+      const decodedPath = decodePathSegment(stripQuery(pathAndQuery));
+      const resolution = resolveRelativeTarget(doc.path, decodedPath);
+
+      if (resolution.escapesRoot) {
+        references.push({
+          failure_kind: "outside_project",
+          fragment,
+          line: link.line,
+          link_type: "relative",
+          raw_target: link.rawTarget,
+          resolved_path: resolution.resolvedPath,
+          source: doc.path,
+          status: "outside_project"
+        });
+        continue;
+      }
+
+      const targetExists = await isFileAt(projectRootPath, resolution.resolvedPath);
+
+      if (!targetExists) {
+        references.push({
+          failure_kind: "missing_target",
+          fragment,
+          line: link.line,
+          link_type: "relative",
+          raw_target: link.rawTarget,
+          resolved_path: resolution.resolvedPath,
+          source: doc.path,
+          status: "broken"
+        });
+        continue;
+      }
+
+      if (!fragment) {
+        references.push({
+          failure_kind: null,
+          fragment: null,
+          line: link.line,
+          link_type: "relative",
+          raw_target: link.rawTarget,
+          resolved_path: resolution.resolvedPath,
+          source: doc.path,
+          status: "ok"
+        });
+        continue;
+      }
+
+      const targetDoc = documentsByPath.get(resolution.resolvedPath);
+
+      if (targetDoc?.capabilities.anchors) {
+        const matches = targetDoc.headings.some((heading) => heading.anchor === fragment);
+        references.push({
+          failure_kind: matches ? null : "missing_anchor",
+          fragment,
+          line: link.line,
+          link_type: "relative",
+          raw_target: link.rawTarget,
+          resolved_path: resolution.resolvedPath,
+          source: doc.path,
+          status: matches ? "ok" : "broken"
+        });
+      } else {
+        references.push({
+          failure_kind: null,
+          fragment,
+          line: link.line,
+          link_type: "relative",
+          raw_target: link.rawTarget,
+          resolved_path: resolution.resolvedPath,
+          source: doc.path,
+          status: "unchecked"
+        });
+      }
+    }
+  }
+
+  references.sort((left, right) => {
+    if (left.source !== right.source) {
+      return left.source < right.source ? -1 : 1;
+    }
+
+    if (left.line !== right.line) {
+      return left.line - right.line;
+    }
+
+    return left.raw_target < right.raw_target ? -1 : left.raw_target > right.raw_target ? 1 : 0;
+  });
+
+  return references;
+};
+
+const isDocumentationTargetPredicate = (resolvedPath: string): boolean => {
+  const basename = path.posix.basename(resolvedPath);
+  const extension = path.posix.extname(basename).toLowerCase();
+
+  if (!basename.includes(".") && STANDARD_DOCUMENT_NAMES.has(basename)) {
+    return true;
+  }
+
+  return Object.hasOwn(DOCUMENTATION_EXTENSIONS, extension);
+};
+
+const buildMissingDocuments = (references: DocumentReference[]): MissingDocumentEntry[] => {
+  const missing: MissingDocumentEntry[] = [];
+
+  for (const reference of references) {
+    if (
+      reference.link_type === "relative" &&
+      reference.status === "broken" &&
+      reference.failure_kind === "missing_target" &&
+      reference.resolved_path &&
+      isDocumentationTargetPredicate(reference.resolved_path)
+    ) {
+      missing.push({
+        evidence: { line: reference.line, source: reference.source },
+        referenced_from: reference.source,
+        resolved_path: reference.resolved_path,
+        target: reference.raw_target
+      });
+    }
+  }
+
+  missing.sort((left, right) => {
+    if (left.referenced_from !== right.referenced_from) {
+      return left.referenced_from < right.referenced_from ? -1 : 1;
+    }
+
+    if (left.evidence.line !== right.evidence.line) {
+      return left.evidence.line - right.evidence.line;
+    }
+
+    return left.target < right.target ? -1 : left.target > right.target ? 1 : 0;
+  });
+
+  return missing;
+};
+
+const STANDARD_DOCUMENT_GROUP_NAMES = ["README", "CHANGELOG", "CONTRIBUTING", "LICENSE"];
+
+const buildStandardDocumentsInventory = (
+  documents: Array<{ path: string }>
+): Record<string, { paths: string[]; present: boolean }> => {
+  const groups: Record<string, string[]> = {
+    CHANGELOG: [],
+    CONTRIBUTING: [],
+    LICENSE: [],
+    README: []
+  };
+
+  for (const doc of documents) {
+    if (doc.path.includes("/")) {
+      continue;
+    }
+
+    const dotIndex = doc.path.indexOf(".");
+    const namePart = dotIndex === -1 ? doc.path : doc.path.slice(0, dotIndex);
+    const extensionPart = dotIndex === -1 ? "" : doc.path.slice(dotIndex).toLowerCase();
+    const hasSingleExtension = dotIndex === -1 || !extensionPart.slice(1).includes(".");
+
+    if (!hasSingleExtension) {
+      continue;
+    }
+
+    for (const groupName of STANDARD_DOCUMENT_GROUP_NAMES) {
+      if (namePart.toLowerCase() !== groupName.toLowerCase()) {
+        continue;
+      }
+
+      if (dotIndex === -1 || Object.hasOwn(DOCUMENTATION_EXTENSIONS, extensionPart)) {
+        groups[groupName]?.push(doc.path);
+      }
+    }
+  }
+
+  const inventory: Record<string, { paths: string[]; present: boolean }> = {};
+
+  for (const groupName of STANDARD_DOCUMENT_GROUP_NAMES) {
+    const paths = (groups[groupName] ?? []).slice().sort();
+    inventory[groupName] = { paths, present: paths.length > 0 };
+  }
+
+  return inventory;
+};
+
+const selectDocumentationFiles = (
+  classified: ClassifiedFilesDocument
+): Array<{ format: FileFormat; path: string }> => {
+  const seen = new Set<string>();
+  const documents: Array<{ format: FileFormat; path: string }> = [];
+
+  for (const file of classified.files) {
+    if (file.kind !== "documentation") {
+      continue;
+    }
+
+    if (seen.has(file.path)) {
+      throw new Error(`Duplicate documentation path: ${file.path}`);
+    }
+
+    seen.add(file.path);
+
+    if (!file.format || !SUPPORTED_DOCUMENTATION_FORMATS.has(file.format)) {
+      throw new Error(`Unsupported documentation format for ${file.path}: ${String(file.format)}`);
+    }
+
+    documents.push({ format: file.format, path: file.path });
+  }
+
+  return documents.sort(byPath);
+};
+
+export const prepareIndexDocumentsJob = async (
+  projectRootPath: string
+): Promise<IndexDocumentsPreparation> => {
+  const reportsDir = discoveryReportsDir(projectRootPath);
+  const classifiedPath = path.join(reportsDir, "CLASSIFIED_FILES.json");
+  let classified: ClassifiedFilesDocument;
+
+  try {
+    classified = JSON.parse(await readFile(classifiedPath, "utf8")) as ClassifiedFilesDocument;
+  } catch (error) {
+    throw new Error(`Unable to read CLASSIFIED_FILES.json: ${(error as Error).message}`);
+  }
+
+  const documentationFiles = selectDocumentationFiles(classified);
+  const preparedDocuments: PreparedDocument[] = [];
+
+  for (const file of documentationFiles) {
+    preparedDocuments.push(await buildPreparedDocument(projectRootPath, file));
+  }
+
+  const references = await resolveDocumentReferences(projectRootPath, preparedDocuments);
+  const missingDocuments = buildMissingDocuments(references);
+  const standardDocumentsInventory = buildStandardDocumentsInventory(documentationFiles);
+
+  const candidateDocuments = preparedDocuments.slice(0, CANDIDATE_VIEW_MAX_DOCUMENTS).map((doc) => ({
+    lines: doc.lines.slice(0, CANDIDATE_VIEW_MAX_LINES_PER_DOCUMENT),
+    source: doc.path
+  }));
+
+  return {
+    candidateDocuments,
+    documentIndexEntries: preparedDocuments.map((doc) => ({
+      capabilities: doc.capabilities,
+      format: doc.format,
+      path: doc.path
+    })),
+    documentStructureEntries: preparedDocuments.map((doc) => ({
+      codeBlocks: doc.codeBlocks,
+      headings: doc.headings,
+      path: doc.path,
+      tables: doc.tables
+    })),
+    missingDocuments,
+    preparedDocuments,
+    references,
+    standardDocumentsInventory
+  };
+};
+
+export const finalizeIndexDocumentsJob = async (
+  projectRootPath: string,
+  preparation: IndexDocumentsPreparation,
+  candidates: GlossaryCandidateInput[]
+): Promise<IndexDocumentsResult> => {
+  const linesBySource = new Map(preparation.preparedDocuments.map((doc) => [doc.path, doc.lines]));
+  const terms: GlossaryTerm[] = [];
+  const seen = new Set<string>();
+
+  for (const candidate of Array.isArray(candidates) ? candidates : []) {
+    if (typeof candidate !== "object" || candidate === null) {
+      continue;
+    }
+
+    const term = typeof candidate.term === "string" ? candidate.term : null;
+    const category = typeof candidate.category === "string" ? candidate.category : null;
+    const source = typeof candidate.evidence?.source === "string" ? candidate.evidence.source : null;
+    const line = typeof candidate.evidence?.line === "number" ? candidate.evidence.line : null;
+
+    if (!term || !category || !source || line === null || !GLOSSARY_CATEGORIES.has(category as GlossaryCategory)) {
+      continue;
+    }
+
+    const lines = linesBySource.get(source);
+    const lineText = lines?.[line - 1];
+
+    if (typeof lineText !== "string" || !lineText.includes(term)) {
+      continue;
+    }
+
+    const dedupeKey = `${term} ${category} ${source} ${line}`;
+
+    if (seen.has(dedupeKey)) {
+      continue;
+    }
+
+    seen.add(dedupeKey);
+    terms.push({
+      category: category as GlossaryCategory,
+      evidence: { excerpt: lineText.trim(), line, source },
+      term
+    });
+  }
+
+  terms.sort((left, right) => {
+    if (left.category !== right.category) {
+      return left.category < right.category ? -1 : 1;
+    }
+
+    const normalizedLeft = left.term.toLowerCase();
+    const normalizedRight = right.term.toLowerCase();
+
+    if (normalizedLeft !== normalizedRight) {
+      return normalizedLeft < normalizedRight ? -1 : 1;
+    }
+
+    if (left.evidence.source !== right.evidence.source) {
+      return left.evidence.source < right.evidence.source ? -1 : 1;
+    }
+
+    return left.evidence.line - right.evidence.line;
+  });
+
+  const reportsDir = discoveryReportsDir(projectRootPath);
+  await mkdir(reportsDir, { recursive: true });
+
+  await writeJson(path.join(reportsDir, "DOCUMENT_INDEX.json"), {
+    documents: preparation.documentIndexEntries,
+    metadata: buildMetadata(),
+    standard_documents_inventory: preparation.standardDocumentsInventory
+  });
+
+  await writeJson(path.join(reportsDir, "DOCUMENT_STRUCTURE.json"), {
+    documents: preparation.documentStructureEntries.map((doc) => ({
+      code_blocks: doc.codeBlocks,
+      headings: doc.headings,
+      path: doc.path,
+      tables: doc.tables
+    })),
+    metadata: buildMetadata()
+  });
+
+  await writeJson(path.join(reportsDir, "DOCUMENT_REFERENCES.json"), {
+    metadata: buildMetadata(),
+    references: preparation.references
+  });
+
+  await writeJson(path.join(reportsDir, "MISSING_DOCUMENTS.json"), {
+    metadata: buildMetadata(),
+    missing: preparation.missingDocuments
+  });
+
+  await writeJson(path.join(reportsDir, "DOMAIN_GLOSSARY.json"), {
+    metadata: buildMetadata(),
+    terms
+  });
+
+  return {
+    document_count: preparation.documentIndexEntries.length,
+    glossary_term_count: terms.length,
+    missing_document_count: preparation.missingDocuments.length,
+    reference_count: preparation.references.length
   };
 };

@@ -40,58 +40,13 @@ const DEFAULT_SERVER_URL = "http://localhost:4317";
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : "Cloud job failed.";
 
-type StartupExecutionMetadata = {
-  place_inputs?: {
-    status?: string;
-  };
-  seal_run?: {
-    decision?: string;
-  };
-  select_run?: {
-    decision?: string;
-  };
-};
-
-const isStartupExecutionMetadata = (value: unknown): value is StartupExecutionMetadata =>
-  typeof value === "object" && value !== null;
-
 const getFinalOperation = (
   lastRun: JobRunResponse
-): { message: string; progress: number; status: ActivityEntry["status"] } => {
-  const metadata = lastRun.job.task?.instructions.metadata.localExecution;
-
-  if (isStartupExecutionMetadata(metadata)) {
-    if (metadata.seal_run?.decision === "FAIL") {
-      return {
-        message: "Startup seal failed; review the missing files.",
-        progress: 100,
-        status: "blocked"
-      };
-    }
-
-    if (metadata.place_inputs?.status === "waiting_for_input") {
-      return {
-        message: "Waiting for input review.",
-        progress: 86,
-        status: "blocked"
-      };
-    }
-
-    if (metadata.select_run?.decision === "already_sealed") {
-      return {
-        message: "A valid sealed run already exists.",
-        progress: 100,
-        status: "completed"
-      };
-    }
-  }
-
-  return {
-    message: "Stage completed.",
-    progress: 100,
-    status: "completed"
-  };
-};
+): { message: string; progress: number; status: ActivityEntry["status"] } => ({
+  message: lastRun.stageOutcome.message,
+  progress: lastRun.stageOutcome.progress,
+  status: lastRun.stageOutcome.status
+});
 
 const createActivityEntry = (
   stepId: string,
@@ -171,7 +126,10 @@ export const useJobStore = create<JobStoreState>((set) => ({
 
     const removeProgressListener = window.forgepilot.jobs.onProgress(
       (event: JobRunProgressEvent) => {
-        if (event.projectId !== project.id || event.stageId !== stageId) {
+        if (
+          event.projectId !== project.id ||
+          (stageId !== null && event.stageId !== stageId)
+        ) {
           return;
         }
 
@@ -200,7 +158,11 @@ export const useJobStore = create<JobStoreState>((set) => ({
           createActivityEntry("stage-result", finalOperation.message, finalOperation.status)
         ],
         cloudMessage:
-          finalOperation.status === "completed" ? "Last job completed" : "Waiting for input",
+          finalOperation.status === "completed"
+            ? "Last stage completed"
+            : finalOperation.status === "blocked"
+              ? "Waiting for input"
+              : "Stage failed",
         connected: true,
         currentOperation: finalOperation.message,
         isRunning: false,

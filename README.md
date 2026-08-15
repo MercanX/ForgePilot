@@ -180,13 +180,13 @@ ProviderAdapter
 ├── isInstalled()
 ├── getVersion()
 ├── getStatus()
-├── startTask()
-├── stopTask()
-├── readOutput()
+├── createExecutionCommand()
 └── dispose()
 ```
 
 This keeps the core ForgePilot application independent from a specific AI provider.
+
+Sağlayıcıya özgü CLI komutu, argümanlar ve stdin sözleşmesi adaptörde kalır; ortak process yaşam döngüsü ve çıktı akışı execution service tarafından yönetilir.
 
 ## Your AI Account
 
@@ -201,6 +201,8 @@ ForgePilot does not need to distribute a shared Claude or Codex API key inside t
 ForgePilot is designed as a thin execution client.
 
 Workflow logic should not be hard-coded into the application.
+
+Stage çalıştırılırken desktop, AI Factory Cloud'dan tüm planı değil yalnızca **sıradaki execution directive** bilgisini alır. Directive; isimlendirilmiş deterministic local operation, tek bir provider job veya terminal stage sonucu olabilir. Böylece proprietary workflow planı desktop içine gömülmez veya topluca indirilmez.
 
 For example, stages such as:
 

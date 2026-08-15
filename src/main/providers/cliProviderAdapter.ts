@@ -1,6 +1,6 @@
 import { createCommandRunner, type CommandRunner } from "@main/process/commandRunner";
 import { PROVIDER_DETECTION_TIMEOUT_MS } from "@shared/constants/timeouts";
-import type { ProviderExitInfo, ProviderOutputChunk, Task } from "@shared/schemas/job";
+import type { TaskExecutionRequest } from "@shared/schemas/job";
 import type {
   ProviderAuthStatus,
   ProviderDetectionResult,
@@ -8,25 +8,28 @@ import type {
   ProviderStatus,
   ProviderVersionInfo
 } from "@shared/schemas/provider";
-import type { ProviderAdapter, TaskHandle, Unsubscribe } from "@shared/types/provider-adapter";
+import type { ProviderAdapter, ProviderExecutionCommand } from "@shared/types/provider-adapter";
 
 type CliProviderAdapterOptions = {
+  buildExecutionArgs: (request: TaskExecutionRequest) => string[];
   command: string;
   id: ProviderId;
   label: string;
-  versionArgs: string[];
   runner?: CommandRunner;
+  versionArgs: string[];
 };
 
 export class CliProviderAdapter implements ProviderAdapter {
   public readonly id: ProviderId;
 
+  private readonly buildExecutionArgs: (request: TaskExecutionRequest) => string[];
   private readonly command: string;
   private readonly label: string;
   private readonly runner: CommandRunner;
   private readonly versionArgs: string[];
 
   public constructor(options: CliProviderAdapterOptions) {
+    this.buildExecutionArgs = options.buildExecutionArgs;
     this.command = options.command;
     this.id = options.id;
     this.label = options.label;
@@ -109,44 +112,20 @@ export class CliProviderAdapter implements ProviderAdapter {
     return this.statusFromAuth(await this.authenticate());
   }
 
-  public startTask(task: Task): Promise<TaskHandle> {
-    void task;
-    return Promise.reject(new Error("Provider task execution is implemented in Phase 5."));
-  }
+  public async createExecutionCommand(
+    request: TaskExecutionRequest
+  ): Promise<ProviderExecutionCommand> {
+    const executablePath = await this.runner.findExecutable(this.command);
 
-  public sendInput(handle: TaskHandle, input: string): void {
-    void handle;
-    void input;
-    throw new Error("Provider task execution is implemented in Phase 5.");
-  }
+    if (!executablePath) {
+      throw new Error(`${this.command} was not found on PATH.`);
+    }
 
-  public stopTask(handle: TaskHandle): Promise<void> {
-    void handle;
-    return Promise.reject(new Error("Provider task execution is implemented in Phase 5."));
-  }
-
-  public killProcess(handle: TaskHandle): void {
-    void handle;
-    throw new Error("Provider task execution is implemented in Phase 5.");
-  }
-
-  public readOutput(handle: TaskHandle): AsyncIterable<ProviderOutputChunk> {
-    void handle;
     return {
-      [Symbol.asyncIterator]: () => ({
-        next: () => Promise.reject(new Error("Provider task execution is implemented in Phase 5."))
-      })
+      args: this.buildExecutionArgs(request),
+      command: executablePath,
+      input: request.instructions.body
     };
-  }
-
-  public onOutput(callback: (chunk: ProviderOutputChunk) => void): Unsubscribe {
-    void callback;
-    return () => undefined;
-  }
-
-  public onExit(callback: (exitInfo: ProviderExitInfo) => void): Unsubscribe {
-    void callback;
-    return () => undefined;
   }
 
   public async dispose(): Promise<void> {

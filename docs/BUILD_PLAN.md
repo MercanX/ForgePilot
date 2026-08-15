@@ -28,9 +28,10 @@ Aşağıdaki kararlar Faz 0–2'de netleştirilir ve sonraki tüm fazlarda refer
    — asla genel bir `invoke(channel, ...args)` geçişi değil. Her `ipcMain.handle`,
    girdi/çıktıyı Zod ile doğrular.
 5. **ProviderAdapter arayüzü**: `shared/types/provider-adapter.ts` içinde, Claude
-   Code veya Codex adaptörlerinden önce tanımlanır. README'deki kavramsal arayüze
-   (`isInstalled`, `getVersion`, `getStatus`, `startTask`, `stopTask`, `readOutput`,
-   `dispose`) ek olarak canlı çıktı akışı için `onOutput`/`onExit` olayları içerir.
+   Code veya Codex adaptörlerinden önce tanımlanır. Adaptör provider-specific
+   executable/argüman/stdin sözleşmesinin sahibidir ve
+   `createExecutionCommand()` üretir; process yaşam döngüsü ve output event'leri
+   ortak `processManager` / `taskExecutionService` katmanında tutulur.
 6. **İnce istemci / sunucu-güdümlü iş akışı kısıtı**: ForgePilot içinde aşama
    sıralaması, prompt metni, puanlama mantığı veya orkestrasyon dallanması
    **hard-code edilemez**. `services/jobs` ve `main/process` yalnızca: (a) buluttan
@@ -48,10 +49,10 @@ Aşağıdaki kararlar Faz 0–2'de netleştirilir ve sonraki tüm fazlarda refer
 9. **AI Factory Cloud sözleşmesi**: Bu depo kapsamı dışında olan bulut sunucusu,
    versiyonlanmış bir Zod sözleşmesiyle (`shared/schemas/cloud-api.ts`) ve
    geliştirme sırasında yerel bir mock sunucuyla ele alınır.
-10. **Genişletilmiş ProviderAdapter**: README'deki 7 metoda ek olarak
-    `authenticate()` (yalnızca durum sorgusu — credential'a dokunmaz),
-    `sendInput()` (interaktif CLI stdin'i) ve `killProcess()` (son çare
-    sonlandırma) eklenir; ayrıntılı imza DESIGN.md §5'te.
+10. **Provider/process sorumluluk ayrımı**: `ProviderAdapter`, `authenticate()`
+    durum sorgusu ve `createExecutionCommand()` ile provider farklılıklarını
+    kapsüller. `sendInput`/stop/kill/output/exit gibi process yaşam döngüsü
+    davranışları provider arayüzüne yayılmaz; ortak process katmanında kalır.
 11. **Heartbeat'li job sözleşmesi**: Job akışı yalnızca request/result değil —
     `POST /jobs/{id}/heartbeat` (30sn) ve `POST /jobs/{id}/fail` de sözleşmenin
     parçasıdır; sunucu, kesilen istemcileri heartbeat kesilmesinden tespit eder.
@@ -252,9 +253,8 @@ raporlayabilir ve tek biçimli bir adaptör yüzeyi sunabilir — henüz gerçek
    - `getStatus()`: CLI kimlik doğrulama durumunun en iyi çaba kontrolü (hafif,
      yan etkisiz bir CLI çağrısı veya config dosyası varlığı) — kimlik bilgisinin
      kendisini asla okumaz/saklamaz, yalnızca bir durum sinyali üretir.
-   - `startTask`/`stopTask`/`readOutput`/`dispose`: burada `NotImplemented` fırlatan
-     iskelet; gerçek implementasyon Faz 5'te süreç çalıştırmayla birlikte gelir
-     (görev başlatmak zaten süreç çalıştırmanın ta kendisi).
+   - `createExecutionCommand`: Faz 5 process katmanının kullanacağı provider-specific
+     executable, argüman listesi ve stdin body sözleşmesini üretir.
 3. `src/main/providers/codexAdapter.ts`: Codex CLI için aynı şekil.
 4. `src/main/ipc/providers.ts`: `providers:list`, `providers:detect` (registry
    genelinde `isInstalled`/`getVersion`/`getStatus` çalıştırır), `providers:refresh`.
@@ -298,10 +298,10 @@ eklenebilmesini sağlar.
    `cwd` = proje kökü (`pathGuard` ile), `shell: true` yok, açık `env` izin
    listesi (üst süreç env'ini körlemesine miras almak yerine ilgisiz sırları
    sızdırmamak için kürase edilmiş), yakalanan stdout/stderr akışları.
-2. `claudeCodeAdapter`/`codexAdapter` üzerinde gerçek `startTask`/`stopTask`/
-   `readOutput`/`dispose` — `processManager` kullanarak, CLI'ın kendi çağırma
-   kurallarını (bayraklar, stdin prompt teslimi, JSON/akış çıktı ayrıştırma)
-   Faz 2'nin normalize `ProviderOutputChunk`/`ProviderExitInfo` olaylarına çevirir.
+2. `claudeCodeAdapter`/`codexAdapter`, CLI'ın kendi çağırma kurallarını
+   `createExecutionCommand()` ile üretir. `taskExecutionService`, bu komutu ortak
+   `processManager` üzerinden çalıştırıp normalize `ProviderOutputChunk` /
+   `ProviderExitInfo` olaylarını yayınlar.
 3. `src/main/ipc/tasks.ts`: `tasks:start`, `tasks:stop`, artı canlı çıktı için
    push-tabanlı kanal (`webContents.send` — `invoke` istek/yanıttır, canlı çıktı
    main→renderer gönderim tarafını gerektirir, yine şema doğrulamalı).
@@ -317,8 +317,9 @@ eklenebilmesini sağlar.
 7. Manuel test düzeneği: gerçek bir CLI kurulu olmasını gerektirmeyen "echo görevi"
    fixture'ı — süreç-yönetimi mantığı Claude Code/Codex kullanılabilirliğinden
    bağımsız test edilebilir.
-8. `sendInput()` ve `killProcess()` implementasyonu: interaktif CLI'a stdin
-   iletimi; kademeli sonlandırma (önce SIGTERM/nazik kapatma, zaman aşımında kill).
+8. Process input/stop/kill davranışı ortak process katmanında uygulanır; provider
+   task body non-interactive execution için stdin üzerinden verilir, timeout veya
+   kullanıcı durdurmasında process katmanı normalize exit üretir.
 9. Çıktı hacmi yönetimi: UI tarafında ring-buffer (son ~2000 satır), IPC'ye
    toplu (batched) gönderim; tam akış rotasyonlu log dosyasına (DESIGN.md Risk #4).
 10. `orphanReaper` implementasyonu: PID kayıt dosyası + açılışta sahipsiz

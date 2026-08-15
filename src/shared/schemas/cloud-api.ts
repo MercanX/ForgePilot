@@ -5,6 +5,7 @@ import {
   SUPPORTED_CAPABILITIES
 } from "@shared/constants/protocolVersion";
 
+import { stageExecutionOutcomeSchema } from "./execution";
 import { findingSchema } from "./finding";
 import { jobSchema, taskResultSchema, taskSchema } from "./job";
 import { projectSchema } from "./project";
@@ -112,8 +113,9 @@ export const jobRunRequestSchema = z
 
 export const jobRunResponseSchema = z
   .object({
-    job: jobSchema,
-    result: taskResultSchema,
+    job: jobSchema.nullable(),
+    result: taskResultSchema.nullable(),
+    stageOutcome: stageExecutionOutcomeSchema,
     submitAccepted: z.boolean(),
     syncedFindings: z.array(findingSchema)
   })

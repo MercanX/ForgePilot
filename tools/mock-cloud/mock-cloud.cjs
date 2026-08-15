@@ -6,8 +6,11 @@ const { readFileSync, writeFileSync } = require("node:fs");
 
 const PORT = Number(process.env.FORGEPILOT_MOCK_CLOUD_PORT ?? 4317);
 const jobs = new Map();
-const STARTUP_SEAL_STAGE_ID = "010-startup:seal-run";
-const DISCOVERY_CLASSIFY_STAGE_ID = "020-discovery:classify-files";
+const STARTUP_STAGE_ID = "010-startup";
+const DISCOVERY_STAGE_ID = "020-discovery";
+const LEGACY_STARTUP_SEAL_STAGE_ID = "010-startup:seal-run";
+const LEGACY_DISCOVERY_FINAL_STAGE_ID = "020-discovery:build-context";
+const executions = new Map();
 
 // Persisted to disk (not just in-memory) so that stage-completion status
 // survives a mock-cloud restart. This process is restarted frequently during
@@ -17,21 +20,21 @@ const STATE_FILE_PATH =
   process.env.FORGEPILOT_MOCK_CLOUD_STATE_FILE ??
   path.join(os.tmpdir(), "forgepilot-mock-cloud-state.json");
 
-const loadPassedStageJobsByProject = () => {
+const loadPassedStagesByProject = () => {
   try {
     const raw = JSON.parse(readFileSync(STATE_FILE_PATH, "utf8"));
-    return new Map(Object.entries(raw).map(([projectId, stageJobKeys]) => [projectId, new Set(stageJobKeys)]));
+    return new Map(Object.entries(raw).map(([projectId, stageIds]) => [projectId, new Set(stageIds)]));
   } catch {
     return new Map();
   }
 };
 
-const passedStageJobsByProject = loadPassedStageJobsByProject();
+const passedStagesByProject = loadPassedStagesByProject();
 
-const persistPassedStageJobsByProject = () => {
+const persistPassedStagesByProject = () => {
   try {
     const serializable = Object.fromEntries(
-      [...passedStageJobsByProject].map(([projectId, stageJobKeys]) => [projectId, [...stageJobKeys]])
+      [...passedStagesByProject].map(([projectId, stageIds]) => [projectId, [...stageIds]])
     );
     writeFileSync(STATE_FILE_PATH, JSON.stringify(serializable), "utf8");
   } catch {
@@ -40,19 +43,19 @@ const persistPassedStageJobsByProject = () => {
 };
 
 const getProjectStageSet = (projectId) =>
-  (projectId && passedStageJobsByProject.get(projectId)) || new Set();
+  (projectId && passedStagesByProject.get(projectId)) || new Set();
 
-const markStagePassed = (projectId, stageJobKey) => {
-  if (!projectId || !stageJobKey) {
+const markStagePassed = (projectId, stageId) => {
+  if (!projectId || !stageId) {
     return;
   }
 
-  if (!passedStageJobsByProject.has(projectId)) {
-    passedStageJobsByProject.set(projectId, new Set());
+  if (!passedStagesByProject.has(projectId)) {
+    passedStagesByProject.set(projectId, new Set());
   }
 
-  passedStageJobsByProject.get(projectId).add(stageJobKey);
-  persistPassedStageJobsByProject();
+  passedStagesByProject.get(projectId).add(stageId);
+  persistPassedStagesByProject();
 };
 const CHECK_FACTORY_RULE_PATH =
   process.env.FORGEPILOT_STARTUP_CHECK_FACTORY_RULE ??
@@ -93,9 +96,6 @@ const MAP_DEPENDENCIES_RULE_PATH =
 const BUILD_CONTEXT_RULE_PATH =
   process.env.FORGEPILOT_DISCOVERY_BUILD_CONTEXT_RULE ??
   "C:\\Github\\aiFactory\\.ai-factory\\020-Discovery\\rules\\020-build_context.rules.md";
-const MAP_MODULE_DEPENDENCIES_RULE_PATH =
-  process.env.FORGEPILOT_DISCOVERY_MAP_MODULE_DEPENDENCIES_RULE ??
-  "C:\\Github\\aiFactory\\.ai-factory\\020-Discovery\\rules\\021-map_module_dependencies.rules.md";
 
 const sendJson = (response, statusCode, payload) => {
   response.writeHead(statusCode, {
@@ -141,54 +141,35 @@ const getLastJsonObject = (outputChunks) => {
 
 const buildStages = (projectId) => {
   const passed = getProjectStageSet(projectId);
-  const startupCompleted = passed.has(STARTUP_SEAL_STAGE_ID);
-  const discoveryCompleted = passed.has(DISCOVERY_CLASSIFY_STAGE_ID);
+  const startupCompleted =
+    passed.has(STARTUP_STAGE_ID) || passed.has(LEGACY_STARTUP_SEAL_STAGE_ID);
+  const discoveryCompleted =
+    passed.has(DISCOVERY_STAGE_ID) || passed.has(LEGACY_DISCOVERY_FINAL_STAGE_ID);
 
   return [
     {
-      id: "010-startup",
+      id: STARTUP_STAGE_ID,
       name: "010-Startup",
       status: startupCompleted ? "completed" : "ready",
       progress: startupCompleted ? 100 : 0,
       currentAgent: "Startup Agent",
-      currentOperation: startupCompleted ? "Run sealed." : "Waiting to open the provider session"
+      currentOperation: startupCompleted ? "Run sealed." : "Waiting for execution directive"
     },
     {
-      id: "020-discovery",
+      id: DISCOVERY_STAGE_ID,
       name: "020-Discovery",
       status: discoveryCompleted ? "completed" : startupCompleted ? "ready" : "waiting",
       progress: discoveryCompleted ? 100 : 0,
       currentAgent: startupCompleted ? "Discovery Agent" : null,
       currentOperation: discoveryCompleted
-        ? "Discovery jobs sealed."
+        ? "Discovery jobs completed."
         : startupCompleted
-          ? "Waiting to open the provider session"
+          ? "Waiting for execution directive"
           : null
     },
-    {
-      id: "030-context",
-      name: "030-Context",
-      status: "waiting",
-      progress: 0,
-      currentAgent: null,
-      currentOperation: null
-    },
-    {
-      id: "040-implementation",
-      name: "040-Implementation",
-      status: "waiting",
-      progress: 0,
-      currentAgent: null,
-      currentOperation: null
-    },
-    {
-      id: "050-validation",
-      name: "050-Validation",
-      status: "waiting",
-      progress: 0,
-      currentAgent: null,
-      currentOperation: null
-    }
+    { id: "030-context", name: "030-Context", status: "waiting", progress: 0, currentAgent: null, currentOperation: null },
+    { id: "040-implementation", name: "040-Implementation", status: "waiting", progress: 0, currentAgent: null, currentOperation: null },
+    { id: "050-validation", name: "050-Validation", status: "waiting", progress: 0, currentAgent: null, currentOperation: null }
   ];
 };
 
@@ -537,36 +518,7 @@ const createBuildContextVerificationPrompt = (requestBody) => {
   ].join("\n");
 };
 
-const createMapModuleDependenciesPrompt = (requestBody) => {
-  const rule = readRule(MAP_MODULE_DEPENDENCIES_RULE_PATH);
-
-  return [
-    "--- kural (RULE-D08, 021-map_module_dependencies.rules.md) ---",
-    rule,
-    "--- kural sonu ---",
-    "",
-    `exe_result (map_module_dependencies): ${JSON.stringify(requestBody.localExecution?.map_module_dependencies ?? null)}`,
-    "",
-    "EXE MODULE_MAP.json final output'unu yazdigini iddia ediyor.",
-    "Uretim yapma, edge uretme, dosya degistirme.",
-    "",
-    "RULE-D08 Verification listesini bagimsiz uygula.",
-    "Ozellikle base-preservation, path_to_module ownership, resolver fixture'larini,",
-    "depends_on <-> dependency_edges traceability'yi ve analysis_coverage'i dogrula.",
-    "",
-    "Son satira:",
-    '{"ok":true,"job":"map_module_dependencies","verified_rules":["RULE-D08"]}',
-    "veya",
-    '{"ok":false,"job":"map_module_dependencies","failed_at":"RULE-D08","violation":"...","detail":"..."}',
-    "yaz."
-  ].join("\n");
-};
-
 const createPrompt = (requestBody) => {
-  if (requestBody.localExecution?.map_module_dependencies) {
-    return createMapModuleDependenciesPrompt(requestBody);
-  }
-
   if (requestBody.localExecution?.build_context_evidence) {
     return createBuildContextEvidencePrompt(requestBody);
   }
@@ -619,10 +571,6 @@ const createPrompt = (requestBody) => {
 };
 
 const getStageId = (requestBody) => {
-  if (requestBody.localExecution?.map_module_dependencies) {
-    return "020-discovery:map-module-dependencies";
-  }
-
   if (requestBody.localExecution?.build_context_evidence) {
     return "020-discovery:build-context-evidence";
   }
@@ -707,17 +655,483 @@ const createJob = (requestBody) => {
   };
 };
 
+const directiveBase = (messageStarted, messageCompleted, progressStarted, progressCompleted) => ({
+  id: randomUUID(),
+  messageCompleted,
+  messageStarted,
+  progressCompleted,
+  progressStarted
+});
+
+const localDirective = (operation, inputs, saveAs, messages, progress) => ({
+  ...directiveBase(messages[0], messages[1], progress[0], progress[1]),
+  kind: "local",
+  operation,
+  inputs: inputs ?? {},
+  saveAs: saveAs ?? null
+});
+
+const providerDirective = (session, localExecution, mode, requireOk, saveAs, messages, progress) => {
+  const requestBody = {
+    capabilities: [],
+    localExecution,
+    project: session.project,
+    providerId: session.providerId
+  };
+  const job = createJob(requestBody);
+  jobs.set(job.id, { ...job, projectId: session.project.id });
+
+  return {
+    ...directiveBase(messages[0], messages[1], progress[0], progress[1]),
+    job,
+    kind: "provider",
+    mode,
+    requireOk,
+    saveAs: saveAs ?? null
+  };
+};
+
+const terminalDirective = (outcome, message, progress) => ({
+  id: randomUUID(),
+  kind: "terminal",
+  message,
+  outcome,
+  progress
+});
+
+const outputObject = (session, key) => {
+  const value = session.context[key];
+  return typeof value === "object" && value !== null ? value : {};
+};
+
+const startupDirectiveFor = (session) => {
+  const selectRun = outputObject(session, "selectRun");
+  const placeInputs = outputObject(session, "placeInputs");
+  const sealRun = outputObject(session, "sealRun");
+
+  switch (session.step) {
+    case 0:
+      return localDirective(
+        "startup.select-run",
+        { newRun: session.newRun },
+        "selectRun",
+        ["Selecting the AI Factory run folder.", "Run folder selection completed."],
+        [20, 25]
+      );
+    case 1:
+      if (selectRun.decision === "already_sealed") {
+        return providerDirective(
+          session,
+          { select_run: selectRun },
+          "verification",
+          true,
+          null,
+          ["Verifying the existing sealed run.", "Existing sealed run verification completed."],
+          [30, 100]
+        );
+      }
+      return localDirective(
+        "startup.check",
+        {},
+        "startupCheck",
+        ["Checking the factory folder and configuration.", "Factory and configuration check completed."],
+        [28, 35]
+      );
+    case 2:
+      if (selectRun.decision === "already_sealed") {
+        return terminalDirective("completed", "A valid sealed run already exists; Startup is complete.", 100);
+      }
+      return providerDirective(
+        session,
+        session.context.startupCheck,
+        "verification",
+        true,
+        null,
+        ["Verifying factory/configuration state.", "Factory/configuration verification completed."],
+        [38, 48]
+      );
+    case 3:
+      return providerDirective(
+        session,
+        { select_run: selectRun },
+        "verification",
+        true,
+        null,
+        ["Verifying run-folder selection.", "Run-folder selection verification completed."],
+        [50, 60]
+      );
+    case 4:
+      return localDirective(
+        "startup.place-inputs",
+        { runId: selectRun.run_id },
+        "placeInputs",
+        ["Placing SCOPE.md and BASELINE.md.", "Input placement completed."],
+        [62, 70]
+      );
+    case 5:
+      return providerDirective(
+        session,
+        { place_inputs: placeInputs },
+        "verification",
+        true,
+        null,
+        ["Verifying Startup input files.", "Startup input verification completed."],
+        [72, 78]
+      );
+    case 6:
+      if (placeInputs.status === "waiting_for_input") {
+        return terminalDirective(
+          "blocked",
+          "SCOPE.md and BASELINE.md need user review before Startup can continue.",
+          78
+        );
+      }
+      return localDirective(
+        "startup.capture-git-state",
+        { runId: selectRun.run_id },
+        "gitState",
+        ["Capturing git state.", "Git state captured."],
+        [80, 84]
+      );
+    case 7:
+      return providerDirective(
+        session,
+        { capture_git_state: session.context.gitState },
+        "verification",
+        true,
+        null,
+        ["Verifying captured git state.", "Git-state verification completed."],
+        [85, 88]
+      );
+    case 8:
+      return localDirective(
+        "startup.build-source-manifest",
+        { runId: selectRun.run_id },
+        "sourceManifest",
+        ["Building SOURCE_MANIFEST.csv.", "Source manifest built."],
+        [89, 91]
+      );
+    case 9:
+      return providerDirective(
+        session,
+        { build_source_manifest: session.context.sourceManifest },
+        "verification",
+        true,
+        null,
+        ["Verifying source manifest.", "Source-manifest verification completed."],
+        [92, 94]
+      );
+    case 10:
+      return localDirective(
+        "startup.build-factory-manifest",
+        { runId: selectRun.run_id },
+        "factoryManifest",
+        ["Building FACTORY_MANIFEST.csv.", "Factory manifest built."],
+        [95, 96]
+      );
+    case 11:
+      return providerDirective(
+        session,
+        { build_factory_manifest: session.context.factoryManifest },
+        "verification",
+        true,
+        null,
+        ["Verifying factory manifest.", "Factory-manifest verification completed."],
+        [96, 97]
+      );
+    case 12:
+      return localDirective(
+        "startup.seal-run",
+        { runId: selectRun.run_id },
+        "sealRun",
+        ["Sealing the Startup run.", "Startup seal calculation completed."],
+        [98, 99]
+      );
+    case 13:
+      return providerDirective(
+        session,
+        { seal_run: sealRun },
+        "verification",
+        true,
+        null,
+        ["Verifying the Startup seal.", "Startup seal verification completed."],
+        [99, 100]
+      );
+    default:
+      return sealRun.decision === "PASS"
+        ? terminalDirective("completed", "Startup completed and the run is sealed.", 100)
+        : terminalDirective("blocked", "Startup seal did not pass; review the missing run artifacts.", 100);
+  }
+};
+
+const discoveryDirectiveFor = (session) => {
+  const prepared = outputObject(session, "indexAndMapPreparation");
+  const glossaryPatch = outputObject(session, "glossaryPatch");
+  const contextPreparation = outputObject(session, "contextPreparation");
+  const contextPatch = outputObject(session, "contextPatch");
+
+  switch (session.step) {
+    case 0:
+      return localDirective(
+        "discovery.scan-project",
+        {},
+        "scanProject",
+        ["Scanning the project tree.", "Project scan completed."],
+        [20, 30]
+      );
+    case 1:
+      return providerDirective(
+        session,
+        { scan_project: session.context.scanProject },
+        "verification",
+        true,
+        null,
+        ["Verifying project scan.", "Project-scan verification completed."],
+        [32, 45]
+      );
+    case 2:
+      return localDirective(
+        "discovery.classify-files",
+        {},
+        "classifyFiles",
+        ["Classifying inventoried files.", "File classification completed."],
+        [47, 60]
+      );
+    case 3:
+      return providerDirective(
+        session,
+        { classify_files: session.context.classifyFiles },
+        "verification",
+        true,
+        null,
+        ["Verifying file classification.", "File-classification verification completed."],
+        [62, 72]
+      );
+    case 4:
+      return localDirective(
+        "discovery.prepare-index-and-map",
+        {},
+        "indexAndMapPreparation",
+        ["Preparing document index and dependency map.", "Document/dependency preparation completed."],
+        [74, 79]
+      );
+    case 5:
+      return providerDirective(
+        session,
+        { index_documents_candidates: prepared.preparation?.candidateDocuments ?? [] },
+        "semantic",
+        false,
+        "glossaryPatch",
+        ["Resolving domain glossary candidates.", "Domain glossary candidate generation completed."],
+        [80, 83]
+      );
+    case 6:
+      return localDirective(
+        "discovery.finalize-index-documents",
+        {
+          candidates: Array.isArray(glossaryPatch.candidates) ? glossaryPatch.candidates : [],
+          preparation: prepared.preparation
+        },
+        "indexDocuments",
+        ["Finalizing document index.", "Document index finalized."],
+        [84, 86]
+      );
+    case 7:
+      return providerDirective(
+        session,
+        {
+          index_documents: session.context.indexDocuments,
+          map_dependencies: prepared.mapDependencies
+        },
+        "verification",
+        true,
+        null,
+        ["Verifying document index and dependency map.", "Document/dependency verification completed."],
+        [87, 90]
+      );
+    case 8:
+      return localDirective(
+        "discovery.prepare-context",
+        {},
+        "contextPreparation",
+        ["Preparing project-context evidence.", "Project-context evidence prepared."],
+        [91, 93]
+      );
+    case 9:
+      return providerDirective(
+        session,
+        {
+          build_context_evidence: {
+            businessTerms: contextPreparation.businessTerms ?? [],
+            documents: contextPreparation.documents ?? [],
+            manifestDescriptionCandidates: contextPreparation.manifestDescriptionCandidates ?? [],
+            modules: Array.isArray(contextPreparation.modules)
+              ? contextPreparation.modules.map((module) => ({
+                  id: module.id,
+                  name: module.name,
+                  root: module.root
+                }))
+              : []
+          }
+        },
+        "semantic",
+        false,
+        "contextPatch",
+        ["Resolving semantic project context.", "Semantic project-context resolution completed."],
+        [94, 96]
+      );
+    case 10:
+      return localDirective(
+        "discovery.finalize-context",
+        { patch: contextPatch, preparation: contextPreparation },
+        "buildContext",
+        ["Finalizing PROJECT_CONTEXT.json.", "Project context finalized."],
+        [96, 98]
+      );
+    case 11:
+      return providerDirective(
+        session,
+        { build_context: session.context.buildContext },
+        "verification",
+        true,
+        null,
+        ["Verifying final project context.", "Project-context verification completed."],
+        [98, 100]
+      );
+    default:
+      return terminalDirective("completed", "Discovery completed successfully.", 100);
+  }
+};
+
+const nextDirectiveFor = (session) => {
+  if (session.failure) {
+    return terminalDirective("failed", session.failure, session.lastProgress ?? 0);
+  }
+
+  if (session.stageId === STARTUP_STAGE_ID) {
+    return startupDirectiveFor(session);
+  }
+
+  if (session.stageId === DISCOVERY_STAGE_ID) {
+    return discoveryDirectiveFor(session);
+  }
+
+  return terminalDirective("failed", `Mock cloud has no execution plan for stage: ${session.stageId}`, 0);
+};
+
+const applyPreviousResult = (session, previous) => {
+  if (previous.directiveId === session.lastAppliedDirectiveId) {
+    return;
+  }
+
+  if (!session.pending) {
+    throw new Error("Execution result was supplied without a pending directive.");
+  }
+
+  if (previous.directiveId !== session.pending.id) {
+    throw new Error("Execution result does not match the pending directive.");
+  }
+
+  session.lastProgress = session.pending.progressCompleted ?? session.lastProgress ?? 0;
+
+  if (previous.status !== "completed") {
+    session.failure = previous.message || `Directive ${session.pending.id} failed.`;
+    session.lastAppliedDirectiveId = session.pending.id;
+    session.pending = null;
+    return;
+  }
+
+  if (session.pending.saveAs) {
+    session.context[session.pending.saveAs] = previous.output;
+  }
+
+  session.lastAppliedDirectiveId = session.pending.id;
+  session.step += 1;
+  session.pending = null;
+};
+
+const createExecution = (body) => {
+  const session = {
+    context: {},
+    failure: null,
+    id: randomUUID(),
+    lastAppliedDirectiveId: null,
+    lastProgress: 16,
+    newRun: body.newRun === true,
+    pending: null,
+    project: body.project,
+    providerId: body.providerId,
+    stageId: body.stageId,
+    step: 0
+  };
+  executions.set(session.id, session);
+  return session;
+};
+
+const handleExecutionNext = (body) => {
+  const session = body.executionId ? executions.get(body.executionId) : createExecution(body);
+
+  if (!session) {
+    return { statusCode: 404, payload: { error: "execution-not-found" } };
+  }
+
+  if (session.stageId !== body.stageId || session.project.id !== body.project?.id) {
+    return { statusCode: 409, payload: { error: "execution-scope-mismatch" } };
+  }
+
+  if (body.previous) {
+    applyPreviousResult(session, body.previous);
+  }
+
+  if (!session.pending) {
+    session.pending = nextDirectiveFor(session);
+  }
+
+  if (
+    session.pending.kind === "local" &&
+    !Array.isArray(body.localOperations)
+  ) {
+    session.pending = terminalDirective("failed", "Desktop did not report local operations.", session.lastProgress);
+  } else if (
+    session.pending.kind === "local" &&
+    Array.isArray(body.localOperations) &&
+    !body.localOperations.includes(session.pending.operation)
+  ) {
+    session.pending = terminalDirective(
+      "failed",
+      `Desktop does not support required local operation: ${session.pending.operation}`,
+      session.lastProgress
+    );
+  }
+
+  if (session.pending.kind === "terminal" && session.pending.outcome === "completed") {
+    markStagePassed(session.project.id, session.stageId);
+  }
+
+  return {
+    statusCode: 200,
+    payload: {
+      directive: session.pending,
+      executionId: session.id,
+      stageId: session.stageId
+    }
+  };
+};
+
 const server = http.createServer(async (request, response) => {
   const url = new URL(request.url ?? "/", `http://${request.headers.host}`);
 
   try {
     if (request.method === "POST" && url.pathname === "/session/handshake") {
-      await readJson(request);
+      const body = await readJson(request);
+      const compatible = body.protocolVersion === "2";
       sendJson(response, 200, {
-        status: "ok",
-        serverVersion: "mock-0.1.0",
-        protocolVersion: "1",
-        message: "Mock cloud connected"
+        status: compatible ? "ok" : "update-required",
+        serverVersion: "mock-0.2.1",
+        protocolVersion: "2",
+        message: compatible
+          ? "Mock cloud connected"
+          : "Desktop protocol v2 is required for server-driven execution directives."
       });
       return;
     }
@@ -726,22 +1140,26 @@ const server = http.createServer(async (request, response) => {
       const projectId = url.searchParams.get("projectId");
       sendJson(response, 200, {
         workflowId: "mock-workflow",
-        workflowVersion: "1.0.0",
+        workflowVersion: "2.0.0",
         stages: buildStages(projectId)
       });
       return;
     }
 
+    if (request.method === "POST" && url.pathname === "/executions/next") {
+      const body = await readJson(request);
+      const result = handleExecutionNext(body);
+      sendJson(response, result.statusCode, result.payload);
+      return;
+    }
+
+    // Legacy/manual job request endpoint remains for IPC compatibility. Stage
+    // completion is intentionally NOT inferred from individual job results.
     if (request.method === "POST" && url.pathname === "/jobs/request") {
       const body = await readJson(request);
       const job = createJob(body);
       const projectId = body.project?.id ?? null;
       jobs.set(job.id, { ...job, projectId });
-
-      if (body.localExecution?.select_run?.decision === "already_sealed") {
-        markStagePassed(projectId, STARTUP_SEAL_STAGE_ID);
-      }
-
       sendJson(response, 200, job);
       return;
     }
@@ -768,11 +1186,6 @@ const server = http.createServer(async (request, response) => {
         job.status = body.status === "completed" ? "acked" : "failed";
         job.finishedAt = new Date().toISOString();
         job.exitCode = body.exitCode;
-
-        const verification = getLastJsonObject(body.outputChunks);
-        if (verification?.ok === true) {
-          markStagePassed(job.projectId, job.stageId);
-        }
       }
       sendJson(response, 200, { accepted: true, findings: [] });
       return;

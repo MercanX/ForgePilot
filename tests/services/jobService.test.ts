@@ -1,4 +1,5 @@
 import type { HttpClient } from "@services/api/httpClient";
+import type { DetectGapsPreparation } from "@services/discovery/discoveryJobService";
 import { createJobService } from "@services/jobs/jobService";
 import type { TaskExecutionService } from "@services/tasks/taskExecutionService";
 import { PROVIDER_IDS } from "@shared/constants/providerIds";
@@ -1048,8 +1049,23 @@ describe("jobService", () => {
       module_count: 1,
       unresolved_count: 0
     };
+    const detectGapsPreparationResult = {
+      artifacts: {},
+      checklist: { items: [], summary: {} },
+      checksLedgerSkeleton: [],
+      formatBySource: new Map(),
+      preliminaryCandidates: [],
+      projectContextValid: true,
+      semanticView: { checklist: [], preliminary_candidates: [], project_context_semantic_fields: null },
+      textCache: new Map()
+    } as unknown as DetectGapsPreparation;
+    const detectGapsResult = {
+      gap_count: 0,
+      issue_count: 0,
+      warning_count: 0
+    };
 
-    it("runs Job 1-5 through to the map_module_dependencies verification when everything passes", async () => {
+    it("runs Job 1-6 through to the detect_gaps verification when everything passes", async () => {
       const requestedLocalExecutions: unknown[] = [];
       const jobIds = [
         "11111111-1111-4111-8111-111111111111",
@@ -1058,7 +1074,9 @@ describe("jobService", () => {
         "33333333-3333-4333-8333-333333333333",
         "44444444-4444-4444-8444-444444444444",
         "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-        "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+        "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
       ];
       let jobCounter = 0;
       const postMock = vi.fn((path: string, body: unknown): Promise<unknown> => {
@@ -1104,7 +1122,9 @@ describe("jobService", () => {
         "99999999-9999-4999-8999-999999999999",
         "aaaaaaaa-bbbb-4aaa-8aaa-aaaaaaaaaaaa",
         "cccccccc-dddd-4ccc-8ccc-cccccccccccc",
-        "dddddddd-eeee-4ddd-8ddd-dddddddddddd"
+        "dddddddd-eeee-4ddd-8ddd-dddddddddddd",
+        "eeeeeeee-ffff-4eee-8eee-eeeeeeeeeeee",
+        "ffffffff-0000-4fff-8fff-ffffffffffff"
       ];
       const taskOutputs = [
         '{"ok":true,"job":"scan_project","verified_rules":["RULE-D01"]}\n',
@@ -1113,7 +1133,9 @@ describe("jobService", () => {
         '{"ok":true,"job":"index_documents_and_map_dependencies","verified_rules":["RULE-D03","RULE-D09"]}\n',
         "{}\n",
         '{"ok":true,"job":"build_context","verified_rules":["RULE-D04"]}\n',
-        '{"ok":true,"job":"map_module_dependencies","verified_rules":["RULE-D08"]}\n'
+        '{"ok":true,"job":"map_module_dependencies","verified_rules":["RULE-D08"]}\n',
+        '{"candidates":[]}\n',
+        '{"ok":true,"job":"detect_gaps","verified_rules":["RULE-D05"]}\n'
       ];
       let startCounter = 0;
       const taskService: TaskExecutionService = {
@@ -1169,8 +1191,10 @@ describe("jobService", () => {
       const service = createJobService({
         createClient: () => client,
         finalizeBuildContextJob: vi.fn(() => Promise.resolve(buildContextResult)),
+        finalizeDetectGapsJob: vi.fn(() => Promise.resolve(detectGapsResult)),
         finalizeIndexDocumentsJob: vi.fn(() => Promise.resolve(indexDocumentsResult)),
         prepareBuildContextJob: vi.fn(() => Promise.resolve(buildContextPreparationResult)),
+        prepareDetectGapsJob: vi.fn(() => Promise.resolve(detectGapsPreparationResult)),
         prepareIndexDocumentsJob: vi.fn(() => Promise.resolve(preparationResult)),
         runClassifyFilesJob: vi.fn(() => Promise.resolve(classifyFilesResult)),
         runMapDependenciesJob: vi.fn(() => Promise.resolve(mapDependenciesResult)),
@@ -1189,7 +1213,7 @@ describe("jobService", () => {
         timeoutMs: 1_000
       });
 
-      expect(taskService.start).toHaveBeenCalledTimes(7);
+      expect(taskService.start).toHaveBeenCalledTimes(9);
       expect(requestedLocalExecutions).toEqual([
         { scan_project: scanProjectResult },
         { classify_files: classifyFilesResult },
@@ -1208,11 +1232,11 @@ describe("jobService", () => {
           }
         },
         { build_context: buildContextResult },
-        { map_module_dependencies: mapModuleDependenciesResult }
+        { map_module_dependencies: mapModuleDependenciesResult },
+        { detect_gaps_evidence: detectGapsPreparationResult.semanticView },
+        { detect_gaps: detectGapsResult }
       ]);
-      expect(response.result.outputChunks.at(-1)?.text).toContain(
-        '"job":"map_module_dependencies"'
-      );
+      expect(response.result.outputChunks.at(-1)?.text).toContain('"job":"detect_gaps"');
     });
 
     it("stops before classify_files when scan_project verification fails", async () => {

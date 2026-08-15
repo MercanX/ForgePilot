@@ -89,17 +89,21 @@ export const createProcessManager = (): ProcessManager => {
       providerId: options.providerId
     };
     let finished = false;
+    let finalExitInfo: ProviderExitInfo | null = null;
+    const outputHistory: ProviderOutputChunk[] = [];
 
     const emitOutput = (stream: ProviderOutputChunk["stream"], text: string): void => {
       if (!text) {
         return;
       }
 
-      emitter.emit("output", {
+      const chunk: ProviderOutputChunk = {
         stream,
         text,
         timestamp: new Date().toISOString()
-      });
+      };
+      outputHistory.push(chunk);
+      emitter.emit("output", chunk);
     };
 
     const finish = (exitCode: number | null, signal: string | null): void => {
@@ -114,6 +118,7 @@ export const createProcessManager = (): ProcessManager => {
         finishedAt: new Date().toISOString(),
         signal
       };
+      finalExitInfo = exitInfo;
       emitter.emit("exit", exitInfo);
       processes.delete(handle.id);
     };
@@ -137,10 +142,17 @@ export const createProcessManager = (): ProcessManager => {
       handle,
       kill: () => child.kill("SIGKILL"),
       onExit: (callback) => {
+        if (finalExitInfo) {
+          callback(finalExitInfo);
+          return () => undefined;
+        }
         emitter.on("exit", callback);
         return () => emitter.off("exit", callback);
       },
       onOutput: (callback) => {
+        for (const chunk of outputHistory) {
+          callback(chunk);
+        }
         emitter.on("output", callback);
         return () => emitter.off("output", callback);
       },

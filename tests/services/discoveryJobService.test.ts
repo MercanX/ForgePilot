@@ -4,8 +4,10 @@ import path from "node:path";
 
 import {
   finalizeBuildContextJob,
+  finalizeDetectGapsJob,
   finalizeIndexDocumentsJob,
   prepareBuildContextJob,
+  prepareDetectGapsJob,
   prepareIndexDocumentsJob,
   runClassifyFilesJob,
   runMapDependenciesJob,

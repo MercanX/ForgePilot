@@ -70,11 +70,14 @@ export const CloudRunPanel = (): ReactElement => {
       <pre className="task-output" aria-live="polite">
         {lastRun
           ? [
-              `Job: ${lastRun.job.id}\n`,
-              `Status: ${lastRun.result.status}\n`,
-              `Exit code: ${lastRun.result.exitCode ?? "n/a"}\n`,
+              `Job: ${lastRun.job?.id ?? "n/a"}\n`,
+              `Stage: ${lastRun.stageOutcome.stageId}\n`,
+              `Status: ${lastRun.result?.status ?? lastRun.stageOutcome.status}\n`,
+              `Exit code: ${lastRun.result?.exitCode ?? "n/a"}\n`,
               `Submitted: ${lastRun.submitAccepted ? "yes" : "no"}\n`,
-              lastRun.result.outputChunks.map((chunk) => `[${chunk.stream}] ${chunk.text}`).join("")
+              (lastRun.result?.outputChunks ?? [])
+                .map((chunk) => `[${chunk.stream}] ${chunk.text}`)
+                .join("")
             ].join("")
           : "Start the mock cloud server, then run a cloud job through the selected provider."}
       </pre>

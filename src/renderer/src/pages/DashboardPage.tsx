@@ -86,11 +86,6 @@ type StartupExecutionMetadata = {
     unknown_count?: number;
     user_role_count?: number;
   };
-  map_module_dependencies?: {
-    edge_count?: number;
-    module_count?: number;
-    unresolved_count?: number;
-  };
 };
 
 const isStartupExecutionMetadata = (value: unknown): value is StartupExecutionMetadata =>
@@ -135,7 +130,7 @@ export const DashboardPage = (): ReactElement => {
       : Math.max(stageProgress(activeStage), runProgress)
     : 0;
   const startupExecution = useMemo(() => {
-    const metadata = lastRun?.job.task?.instructions.metadata.localExecution;
+    const metadata = lastRun?.job?.task?.instructions.metadata.localExecution;
 
     return isStartupExecutionMetadata(metadata) ? metadata : null;
   }, [lastRun]);
@@ -144,7 +139,7 @@ export const DashboardPage = (): ReactElement => {
     [activityEntries]
   );
   const validationJson = useMemo(() => {
-    const text = lastRun?.result.outputChunks.map((chunk) => chunk.text).join("") ?? "";
+    const text = lastRun?.result?.outputChunks.map((chunk) => chunk.text).join("") ?? "";
     const lines = text
       .split(/\r?\n/)
       .map((line) => line.trim())
@@ -622,40 +617,16 @@ export const DashboardPage = (): ReactElement => {
             </section>
           ) : null}
 
-          {startupExecution?.map_module_dependencies ? (
-            <section className="startup-result" aria-label="Module dependency map result">
-              <h3>Module Dependencies</h3>
-              <dl>
-                <div>
-                  <dt>Modules</dt>
-                  <dd>{startupExecution.map_module_dependencies.module_count ?? "unknown"}</dd>
-                </div>
-                <div>
-                  <dt>Dependency edges</dt>
-                  <dd>{startupExecution.map_module_dependencies.edge_count ?? "unknown"}</dd>
-                </div>
-                <div>
-                  <dt>Unresolved references</dt>
-                  <dd>{startupExecution.map_module_dependencies.unresolved_count ?? "unknown"}</dd>
-                </div>
-                <div>
-                  <dt>Output</dt>
-                  <dd>MODULE_MAP.json</dd>
-                </div>
-              </dl>
-            </section>
-          ) : null}
-
           <pre className="task-output" aria-live="polite">
             {validationJson
               ? JSON.stringify(validationJson, null, 2)
               : lastRun
                 ? [
-                    `Job: ${lastRun.job.id}\n`,
-                    `Stage: ${lastRun.job.stageId}\n`,
-                    `Status: ${lastRun.result.status}\n`,
-                    `Exit code: ${lastRun.result.exitCode ?? "n/a"}\n`,
-                    lastRun.result.outputChunks
+                    `Job: ${lastRun.job?.id ?? "n/a"}\n`,
+                    `Stage: ${lastRun.stageOutcome.stageId}\n`,
+                    `Status: ${lastRun.result?.status ?? lastRun.stageOutcome.status}\n`,
+                    `Exit code: ${lastRun.result?.exitCode ?? "n/a"}\n`,
+                    (lastRun.result?.outputChunks ?? [])
                       .map((chunk) => `[${chunk.stream}] ${chunk.text}`)
                       .join("")
                   ].join("")

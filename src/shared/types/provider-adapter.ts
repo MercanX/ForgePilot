@@ -1,4 +1,4 @@
-import type { ProviderExitInfo, ProviderOutputChunk, Task } from "@shared/schemas/job";
+import type { TaskExecutionRequest } from "@shared/schemas/job";
 import type {
   ProviderAuthStatus,
   ProviderId,
@@ -8,11 +8,17 @@ import type {
 
 export type TaskHandle = {
   id: string;
-  providerId: ProviderId;
   processId: number | null;
+  providerId: ProviderId;
 };
 
 export type Unsubscribe = () => void;
+
+export type ProviderExecutionCommand = {
+  args: string[];
+  command: string;
+  input: string;
+};
 
 export type ProviderAdapter = {
   readonly id: ProviderId;
@@ -20,12 +26,6 @@ export type ProviderAdapter = {
   getVersion(): Promise<ProviderVersionInfo>;
   authenticate(): Promise<ProviderAuthStatus>;
   getStatus(): Promise<ProviderStatus>;
-  startTask(task: Task): Promise<TaskHandle>;
-  sendInput(handle: TaskHandle, input: string): void;
-  stopTask(handle: TaskHandle): Promise<void>;
-  killProcess(handle: TaskHandle): void;
-  readOutput(handle: TaskHandle): AsyncIterable<ProviderOutputChunk>;
-  onOutput(callback: (chunk: ProviderOutputChunk) => void): Unsubscribe;
-  onExit(callback: (exitInfo: ProviderExitInfo) => void): Unsubscribe;
+  createExecutionCommand(request: TaskExecutionRequest): Promise<ProviderExecutionCommand>;
   dispose(): Promise<void>;
 };

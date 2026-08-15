@@ -1,6 +1,6 @@
 {
   "name": "forgepilot",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "description": "Open-source desktop execution client for AI Factory.",
   "private": true,
   "type": "module",
@@ -14,7 +14,8 @@
     "format:check": "prettier --check .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "dev:mock-cloud": "node tools/mock-cloud/mock-cloud.cjs"
+    "dev:mock-cloud": "node tools/mock-cloud/mock-cloud.cjs",
+    "test:protocol": "node tools/verify-execution-protocol.cjs"
   },
   "build": {
     "appId": "com.aifactory.forgepilot",

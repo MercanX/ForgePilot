@@ -1,6 +1,29 @@
+# 0.2.1
+
+- Protocol handshake now rejects incompatible cloud/mock-cloud protocol versions before stage execution starts.
+- Missing protocol-v2 `POST /executions/next` now reports a compatibility error instead of a generic HTTP 404.
+
 # Changelog CommitMind
 
+## 2026-08-16
+
+- Desktop job orchestration `010-startup` / `020-discovery` stage-id dallanmalarından çıkarılıp server-driven `POST /executions/next` directive protokolüne taşındı.
+- Stage completion authority mock cloud state-machine'e alındı; individual provider job PASS sonucu artık stage'i erken tamamlamıyor.
+- `stageExecutionService`, local operation registry ve crash recovery journal eklendi; küçük tamamlanmış local directive sonuçları execution id + directive id ile idempotent yeniden gönderilebiliyor.
+- Claude Code ve Codex provider komut üretimi `ProviderAdapter.createExecutionCommand()` arkasında toplandı; task instruction body geçici prompt dosyası yerine stdin üzerinden iletiliyor.
+- Claude Code non-interactive execution için session persistence kapatıldı; Codex execution ephemeral/read-only modda stdin prompt kullanacak şekilde düzenlendi.
+- `processManager`, çok hızlı process'lerde listener bağlanmadan önce gelen stdout/exit event'lerini kaybetmemek için output/exit replay tamponu kazandı.
+- Dashboard ve CloudRunPanel final stage durumunu provider job metadata'sından tahmin etmek yerine `stageOutcome` sözleşmesinden okuyor.
+- Protocol version `2`, uygulama sürümü `0.2.1` yapıldı; mock cloud eski protocol sürümleri için `update-required` döndürüyor.
+- `tools/verify-execution-protocol.cjs` ve yeni unit test fixture'ları eklendi.
+
 ## 2026-08-15
+
+- Added server-driven execution directive protocol (`POST /executions/next`) replacing stage-specific client orchestration.
+- Moved provider command generation to `ProviderAdapter.createExecutionCommand()` and centralized process lifecycle in a shared execution service.
+- Introduced crash recovery journal for idempotent replay of local directive results.
+- Passed task instruction bodies via stdin instead of temporary prompt files.
+- Bumped protocol to v2 and application version to 0.2.1 with handshake compatibility checks.
 
 - Added root path propagation through IPC, preload, and job store for workflow requests
 - Implemented local seal status detection to override Startup stage completion in workflow responses

@@ -152,7 +152,7 @@ Trade-off : Her API çağrısı için IPC köprüsü yazmak ek iş; karşılığ
 | Updates | `src/main/updates/` | electron-updater yönetimi | api (version nego.) |
 | Localization | `src/services/localization/` | Gömülü `en-US`, harici `.fplang` paketleri, fallback ve aktif locale yönetimi | shared/schemas, db |
 | API client | `src/services/api/` | httpClient (HTTPS-only) + cloudApi (tipli endpoint'ler) | shared/schemas, security |
-| Job service | `src/services/jobs/` | request→execute→result akışı + heartbeat | api, process, providers |
+| Job service | `src/services/jobs/` | Sunucudan tek-adımlık directive alıp local/provider executor ile yürütme + heartbeat + recovery journal | api, process, providers |
 | Run manager | `src/services/runs/` | Run durum makinesi, checkpoint, crash recovery, yerel doğrulayıcılar | db, jobs |
 | Projects | `src/services/projects/` | Proje CRUD (repository deseni) | db |
 | DB | `src/services/db/` | better-sqlite3 bağlantı + migrasyon | — |
@@ -173,20 +173,17 @@ ProviderAdapter
 ├── getVersion(): Promise<ProviderVersionInfo>
 ├── authenticate(): Promise<AuthStatus>        // durum SORGUSU; credential'a dokunmaz
 ├── getStatus(): Promise<ProviderStatus>       // not-installed|installed|authenticated|busy|error
-├── startTask(task: ProviderTask): Promise<TaskHandle>
-├── sendInput(handle, input: string): void     // interaktif CLI'a stdin
-├── stopTask(handle): Promise<void>            // önce nazik (SIGTERM), sonra zorla
-├── killProcess(handle): void                  // son çare; orphan reaper da kullanır
-├── readOutput(handle): AsyncIterable<ProviderOutputChunk>
-├── onOutput(cb): Unsubscribe                  // canlı UI akışı için push
-├── onExit(cb: (ProviderExitInfo) => void): Unsubscribe
+├── createExecutionCommand(task): Promise<ProviderExecutionCommand>
+│   ├── command                               // çözümlenmiş executable
+│   ├── args[]                                // provider'a özgü güvenli argüman dizisi
+│   └── input                                 // stdin üzerinden gönderilecek task body
 └── dispose(): Promise<void>
 ```
 
-- `ProviderTask`: buluttan gelen job talimatının normalize edilmiş hali —
+- `TaskExecutionRequest`: buluttan gelen job talimatının normalize edilmiş hali —
   adaptör bunu CLI'ın kendi bayrak/stdin kurallarına çevirir.
-- `ProviderOutputChunk`: `{ stream: 'stdout'|'stderr', text, ts }` — UI ve log
-  aynı normalize olayı tüketir.
+- Process yaşam döngüsü, timeout ve stdout/stderr event üretimi `processManager` +
+  `taskExecutionService` sorumluluğundadır; adaptör process state tutmaz.
 - `authenticate()` **kimlik doğrulaması yapmaz**; CLI'ın kendi oturumunun durumunu
   sorgular (hafif komut veya config varlığı). ForgePilot sağlayıcı credential'ı
   asla okumaz/saklamaz — kullanıcı kendi Claude/Codex hesabıyla çalışır.
@@ -198,19 +195,20 @@ const ADAPTERS = [ClaudeCodeAdapter, CodexAdapter];   // 3. sağlayıcı = +1 sa
 ```
 
 ```text
-Karar     : Davranışsal arayüz TS interface, veri şekilleri Zod şeması.
-Neden     : Arayüz process yaşam döngüsü taşır (Zod'un işi değil); sınırlardan
-            geçen veri (Task, Chunk, ExitInfo) ise IPC'de doğrulanmak zorunda.
+Karar     : Davranışsal provider arayüzü TS interface, sınır verileri Zod şeması.
+Neden     : Executable/argüman/stdin üretimi davranıştır; Task, Chunk, ExitInfo ve
+            execution directive gibi sınır verileri ise runtime'da doğrulanmalıdır.
 Alternatif: Her şeyi Zod ile modellemek.
 Trade-off : İki mekanizma; karşılığında her biri doğru işte kullanılır.
 ```
 
 ```text
-Karar     : Adaptör, CLI çıktısını normalize eden TEK yer.
-Neden     : Claude/Codex CLI çıktı formatları sürümle değişir (Risk #1);
-            kırılma tek dosyada onarılır, çekirdek ve UI etkilenmez.
-Alternatif: Job service'in ham çıktıyı yorumlaması.
-Trade-off : Adaptörler kalınlaşır; çekirdek incelir — istenen de bu.
+Karar     : Provider CLI komutu ve stdin sözleşmesinin TEK sahibi adaptördür.
+Neden     : Claude/Codex CLI bayrakları sürümle değişebilir; provider farkları
+            `jobService` veya UI içine yayılmaz. Process yaşam döngüsü ise ortak
+            `taskExecutionService` içinde kalır.
+Alternatif: Job service içinde provider adına göre CLI argümanı üretmek.
+Trade-off : Adaptör sözleşmesi biraz daha davranışsaldır; çekirdek generic kalır.
 ```
 
 ---
@@ -228,7 +226,8 @@ implemente eder.
 POST /session/handshake        // version negotiation + oturum açılışı
 POST /session/refresh          // kısa ömürlü access token yenileme
 GET  /workflows/current        // proje için aktif workflow + stage listesi
-POST /jobs/request             // { projectMeta, providerId, capabilities } → Job
+POST /executions/next          // stage için sıradaki tek directive; execution resume da aynı endpoint
+POST /jobs/request             // legacy/manual tek job isteği; workflow sequencing kaynağı değildir
 GET  /jobs/{id}                // Job durumu + Task talimatı
 POST /jobs/{id}/heartbeat      // canlılık; sunucu tarafında timeout tespiti
 POST /jobs/{id}/result         // normalize TaskResult + yerel doğrulama bulguları
@@ -243,9 +242,13 @@ toplu-indirme endpoint'i. IP koruması API yüzeyinin kendisiyle zorlanır.
 
 ```json
 {
-  "desktopVersion": "1.4.2",
-  "protocolVersion": "3",
-  "supportedCapabilities": ["claude", "codex", "streaming", "job-v2"]
+  "desktopVersion": "0.2.1",
+  "protocolVersion": "2",
+  "supportedCapabilities": [
+    "provider:claude-code",
+    "provider:codex",
+    "stage-execution:directives-v1"
+  ]
 }
 ```
 
@@ -269,6 +272,31 @@ Sunucu yanıtları: `ok` | `update-recommended` | `update-required`
 
 İstemci stage listesini **olduğu gibi** render eder; stage id'lerine göre
 dallanan hiçbir istemci mantığı yazılamaz.
+
+### Server-driven execution directive protokolü
+
+Stage çalıştırma sırasında desktop tüm workflow planını istemez. Bunun yerine
+`POST /executions/next` ile yalnızca **sıradaki tek adımı** alır. İstek; proje,
+provider, stage id, protocol capability'leri, desktop'ın desteklediği local
+operation adları ve varsa bir önceki directive sonucunu taşır. Yanıt üç tipten
+biridir:
+
+- `local`: İsimlendirilmiş deterministic local operation + concrete input.
+- `provider`: Tek bir provider job'ı + `verification|semantic` output contract.
+- `terminal`: Stage için `completed|blocked|failed` kararı.
+
+Stage sequencing, completion ve sonraki adıma geçme kararı sunucunun
+sorumluluğundadır. Desktop yalnızca capability executor'dır. Böylece yeni bir
+workflow/stage sırası yalnızca sunucu değişikliğiyle yayınlanabilir; desktop
+`010-startup` / `020-discovery` gibi stage id'lerine göre dallanmaz. Proprietary
+workflow'un tamamı da istemciye topluca gönderilmez.
+
+Directive `id` değerleri execution içinde idempotency anahtarıdır. Desktop küçük
+local operation sonuçlarını `.ai-factory/.forgepilot/execution-journal.json`
+içinde saklayarak crash sonrası aynı directive yeniden verilirse local mutasyonu
+tekrarlamak yerine sonucu yeniden sunucuya gönderebilir. Büyük Discovery hazırlık
+payload'ları proje metnini çoğaltmamak için journal'a kopyalanmaz; bunlar replay-safe
+şekilde yeniden hesaplanır. Task/prompt gövdeleri journal'a yazılmaz.
 
 ```text
 Karar     : MVP'de REST + polling (job durumu ~2sn, workflow ~10sn); WebSocket
@@ -346,8 +374,10 @@ requested ─▶ received ─▶ executing ─▶ validating ─▶ submitting �
                 └──────── POST /jobs/{id}/fail ◀────────┘ (tükendi)
 ```
 
-- `executing`: adaptör `startTask` + `onOutput` akışı; job'ın `timeout` alanı
-  (sunucudan gelir) aşılırsa `stopTask` → `failed(timeout)`.
+- `executing`: adaptör `createExecutionCommand()` ile provider-specific komutu
+  üretir; `taskExecutionService` / `processManager` process yaşam döngüsü ve
+  stdout/stderr akışını yönetir. Task gövdesi stdin üzerinden iletilir. Job timeout
+  aşılırsa process durdurulur ve sonuç `timeout` olur.
 - `validating`: yerel doğrulayıcılar (exit code, dosya diff'i, çıktı şeması) —
   yalnızca **mekanik** kontroller; kalite puanlaması sunucunundur.
 
@@ -390,8 +420,9 @@ Kurallar:
   önbellektir; çakışmada sunucu kazanır. Yerel otorite yalnızca: proje listesi,
   kullanıcı ayarları, run geçmişi, loglar.
 - **Asla diske yazılmaz**: prompt metinleri, rule/agent/skill içerikleri,
-  sunucudan gelen talimat gövdeleri. Job talimatı yalnızca bellekte yaşar;
-  `jobs` tablosuna meta veri (id, durum, süre) yazılır, içerik yazılmaz.
+  sunucudan gelen talimat gövdeleri. Provider task body yalnızca bellekte yaşar
+  ve stdin ile CLI'a aktarılır. Recovery journal yalnız execution id ile küçük
+  local deterministic sonuçları tutar; provider instruction/output gövdesini tutmaz.
 - Saklama politikası: run/job/log kayıtları 90 gün veya 500MB sınırında budanır
   (Settings → Advanced'ten ayarlanabilir).
 - Kimlik bilgisi DB'ye girmez: AI Factory token'ı `safeStorage` ile şifrelenmiş
@@ -637,7 +668,7 @@ eklediği işlerin faz eşlemesi:
 | Faz 2 (Sözleşmeler) | `run` şeması, state-machine tipleri, finding lifecycle enum, `protocolVersion` sabiti, cloud-api'ye heartbeat/fail/handshake |
 | Faz 3 (Projeler) | Proje kartına git branch/remote tespiti (envCheck'in git modülüyle) |
 | Faz 4 (Sağlayıcı tespiti) | `authenticate()` durumu; Environment Check ekranı (Setup page) |
-| Faz 5 (Süreç çalıştırma) | `sendInput`/`killProcess`; ring-buffer + batched IPC; Stop akışı |
+| Faz 5 (Süreç çalıştırma) | Provider command contract + ortak process lifecycle; ring-buffer + batched IPC; Stop akışı |
 | Faz 6 (Bulut istemcisi) | handshake/version-negotiation, heartbeat döngüsü, `/fail`, `GET /workflows/current`, degraded-mode banner |
 | Faz 7 (Doğrulama + UI) | Dashboard (stage render + progress + live activity), findings listesi; **Run manager + checkpoint + run geçmişi burada eklenir** |
 | Faz 8 (Loglama) | logs_index + görüntüleyici filtreleri |

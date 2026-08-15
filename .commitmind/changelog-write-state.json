@@ -1,5 +1,5 @@
 {
-  "lastFingerprint": "a1ba4fd9af25463936afd847b0d4a6868094a00f",
+  "lastFingerprint": "c51de00f645325bfb7915650bd93b21bd0f62e3b",
   "lastDate": "2026-08-15",
-  "lastContent": "- Added root path propagation through IPC, preload, and job store for workflow requests\n- Implemented local seal status detection to override Startup stage completion in workflow responses\n- Added `readStartupSealStatus` service function that checks the latest run's seal decision without side effects\n- Updated workflow request schema to require root path validation\n- Added unit tests covering sealed, unsealed, and missing run directory scenarios"
+  "lastContent": "- Added server-driven execution directive protocol (`POST /executions/next`) replacing stage-specific client orchestration.\n- Moved provider command generation to `ProviderAdapter.createExecutionCommand()` and centralized process lifecycle in a shared execution service.\n- Introduced crash recovery journal for idempotent replay of local directive results.\n- Passed task instruction bodies via stdin instead of temporary prompt files.\n- Bumped protocol to v2 and application version to 0.2.1 with handshake compatibility checks."
 }

@@ -116,7 +116,6 @@ export const DashboardPage = (): ReactElement => {
   const activeStage =
     stages.find((stage) => stage.status === "running") ??
     stages.find((stage) => stage.status === "ready") ??
-    stages[0] ??
     null;
   const canStart = Boolean(activeProject && selectedProvider && activeStage && !isRunning);
   const effectiveProgress = activeStage

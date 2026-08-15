@@ -1,3 +1,7 @@
+import { randomUUID } from "node:crypto";
+import { mkdir, unlink, writeFile } from "node:fs/promises";
+import path from "node:path";
+
 import { createCommandRunner, type CommandRunner } from "@main/process/commandRunner";
 import { createProcessManager, type ProcessManager } from "@main/process/processManager";
 import { createProviderRegistry, type ProviderRegistry } from "@main/providers/registry";
@@ -7,6 +11,39 @@ import type {
   TaskOutputEvent,
   TaskStartResponse
 } from "@shared/schemas/job";
+
+export type PromptFileWriter = {
+  cleanup: (absolutePath: string) => Promise<void>;
+  write: (
+    projectRootPath: string,
+    body: string
+  ) => Promise<{ absolutePath: string; relativePath: string }>;
+};
+
+const PROMPT_TEMP_RELATIVE_DIR = path.posix.join(".ai-factory", ".tmp");
+
+export const createPromptFileWriter = (): PromptFileWriter => ({
+  cleanup: async (absolutePath) => {
+    await unlink(absolutePath).catch(() => undefined);
+  },
+  write: async (projectRootPath, body) => {
+    const dir = path.join(projectRootPath, ".ai-factory", ".tmp");
+    await mkdir(dir, { recursive: true });
+    const fileName = `prompt-${randomUUID()}.md`;
+    const absolutePath = path.join(dir, fileName);
+    await writeFile(absolutePath, body, "utf8");
+    return {
+      absolutePath,
+      relativePath: path.posix.join(PROMPT_TEMP_RELATIVE_DIR, fileName)
+    };
+  }
+});
+
+const createFilePromptArgument = (relativePath: string): string =>
+  `Read the file at "${relativePath}" (relative to the current working directory) in full ` +
+  "before responding — if it is long, keep reading with increasing offsets until you reach " +
+  "the end of the file. Follow the instructions in it exactly and respond with only the " +
+  "output format it specifies, no extra commentary.";
 
 type TaskExecutionServiceEvents = {
   exit: (event: TaskExitEvent) => void;
@@ -23,7 +60,7 @@ export type TaskExecutionService = {
 
 const createEchoCommand = (
   request: TaskExecutionRequest
-): { args: string[]; command: string; input: string } => ({
+): { args: string[]; command: string; input: string; tempFilePath?: string } => ({
   args: [
     "-e",
     [
@@ -42,8 +79,9 @@ const createEchoCommand = (
 
 const createProviderCommand = async (
   request: TaskExecutionRequest,
-  runner: CommandRunner
-): Promise<{ args: string[]; command: string; input?: string }> => {
+  runner: CommandRunner,
+  promptFileWriter: PromptFileWriter
+): Promise<{ args: string[]; command: string; input?: string; tempFilePath?: string }> => {
   const commandName = request.providerId === "claude-code" ? "claude" : "codex";
   const executablePath = await runner.findExecutable(commandName);
 
@@ -51,15 +89,21 @@ const createProviderCommand = async (
     throw new Error(`${commandName} was not found on PATH.`);
   }
 
+  const { absolutePath, relativePath } = await promptFileWriter.write(
+    request.projectRootPath,
+    request.instructions.body
+  );
+  const promptArg = createFilePromptArgument(relativePath);
+  const modelArgs = request.model ? ["--model", request.model] : [];
+
   if (request.providerId === "claude-code") {
-    const modelArgs = request.model ? ["--model", request.model] : [];
     return {
-      args: ["-p", "--permission-mode", "plan", ...modelArgs, request.instructions.body],
-      command: executablePath
+      args: ["-p", "--permission-mode", "plan", ...modelArgs, promptArg],
+      command: executablePath,
+      tempFilePath: absolutePath
     };
   }
 
-  const modelArgs = request.model ? ["--model", request.model] : [];
   return {
     args: [
       "exec",
@@ -70,15 +114,17 @@ const createProviderCommand = async (
       "-C",
       request.projectRootPath,
       ...modelArgs,
-      request.instructions.body
+      promptArg
     ],
-    command: executablePath
+    command: executablePath,
+    tempFilePath: absolutePath
   };
 };
 
 export const createTaskExecutionService = (
   options: {
     processManager?: ProcessManager;
+    promptFileWriter?: PromptFileWriter;
     providerRegistry?: ProviderRegistry;
     runner?: CommandRunner;
   } = {}
@@ -86,6 +132,7 @@ export const createTaskExecutionService = (
   const processManager = options.processManager ?? createProcessManager();
   const providerRegistry = options.providerRegistry ?? createProviderRegistry();
   const runner = options.runner ?? createCommandRunner();
+  const promptFileWriter = options.promptFileWriter ?? createPromptFileWriter();
   const outputCallbacks = new Set<TaskExecutionServiceEvents["output"]>();
   const exitCallbacks = new Set<TaskExecutionServiceEvents["exit"]>();
 
@@ -99,7 +146,7 @@ export const createTaskExecutionService = (
     const command =
       request.mode === "echo-fixture"
         ? createEchoCommand(request)
-        : await createProviderCommand(request, runner);
+        : await createProviderCommand(request, runner, promptFileWriter);
 
     const managedProcess = await processManager.start({
       args: command.args,
@@ -109,6 +156,13 @@ export const createTaskExecutionService = (
       rootPath: request.projectRootPath,
       timeoutMs: request.timeoutMs
     });
+
+    if (command.tempFilePath) {
+      const tempFilePath = command.tempFilePath;
+      managedProcess.onExit(() => {
+        void promptFileWriter.cleanup(tempFilePath);
+      });
+    }
 
     managedProcess.onOutput((chunk) => {
       const event: TaskOutputEvent = {

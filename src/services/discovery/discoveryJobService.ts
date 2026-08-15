@@ -4,6 +4,7 @@ import path from "node:path";
 import mammoth from "mammoth";
 import { PDFParse } from "pdf-parse";
 import { parse as parseToml } from "smol-toml";
+import ts from "typescript";
 
 import { isDirectory, runGit, toPosixRelative } from "../shared/fsUtils";
 
@@ -2588,5 +2589,1972 @@ export const finalizeBuildContextJob = async (
     module_count: preparation.modules.length,
     unknown_count: unknowns.length,
     user_role_count: preparation.userRoles.length
+  };
+};
+
+// ---------------------------------------------------------------------------
+// RULE-D08 — map_module_dependencies
+// ---------------------------------------------------------------------------
+
+export type MapModuleDependenciesResult = {
+  edge_count: number;
+  module_count: number;
+  unresolved_count: number;
+};
+
+type ModuleMapBaseEntry = {
+  description: unknown;
+  description_evidence: unknown;
+  id: string;
+  name: string;
+  paths: string[];
+  root: string;
+  summary: ModuleSummary;
+};
+
+type ModuleMapBaseDocument = {
+  modules: ModuleMapBaseEntry[];
+};
+
+type DependencyEdgeEvidence = {
+  field: string | null;
+  kind: "manifest_reference" | "source_reference";
+  line: number | null;
+  raw_target: string;
+  resolver: string;
+  source: string;
+};
+
+type DependencyEdge = {
+  evidence: DependencyEdgeEvidence;
+  source_module: string;
+  target_module: string;
+};
+
+type UnresolvedReason =
+  | "ambiguous_local_module"
+  | "ambiguous_local_namespace"
+  | "ambiguous_local_package"
+  | "ambiguous_target"
+  | "dynamic_reference"
+  | "outside_project"
+  | "target_not_found"
+  | "unsupported_alias"
+  | "unsupported_reference_form";
+
+type UnresolvedReferenceEntry = {
+  field: string | null;
+  line: number | null;
+  raw_target: string;
+  reason: UnresolvedReason;
+  source: string;
+};
+
+type UnsupportedSourceFile = { format: FileFormat; path: string; reason: "unsupported_format" };
+type UnparsedSourceFile = { format: FileFormat; path: string; reason: "parse_error" };
+type UnsupportedManifestFile = { path: string; reason: "unsupported_manifest_reference" };
+type UnparsedManifestFile = { path: string; reason: "parse_error" };
+
+type Resolution =
+  | { kind: "external" }
+  | { kind: "module"; moduleId: string }
+  | { kind: "path"; path: string }
+  | { kind: "unresolved"; reason: UnresolvedReason };
+
+type ManifestLocation = { manifestPath: string; moduleId: string; moduleRoot: string };
+
+// "ambiguous" is one possible value of this string type; the union collapses
+// structurally but the literal is still used as a sentinel at runtime.
+type PackageRegistryEntry = string;
+
+type GoRegistryValue = "ambiguous" | { moduleId: string; moduleRoot: string };
+
+type Psr4Entry = { baseDirs: Set<string>; moduleId: string };
+type Psr4Registry = Map<string, Map<string, Psr4Entry>>;
+
+const SUPPORTED_SOURCE_FORMATS = new Set<FileFormat>([
+  "go",
+  "javascript",
+  "jsx",
+  "php",
+  "python",
+  "tsx",
+  "typescript"
+]);
+const MODULE_DEFINING_UNSUPPORTED_MANIFEST_NAMES = [
+  "pyproject.toml",
+  "pom.xml",
+  "build.gradle",
+  "build.gradle.kts",
+  "Gemfile",
+  "Pipfile"
+];
+const PACKAGE_JSON_DEPENDENCY_FIELDS = [
+  "dependencies",
+  "devDependencies",
+  "peerDependencies",
+  "optionalDependencies"
+];
+const COMPOSER_DEPENDENCY_FIELDS = ["require", "require-dev"];
+const CARGO_DEPENDENCY_FIELDS = ["dependencies", "dev-dependencies", "build-dependencies"];
+const JS_TS_EXTENSIONS = [".js", ".jsx", ".ts", ".tsx"];
+const JS_TS_SCRIPT_KIND: Partial<Record<NonNullable<FileFormat>, ts.ScriptKind>> = {
+  javascript: ts.ScriptKind.JS,
+  jsx: ts.ScriptKind.JSX,
+  tsx: ts.ScriptKind.TSX,
+  typescript: ts.ScriptKind.TS
+};
+const GO_MODULE_DIRECTIVE_PATTERN = /^[ \t]*module[ \t]+(\S+)[ \t]*$/m;
+const GO_REQUIRE_BLOCK_PATTERN = /^[ \t]*require[ \t]*\(\n([\s\S]*?)\n\)/gm;
+const GO_REQUIRE_SINGLE_PATTERN = /^[ \t]*require[ \t]+(\S+)[ \t]+(\S+)[ \t]*(?:\/\/.*)?$/gm;
+const GO_REQUIRE_BLOCK_LINE_PATTERN = /^[ \t]*(\S+)[ \t]+(\S+)[ \t]*(?:\/\/.*)?$/gm;
+const GO_REPLACE_PATTERN = /^[ \t]*replace[ \t]+\S+/gm;
+const GO_IMPORT_BLOCK_PATTERN = /^[ \t]*import[ \t]*\(\n([\s\S]*?)\n\)/gm;
+const GO_IMPORT_BLOCK_LINE_PATTERN = /^[ \t]*(?:[A-Za-z_]\w*[ \t]+)?"([^"\n]*)"[ \t]*$/gm;
+const GO_IMPORT_SINGLE_PATTERN = /^[ \t]*import[ \t]+"([^"\n]*)"[ \t]*$/gm;
+const PHP_USE_PATTERN = /^[ \t]*use[ \t]+([^;]+);/gm;
+const PYTHON_FROM_IMPORT_PATTERN = /^[ \t]*from[ \t]+(\.+)([A-Za-z_][\w.]*)?[ \t]+import[ \t]+([^\n]+)/gm;
+const MSBUILD_PROJECT_REFERENCE_PATTERN = /<ProjectReference\b[^>]*\bInclude="([^"]+)"[^>]*\/?>/g;
+
+const compareNullableLast = (left: number | string | null, right: number | string | null): number => {
+  if (left === null && right === null) {
+    return 0;
+  }
+
+  if (left === null) {
+    return 1;
+  }
+
+  if (right === null) {
+    return -1;
+  }
+
+  return left < right ? -1 : left > right ? 1 : 0;
+};
+
+const buildLineIndex = (text: string): number[] => {
+  const offsets = [0];
+
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] === "\n") {
+      offsets.push(i + 1);
+    }
+  }
+
+  return offsets;
+};
+
+const lineNumberForOffset = (lineOffsets: number[], offset: number): number => {
+  let low = 0;
+  let high = lineOffsets.length - 1;
+
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+
+    if ((lineOffsets[mid] ?? 0) <= offset) {
+      low = mid;
+    } else {
+      high = mid - 1;
+    }
+  }
+
+  return low + 1;
+};
+
+type NoiseMaskRules = {
+  blockComment?: [string, string];
+  lineCommentPrefixes: string[];
+  quoteChars: string[];
+  tripleQuotes?: string[];
+};
+
+const maskNoise = (source: string, rules: NoiseMaskRules): string => {
+  const { blockComment, lineCommentPrefixes, quoteChars, tripleQuotes = [] } = rules;
+  let result = "";
+  let i = 0;
+  const n = source.length;
+
+  while (i < n) {
+    const lineCommentPrefix = lineCommentPrefixes.find((prefix) => source.startsWith(prefix, i));
+
+    if (lineCommentPrefix) {
+      let j = i;
+
+      while (j < n && source[j] !== "\n") {
+        j += 1;
+      }
+
+      result += " ".repeat(j - i);
+      i = j;
+      continue;
+    }
+
+    if (blockComment && source.startsWith(blockComment[0], i)) {
+      const end = source.indexOf(blockComment[1], i + blockComment[0].length);
+      const stop = end === -1 ? n : end + blockComment[1].length;
+
+      for (let k = i; k < stop; k += 1) {
+        result += source[k] === "\n" ? "\n" : " ";
+      }
+
+      i = stop;
+      continue;
+    }
+
+    const tripleQuote = tripleQuotes.find((quote) => source.startsWith(quote, i));
+
+    if (tripleQuote) {
+      const end = source.indexOf(tripleQuote, i + tripleQuote.length);
+      const stop = end === -1 ? n : end + tripleQuote.length;
+
+      for (let k = i; k < stop; k += 1) {
+        result += source[k] === "\n" ? "\n" : " ";
+      }
+
+      i = stop;
+      continue;
+    }
+
+    const ch = source[i] ?? "";
+
+    if (quoteChars.includes(ch)) {
+      let j = i + 1;
+
+      while (j < n && source[j] !== ch) {
+        if (source[j] === "\\") {
+          j += 2;
+          continue;
+        }
+
+        j += 1;
+      }
+
+      const stop = j < n ? j + 1 : n;
+
+      for (let k = i; k < stop; k += 1) {
+        result += source[k] === "\n" ? "\n" : " ";
+      }
+
+      i = stop;
+      continue;
+    }
+
+    result += ch;
+    i += 1;
+  }
+
+  return result;
+};
+
+const joinUnderModuleRoot = (
+  moduleRoot: string,
+  relativeValue: string
+): { escapesRoot: boolean; resolved: string } => {
+  const base = moduleRoot === "." ? "" : moduleRoot;
+  const joined = path.posix.normalize(path.posix.join(base, relativeValue));
+  const escapesRoot = joined === ".." || joined.startsWith("../");
+
+  return { escapesRoot, resolved: joined };
+};
+
+const manifestAtModuleRoot = (module: ModuleMapBaseEntry, basename: string): string | null => {
+  const expected = module.root === "." ? basename : `${module.root}/${basename}`;
+
+  return module.paths.includes(expected) ? expected : null;
+};
+
+const locateModuleRootManifests = (
+  modules: ModuleMapBaseEntry[],
+  basename: string
+): ManifestLocation[] => {
+  const results: ManifestLocation[] = [];
+
+  for (const module of modules) {
+    const manifestPath = manifestAtModuleRoot(module, basename);
+
+    if (manifestPath) {
+      results.push({ manifestPath, moduleId: module.id, moduleRoot: module.root });
+    }
+  }
+
+  return results;
+};
+
+const MSBUILD_PROJECT_EXTENSIONS = new Set([".csproj", ".fsproj", ".vbproj"]);
+
+const locateModuleRootProjectFiles = (modules: ModuleMapBaseEntry[]): ManifestLocation[] => {
+  const results: ManifestLocation[] = [];
+
+  for (const module of modules) {
+    for (const filePath of module.paths) {
+      if (path.posix.dirname(filePath) !== module.root) {
+        continue;
+      }
+
+      if (MSBUILD_PROJECT_EXTENSIONS.has(path.posix.extname(filePath).toLowerCase())) {
+        results.push({ manifestPath: filePath, moduleId: module.id, moduleRoot: module.root });
+      }
+    }
+  }
+
+  return results;
+};
+
+const ascendPosixPath = (dir: string, count: number): { escapesRoot: boolean; path: string } => {
+  let current = dir;
+
+  for (let i = 0; i < count; i += 1) {
+    if (current === ".") {
+      return { escapesRoot: true, path: "" };
+    }
+
+    current = path.posix.dirname(current);
+  }
+
+  return { escapesRoot: false, path: current };
+};
+
+const makeManifestEdge = (
+  sourceModuleId: string,
+  targetModuleId: string,
+  source: string,
+  field: string | null,
+  line: number | null,
+  rawTarget: string,
+  resolver: string
+): DependencyEdge => ({
+  evidence: { field, kind: "manifest_reference", line, raw_target: rawTarget, resolver, source },
+  source_module: sourceModuleId,
+  target_module: targetModuleId
+});
+
+const applyResolution = (
+  sourceModuleId: string,
+  resolution: Resolution,
+  evidence: {
+    field: string | null;
+    kind: "manifest_reference" | "source_reference";
+    line: number | null;
+    rawTarget: string;
+    resolver: string;
+    source: string;
+  },
+  pathToModuleId: Map<string, string>,
+  edges: DependencyEdge[],
+  unresolved: UnresolvedReferenceEntry[]
+): void => {
+  if (resolution.kind === "external") {
+    return;
+  }
+
+  if (resolution.kind === "unresolved") {
+    unresolved.push({
+      field: evidence.field,
+      line: evidence.line,
+      raw_target: evidence.rawTarget,
+      reason: resolution.reason,
+      source: evidence.source
+    });
+    return;
+  }
+
+  const targetModuleId =
+    resolution.kind === "module" ? resolution.moduleId : pathToModuleId.get(resolution.path);
+
+  if (!targetModuleId) {
+    unresolved.push({
+      field: evidence.field,
+      line: evidence.line,
+      raw_target: evidence.rawTarget,
+      reason: "target_not_found",
+      source: evidence.source
+    });
+    return;
+  }
+
+  if (targetModuleId === sourceModuleId) {
+    return;
+  }
+
+  edges.push({
+    evidence: {
+      field: evidence.field,
+      kind: evidence.kind,
+      line: evidence.line,
+      raw_target: evidence.rawTarget,
+      resolver: evidence.resolver,
+      source: evidence.source
+    },
+    source_module: sourceModuleId,
+    target_module: targetModuleId
+  });
+};
+
+// --- Manifest content caches -------------------------------------------------
+
+const readJsonManifestCache = async (
+  projectRootPath: string,
+  locations: ManifestLocation[],
+  unparsedManifestPaths: Set<string>
+): Promise<Map<string, Record<string, unknown>>> => {
+  const cache = new Map<string, Record<string, unknown>>();
+
+  for (const location of locations) {
+    try {
+      cache.set(
+        location.manifestPath,
+        await readJsonFile<Record<string, unknown>>(path.join(projectRootPath, location.manifestPath))
+      );
+    } catch {
+      unparsedManifestPaths.add(location.manifestPath);
+    }
+  }
+
+  return cache;
+};
+
+const readTomlManifestCache = async (
+  projectRootPath: string,
+  locations: ManifestLocation[],
+  unparsedManifestPaths: Set<string>
+): Promise<Map<string, Record<string, unknown>>> => {
+  const cache = new Map<string, Record<string, unknown>>();
+
+  for (const location of locations) {
+    try {
+      const raw = await readFile(path.join(projectRootPath, location.manifestPath), "utf8");
+      cache.set(location.manifestPath, parseToml(raw));
+    } catch {
+      unparsedManifestPaths.add(location.manifestPath);
+    }
+  }
+
+  return cache;
+};
+
+const readRawManifestCache = async (
+  projectRootPath: string,
+  locations: ManifestLocation[],
+  unparsedManifestPaths: Set<string>,
+  validate: (content: string) => boolean
+): Promise<Map<string, string>> => {
+  const cache = new Map<string, string>();
+
+  for (const location of locations) {
+    try {
+      const content = normalizeCanonicalText(
+        await readFile(path.join(projectRootPath, location.manifestPath), "utf8")
+      );
+
+      if (!validate(content)) {
+        unparsedManifestPaths.add(location.manifestPath);
+        continue;
+      }
+
+      cache.set(location.manifestPath, content);
+    } catch {
+      unparsedManifestPaths.add(location.manifestPath);
+    }
+  }
+
+  return cache;
+};
+
+const readXmlManifestCache = async (
+  projectRootPath: string,
+  locations: ManifestLocation[],
+  unparsedManifestPaths: Set<string>
+): Promise<Map<string, string>> => {
+  const cache = new Map<string, string>();
+
+  for (const location of locations) {
+    try {
+      cache.set(
+        location.manifestPath,
+        normalizeCanonicalText(await readFile(path.join(projectRootPath, location.manifestPath), "utf8"))
+      );
+    } catch {
+      unparsedManifestPaths.add(location.manifestPath);
+    }
+  }
+
+  return cache;
+};
+
+// --- Registries ---------------------------------------------------------------
+
+const buildNameRegistry = (
+  locations: ManifestLocation[],
+  cache: Map<string, Record<string, unknown>>
+): Map<string, PackageRegistryEntry> => {
+  const registry = new Map<string, PackageRegistryEntry>();
+
+  for (const location of locations) {
+    const json = cache.get(location.manifestPath);
+
+    if (!json) {
+      continue;
+    }
+
+    const name = typeof json.name === "string" && json.name.trim() ? json.name.trim() : null;
+
+    if (!name) {
+      continue;
+    }
+
+    const existing = registry.get(name);
+
+    if (existing && existing !== "ambiguous" && existing !== location.moduleId) {
+      registry.set(name, "ambiguous");
+    } else if (!existing) {
+      registry.set(name, location.moduleId);
+    }
+  }
+
+  return registry;
+};
+
+const addPsr4Table = (
+  registry: Psr4Registry,
+  moduleId: string,
+  moduleRoot: string,
+  table: unknown
+): void => {
+  if (typeof table !== "object" || table === null) {
+    return;
+  }
+
+  for (const [prefix, rawValue] of Object.entries(table as Record<string, unknown>)) {
+    const values = Array.isArray(rawValue)
+      ? rawValue.filter((value): value is string => typeof value === "string")
+      : typeof rawValue === "string"
+        ? [rawValue]
+        : [];
+    const baseDirs = new Set<string>();
+
+    for (const value of values) {
+      const { escapesRoot, resolved } = joinUnderModuleRoot(moduleRoot, value);
+
+      if (!escapesRoot) {
+        baseDirs.add(resolved);
+      }
+    }
+
+    if (baseDirs.size === 0) {
+      continue;
+    }
+
+    const byModule = registry.get(prefix) ?? new Map<string, Psr4Entry>();
+    const existingEntry = byModule.get(moduleId);
+
+    if (existingEntry) {
+      for (const dir of baseDirs) {
+        existingEntry.baseDirs.add(dir);
+      }
+    } else {
+      byModule.set(moduleId, { baseDirs, moduleId });
+    }
+
+    registry.set(prefix, byModule);
+  }
+};
+
+const buildPsr4Registry = (
+  locations: ManifestLocation[],
+  cache: Map<string, Record<string, unknown>>
+): Psr4Registry => {
+  const registry: Psr4Registry = new Map();
+
+  for (const location of locations) {
+    const json = cache.get(location.manifestPath);
+
+    if (!json) {
+      continue;
+    }
+
+    const autoload = json.autoload;
+    const autoloadDev = json["autoload-dev"];
+
+    if (typeof autoload === "object" && autoload !== null) {
+      addPsr4Table(
+        registry,
+        location.moduleId,
+        location.moduleRoot,
+        (autoload as Record<string, unknown>)["psr-4"]
+      );
+    }
+
+    if (typeof autoloadDev === "object" && autoloadDev !== null) {
+      addPsr4Table(
+        registry,
+        location.moduleId,
+        location.moduleRoot,
+        (autoloadDev as Record<string, unknown>)["psr-4"]
+      );
+    }
+  }
+
+  return registry;
+};
+
+const extractGoModuleDirective = (content: string): string | null => {
+  const match = GO_MODULE_DIRECTIVE_PATTERN.exec(content);
+
+  return match?.[1] ?? null;
+};
+
+const buildGoModuleRegistry = (
+  locations: ManifestLocation[],
+  cache: Map<string, string>
+): Map<string, GoRegistryValue> => {
+  const registry = new Map<string, GoRegistryValue>();
+
+  for (const location of locations) {
+    const content = cache.get(location.manifestPath);
+
+    if (!content) {
+      continue;
+    }
+
+    const modulePath = extractGoModuleDirective(content);
+
+    if (!modulePath) {
+      continue;
+    }
+
+    const existing = registry.get(modulePath);
+
+    if (existing && existing !== "ambiguous" && existing.moduleId !== location.moduleId) {
+      registry.set(modulePath, "ambiguous");
+    } else if (!existing) {
+      registry.set(modulePath, { moduleId: location.moduleId, moduleRoot: location.moduleRoot });
+    }
+  }
+
+  return registry;
+};
+
+// --- Manifest-reference analysis ----------------------------------------------
+
+const analyzePackageJsonReferences = (
+  locations: ManifestLocation[],
+  cache: Map<string, Record<string, unknown>>,
+  packageRegistry: Map<string, PackageRegistryEntry>,
+  rootToModuleId: Map<string, string>
+): { edges: DependencyEdge[]; unresolved: UnresolvedReferenceEntry[] } => {
+  const edges: DependencyEdge[] = [];
+  const unresolved: UnresolvedReferenceEntry[] = [];
+
+  for (const location of locations) {
+    const json = cache.get(location.manifestPath);
+
+    if (!json) {
+      continue;
+    }
+
+    for (const fieldName of PACKAGE_JSON_DEPENDENCY_FIELDS) {
+      const table = json[fieldName];
+
+      if (typeof table !== "object" || table === null || Array.isArray(table)) {
+        continue;
+      }
+
+      for (const [depName, depValueRaw] of Object.entries(table as Record<string, unknown>)) {
+        const depValue = typeof depValueRaw === "string" ? depValueRaw : "";
+        const field = `${fieldName}.${depName}`;
+        const pathPrefixMatch = /^(?:file:|link:)(.+)$/.exec(depValue);
+
+        if (pathPrefixMatch) {
+          const relativeValue = pathPrefixMatch[1] ?? "";
+          const { escapesRoot, resolved } = joinUnderModuleRoot(location.moduleRoot, relativeValue);
+
+          if (escapesRoot) {
+            unresolved.push({
+              field,
+              line: null,
+              raw_target: depValue,
+              reason: "outside_project",
+              source: location.manifestPath
+            });
+            continue;
+          }
+
+          const targetModuleId = rootToModuleId.get(resolved);
+
+          if (!targetModuleId) {
+            unresolved.push({
+              field,
+              line: null,
+              raw_target: depValue,
+              reason: "target_not_found",
+              source: location.manifestPath
+            });
+            continue;
+          }
+
+          if (targetModuleId !== location.moduleId) {
+            edges.push(
+              makeManifestEdge(
+                location.moduleId,
+                targetModuleId,
+                location.manifestPath,
+                field,
+                null,
+                depValue,
+                "package_json_local_path_dependency"
+              )
+            );
+          }
+
+          continue;
+        }
+
+        const registryEntry = packageRegistry.get(depName);
+
+        if (registryEntry === "ambiguous") {
+          unresolved.push({
+            field,
+            line: null,
+            raw_target: depValue,
+            reason: "ambiguous_local_package",
+            source: location.manifestPath
+          });
+          continue;
+        }
+
+        if (typeof registryEntry === "string" && registryEntry !== location.moduleId) {
+          edges.push(
+            makeManifestEdge(
+              location.moduleId,
+              registryEntry,
+              location.manifestPath,
+              field,
+              null,
+              depValue,
+              "package_json_local_dependency"
+            )
+          );
+        }
+      }
+    }
+  }
+
+  return { edges, unresolved };
+};
+
+const analyzeComposerJsonReferences = (
+  locations: ManifestLocation[],
+  cache: Map<string, Record<string, unknown>>,
+  packageRegistry: Map<string, PackageRegistryEntry>
+): { edges: DependencyEdge[]; unresolved: UnresolvedReferenceEntry[] } => {
+  const edges: DependencyEdge[] = [];
+  const unresolved: UnresolvedReferenceEntry[] = [];
+
+  for (const location of locations) {
+    const json = cache.get(location.manifestPath);
+
+    if (!json) {
+      continue;
+    }
+
+    for (const fieldName of COMPOSER_DEPENDENCY_FIELDS) {
+      const table = json[fieldName];
+
+      if (typeof table !== "object" || table === null || Array.isArray(table)) {
+        continue;
+      }
+
+      for (const depName of Object.keys(table)) {
+        if (depName === "php" || depName.startsWith("ext-")) {
+          continue;
+        }
+
+        const field = `${fieldName}.${depName}`;
+        const registryEntry = packageRegistry.get(depName);
+
+        if (registryEntry === "ambiguous") {
+          unresolved.push({
+            field,
+            line: null,
+            raw_target: depName,
+            reason: "ambiguous_local_package",
+            source: location.manifestPath
+          });
+          continue;
+        }
+
+        if (typeof registryEntry === "string" && registryEntry !== location.moduleId) {
+          edges.push(
+            makeManifestEdge(
+              location.moduleId,
+              registryEntry,
+              location.manifestPath,
+              field,
+              null,
+              depName,
+              "composer_json_local_dependency"
+            )
+          );
+        }
+      }
+    }
+  }
+
+  return { edges, unresolved };
+};
+
+type GoRequireEntry = { line: number; modulePath: string };
+
+const extractGoRequireEntries = (
+  content: string
+): { entries: GoRequireEntry[]; hasReplace: boolean; replaceLine: number | null } => {
+  const lineOffsets = buildLineIndex(content);
+  const entries: GoRequireEntry[] = [];
+
+  const blockPattern = new RegExp(GO_REQUIRE_BLOCK_PATTERN.source, "gm");
+  let blockMatch: RegExpExecArray | null;
+
+  while ((blockMatch = blockPattern.exec(content))) {
+    const blockContent = blockMatch[1] ?? "";
+    const openParenIndex = blockMatch[0].indexOf("(\n");
+    const blockContentStart = blockMatch.index + (openParenIndex === -1 ? 0 : openParenIndex + 2);
+    const linePattern = new RegExp(GO_REQUIRE_BLOCK_LINE_PATTERN.source, "gm");
+    let lineMatch: RegExpExecArray | null;
+
+    while ((lineMatch = linePattern.exec(blockContent))) {
+      const modulePath = lineMatch[1] ?? "";
+
+      if (modulePath) {
+        entries.push({
+          line: lineNumberForOffset(lineOffsets, blockContentStart + lineMatch.index),
+          modulePath
+        });
+      }
+    }
+  }
+
+  const singlePattern = new RegExp(GO_REQUIRE_SINGLE_PATTERN.source, "gm");
+  let singleMatch: RegExpExecArray | null;
+
+  while ((singleMatch = singlePattern.exec(content))) {
+    const modulePath = singleMatch[1] ?? "";
+
+    if (modulePath) {
+      entries.push({ line: lineNumberForOffset(lineOffsets, singleMatch.index), modulePath });
+    }
+  }
+
+  const replaceMatch = GO_REPLACE_PATTERN.exec(content);
+
+  return {
+    entries,
+    hasReplace: replaceMatch !== null,
+    replaceLine: replaceMatch ? lineNumberForOffset(lineOffsets, replaceMatch.index) : null
+  };
+};
+
+const analyzeGoModReferences = (
+  locations: ManifestLocation[],
+  cache: Map<string, string>,
+  goRegistry: Map<string, GoRegistryValue>
+): { edges: DependencyEdge[]; unresolved: UnresolvedReferenceEntry[] } => {
+  const edges: DependencyEdge[] = [];
+  const unresolved: UnresolvedReferenceEntry[] = [];
+
+  for (const location of locations) {
+    const content = cache.get(location.manifestPath);
+
+    if (!content) {
+      continue;
+    }
+
+    const { entries, hasReplace, replaceLine } = extractGoRequireEntries(content);
+
+    if (hasReplace) {
+      unresolved.push({
+        field: null,
+        line: replaceLine,
+        raw_target: "replace",
+        reason: "unsupported_reference_form",
+        source: location.manifestPath
+      });
+    }
+
+    for (const entry of entries) {
+      const registryEntry = goRegistry.get(entry.modulePath);
+
+      if (registryEntry === "ambiguous") {
+        unresolved.push({
+          field: null,
+          line: entry.line,
+          raw_target: entry.modulePath,
+          reason: "ambiguous_local_module",
+          source: location.manifestPath
+        });
+        continue;
+      }
+
+      if (registryEntry && registryEntry.moduleId !== location.moduleId) {
+        edges.push(
+          makeManifestEdge(
+            location.moduleId,
+            registryEntry.moduleId,
+            location.manifestPath,
+            null,
+            entry.line,
+            entry.modulePath,
+            "go_mod_local_dependency"
+          )
+        );
+      }
+    }
+  }
+
+  return { edges, unresolved };
+};
+
+const analyzeCargoTomlReferences = (
+  locations: ManifestLocation[],
+  cache: Map<string, Record<string, unknown>>,
+  pathToModuleId: Map<string, string>,
+  classifiedPaths: Set<string>
+): { edges: DependencyEdge[]; unresolved: UnresolvedReferenceEntry[] } => {
+  const edges: DependencyEdge[] = [];
+  const unresolved: UnresolvedReferenceEntry[] = [];
+
+  for (const location of locations) {
+    const parsed = cache.get(location.manifestPath);
+
+    if (!parsed) {
+      continue;
+    }
+
+    for (const fieldName of CARGO_DEPENDENCY_FIELDS) {
+      const table = parsed[fieldName];
+
+      if (typeof table !== "object" || table === null || Array.isArray(table)) {
+        continue;
+      }
+
+      for (const [depName, depValue] of Object.entries(table as Record<string, unknown>)) {
+        if (typeof depValue !== "object" || depValue === null || Array.isArray(depValue)) {
+          continue;
+        }
+
+        const pathValue = (depValue as Record<string, unknown>).path;
+
+        if (typeof pathValue !== "string" || !pathValue.trim()) {
+          continue;
+        }
+
+        const field = `${fieldName}.${depName}.path`;
+        const { escapesRoot, resolved } = joinUnderModuleRoot(location.moduleRoot, pathValue);
+
+        if (escapesRoot) {
+          unresolved.push({
+            field,
+            line: null,
+            raw_target: pathValue,
+            reason: "outside_project",
+            source: location.manifestPath
+          });
+          continue;
+        }
+
+        const targetCargoToml = resolved === "." ? "Cargo.toml" : `${resolved}/Cargo.toml`;
+        const targetModuleId = classifiedPaths.has(targetCargoToml)
+          ? pathToModuleId.get(targetCargoToml)
+          : undefined;
+
+        if (!targetModuleId) {
+          unresolved.push({
+            field,
+            line: null,
+            raw_target: pathValue,
+            reason: "target_not_found",
+            source: location.manifestPath
+          });
+          continue;
+        }
+
+        if (targetModuleId !== location.moduleId) {
+          edges.push(
+            makeManifestEdge(
+              location.moduleId,
+              targetModuleId,
+              location.manifestPath,
+              field,
+              null,
+              pathValue,
+              "cargo_toml_local_path_dependency"
+            )
+          );
+        }
+      }
+    }
+  }
+
+  return { edges, unresolved };
+};
+
+const analyzeMsBuildReferences = (
+  locations: ManifestLocation[],
+  cache: Map<string, string>,
+  pathToModuleId: Map<string, string>,
+  classifiedPaths: Set<string>
+): { edges: DependencyEdge[]; unresolved: UnresolvedReferenceEntry[] } => {
+  const edges: DependencyEdge[] = [];
+  const unresolved: UnresolvedReferenceEntry[] = [];
+
+  for (const location of locations) {
+    const content = cache.get(location.manifestPath);
+
+    if (!content) {
+      continue;
+    }
+
+    const lineOffsets = buildLineIndex(content);
+    const pattern = new RegExp(MSBUILD_PROJECT_REFERENCE_PATTERN.source, "g");
+    let match: RegExpExecArray | null;
+
+    while ((match = pattern.exec(content))) {
+      const includeRaw = (match[1] ?? "").replace(/\\/g, "/");
+      const line = lineNumberForOffset(lineOffsets, match.index);
+      const { escapesRoot, resolved } = joinUnderModuleRoot(location.moduleRoot, includeRaw);
+
+      if (escapesRoot) {
+        unresolved.push({
+          field: null,
+          line,
+          raw_target: includeRaw,
+          reason: "outside_project",
+          source: location.manifestPath
+        });
+        continue;
+      }
+
+      const targetModuleId = classifiedPaths.has(resolved) ? pathToModuleId.get(resolved) : undefined;
+
+      if (!targetModuleId) {
+        unresolved.push({
+          field: null,
+          line,
+          raw_target: includeRaw,
+          reason: "target_not_found",
+          source: location.manifestPath
+        });
+        continue;
+      }
+
+      if (targetModuleId !== location.moduleId) {
+        edges.push(
+          makeManifestEdge(
+            location.moduleId,
+            targetModuleId,
+            location.manifestPath,
+            null,
+            line,
+            includeRaw,
+            "msbuild_project_reference"
+          )
+        );
+      }
+    }
+  }
+
+  return { edges, unresolved };
+};
+
+// --- JavaScript / TypeScript source references --------------------------------
+
+type JsTsExtraction = {
+  dynamicReferences: Array<{ line: number; rawTarget: string }>;
+  parseError: boolean;
+  references: Array<{ line: number; rawTarget: string }>;
+};
+
+const extractJsTsReferences = (
+  filePath: string,
+  sourceText: string,
+  format: NonNullable<FileFormat>
+): JsTsExtraction => {
+  const scriptKind = JS_TS_SCRIPT_KIND[format] ?? ts.ScriptKind.TS;
+  const sourceFile = ts.createSourceFile(filePath, sourceText, ts.ScriptTarget.Latest, true, scriptKind);
+  const parseDiagnostics = (sourceFile as unknown as { parseDiagnostics?: unknown[] }).parseDiagnostics;
+  const parseError = Array.isArray(parseDiagnostics) && parseDiagnostics.length > 0;
+
+  const references: Array<{ line: number; rawTarget: string }> = [];
+  const dynamicReferences: Array<{ line: number; rawTarget: string }> = [];
+  const lineOf = (pos: number): number => sourceFile.getLineAndCharacterOfPosition(pos).line + 1;
+
+  const visit = (node: ts.Node): void => {
+    if (
+      (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+      node.moduleSpecifier &&
+      ts.isStringLiteralLike(node.moduleSpecifier)
+    ) {
+      references.push({
+        line: lineOf(node.moduleSpecifier.getStart(sourceFile)),
+        rawTarget: node.moduleSpecifier.text
+      });
+    } else if (ts.isCallExpression(node)) {
+      const isRequireCall = ts.isIdentifier(node.expression) && node.expression.text === "require";
+      const isDynamicImportCall = node.expression.kind === ts.SyntaxKind.ImportKeyword;
+
+      if (isRequireCall || isDynamicImportCall) {
+        const [firstArg] = node.arguments;
+
+        if (firstArg && ts.isStringLiteralLike(firstArg)) {
+          references.push({ line: lineOf(firstArg.getStart(sourceFile)), rawTarget: firstArg.text });
+        } else {
+          dynamicReferences.push({
+            line: lineOf(node.getStart(sourceFile)),
+            rawTarget: node.getText(sourceFile).trim()
+          });
+        }
+      }
+    }
+
+    ts.forEachChild(node, visit);
+  };
+
+  visit(sourceFile);
+
+  return { dynamicReferences, parseError, references };
+};
+
+type RelativeResolution =
+  | { kind: "ambiguous" }
+  | { kind: "not_found" }
+  | { kind: "resolved"; path: string };
+
+const hasExplicitJsExtension = (target: string): boolean =>
+  JS_TS_EXTENSIONS.some((extension) => target.endsWith(extension));
+
+const resolveDirectFileCandidates = (base: string, classifiedPaths: Set<string>): RelativeResolution => {
+  const candidates = JS_TS_EXTENSIONS.map((extension) => `${base}${extension}`).filter((candidate) =>
+    classifiedPaths.has(candidate)
+  );
+
+  if (candidates.length === 1) {
+    return { kind: "resolved", path: candidates[0] as string };
+  }
+
+  return candidates.length === 0 ? { kind: "not_found" } : { kind: "ambiguous" };
+};
+
+const resolveIndexFallback = (base: string, classifiedPaths: Set<string>): RelativeResolution => {
+  const candidates = JS_TS_EXTENSIONS.map((extension) => `${base}/index${extension}`).filter(
+    (candidate) => classifiedPaths.has(candidate)
+  );
+
+  if (candidates.length === 1) {
+    return { kind: "resolved", path: candidates[0] as string };
+  }
+
+  return candidates.length === 0 ? { kind: "not_found" } : { kind: "ambiguous" };
+};
+
+const resolveJsTsRelativeTarget = async (
+  projectRootPath: string,
+  normalizedTarget: string,
+  classifiedPaths: Set<string>
+): Promise<RelativeResolution> => {
+  if (hasExplicitJsExtension(normalizedTarget)) {
+    return classifiedPaths.has(normalizedTarget)
+      ? { kind: "resolved", path: normalizedTarget }
+      : { kind: "not_found" };
+  }
+
+  const directResolution = resolveDirectFileCandidates(normalizedTarget, classifiedPaths);
+
+  if (directResolution.kind !== "not_found") {
+    return directResolution;
+  }
+
+  const packageJsonPath = `${normalizedTarget}/package.json`;
+
+  if (classifiedPaths.has(packageJsonPath)) {
+    let mainValue: string | null = null;
+
+    try {
+      const json = await readJsonFile<Record<string, unknown>>(
+        path.join(projectRootPath, packageJsonPath)
+      );
+      mainValue = typeof json.main === "string" && json.main.trim() ? json.main.trim() : null;
+    } catch {
+      mainValue = null;
+    }
+
+    if (mainValue) {
+      const { resolvedPath: mainTarget } = resolveRelativeTarget(packageJsonPath, mainValue);
+      const mainResolution = hasExplicitJsExtension(mainTarget)
+        ? classifiedPaths.has(mainTarget)
+          ? ({ kind: "resolved", path: mainTarget } as RelativeResolution)
+          : ({ kind: "not_found" } as RelativeResolution)
+        : resolveDirectFileCandidates(mainTarget, classifiedPaths);
+
+      if (mainResolution.kind !== "not_found") {
+        return mainResolution;
+      }
+    }
+  }
+
+  return resolveIndexFallback(normalizedTarget, classifiedPaths);
+};
+
+const extractJsPackageKey = (specifier: string): string => {
+  if (specifier.startsWith("@")) {
+    const segments = specifier.split("/");
+
+    return segments.length >= 2 ? `${segments[0]}/${segments[1]}` : specifier;
+  }
+
+  return specifier.split("/")[0] ?? specifier;
+};
+
+const resolveJsTsSpecifier = async (
+  projectRootPath: string,
+  sourcePath: string,
+  rawTarget: string,
+  format: NonNullable<FileFormat>,
+  classifiedPaths: Set<string>,
+  packageRegistry: Map<string, PackageRegistryEntry>
+): Promise<{ resolution: Resolution; resolver: string }> => {
+  if (rawTarget.startsWith("./") || rawTarget.startsWith("../")) {
+    const resolver = `${format}_relative`;
+
+    if (/[?#]/.test(rawTarget)) {
+      return { resolution: { kind: "unresolved", reason: "unsupported_reference_form" }, resolver };
+    }
+
+    const { escapesRoot, resolvedPath } = resolveRelativeTarget(sourcePath, rawTarget);
+
+    if (escapesRoot) {
+      return { resolution: { kind: "unresolved", reason: "outside_project" }, resolver };
+    }
+
+    const relativeResolution = await resolveJsTsRelativeTarget(
+      projectRootPath,
+      resolvedPath,
+      classifiedPaths
+    );
+
+    if (relativeResolution.kind === "resolved") {
+      return { resolution: { kind: "path", path: relativeResolution.path }, resolver };
+    }
+
+    return {
+      resolution: {
+        kind: "unresolved",
+        reason: relativeResolution.kind === "ambiguous" ? "ambiguous_target" : "target_not_found"
+      },
+      resolver
+    };
+  }
+
+  const resolver = `${format}_local_package`;
+  const packageKey = extractJsPackageKey(rawTarget);
+  const registryEntry = packageRegistry.get(packageKey);
+
+  if (registryEntry === "ambiguous") {
+    return { resolution: { kind: "unresolved", reason: "ambiguous_local_package" }, resolver };
+  }
+
+  if (typeof registryEntry === "string") {
+    return { resolution: { kind: "module", moduleId: registryEntry }, resolver };
+  }
+
+  if (rawTarget.startsWith("@/") || rawTarget.startsWith("~/") || rawTarget === "~" || rawTarget.startsWith("#")) {
+    return { resolution: { kind: "unresolved", reason: "unsupported_alias" }, resolver };
+  }
+
+  return { resolution: { kind: "external" }, resolver };
+};
+
+// --- Python source references --------------------------------------------------
+
+type PythonReferenceEntry =
+  | { dots: number; kind: "module"; line: number; tail: string }
+  | { dots: number; kind: "names"; line: number; names: string[] };
+
+const extractPythonReferences = (sourceText: string): PythonReferenceEntry[] => {
+  const masked = maskNoise(sourceText, {
+    lineCommentPrefixes: ["#"],
+    quoteChars: ['"', "'"],
+    tripleQuotes: ['"""', "'''"]
+  });
+  const lineOffsets = buildLineIndex(masked);
+  const pattern = new RegExp(PYTHON_FROM_IMPORT_PATTERN.source, "gm");
+  const results: PythonReferenceEntry[] = [];
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(masked))) {
+    const dots = (match[1] ?? "").length;
+    const tail = match[2] ?? "";
+    const namesRaw = match[3] ?? "";
+    const line = lineNumberForOffset(lineOffsets, match.index);
+
+    if (tail) {
+      results.push({ dots, kind: "module", line, tail });
+      continue;
+    }
+
+    const names = namesRaw
+      .split(",")
+      .map((part) => part.trim().split(/[ \t]+as[ \t]+/)[0]?.trim() ?? "")
+      .filter((name) => /^[A-Za-z_]\w*$/.test(name));
+
+    results.push({ dots, kind: "names", line, names });
+  }
+
+  return results;
+};
+
+const resolvePythonReference = (
+  sourcePath: string,
+  entry: PythonReferenceEntry,
+  classifiedPaths: Set<string>
+): Array<{ rawTarget: string; resolution: Resolution }> => {
+  const ascendCount = entry.dots - 1;
+  const sourceDir = path.posix.dirname(sourcePath);
+  const ascended = ascendPosixPath(sourceDir, ascendCount);
+
+  if (ascended.escapesRoot) {
+    const rawTarget = entry.kind === "module" ? entry.tail : entry.names.join(", ");
+    return [{ rawTarget, resolution: { kind: "unresolved", reason: "outside_project" } }];
+  }
+
+  const base = ascended.path;
+  const prefix = base === "." ? "" : `${base}/`;
+
+  if (entry.kind === "module") {
+    const tailPath = entry.tail.replace(/\./g, "/");
+    const candidates = [`${prefix}${tailPath}.py`, `${prefix}${tailPath}/__init__.py`].map((candidate) =>
+      path.posix.normalize(candidate)
+    );
+    const existing = candidates.filter((candidate) => classifiedPaths.has(candidate));
+
+    if (existing.length === 1) {
+      return [{ rawTarget: entry.tail, resolution: { kind: "path", path: existing[0] as string } }];
+    }
+
+    return [
+      {
+        rawTarget: entry.tail,
+        resolution: {
+          kind: "unresolved",
+          reason: existing.length === 0 ? "target_not_found" : "ambiguous_target"
+        }
+      }
+    ];
+  }
+
+  return entry.names.map((name) => {
+    const candidates = [`${prefix}${name}.py`, `${prefix}${name}/__init__.py`].map((candidate) =>
+      path.posix.normalize(candidate)
+    );
+    const existing = candidates.filter((candidate) => classifiedPaths.has(candidate));
+
+    if (existing.length === 1) {
+      return { rawTarget: name, resolution: { kind: "path", path: existing[0] as string } };
+    }
+
+    return {
+      rawTarget: name,
+      resolution: { kind: "unresolved", reason: "unsupported_reference_form" }
+    };
+  });
+};
+
+// --- PHP source references ------------------------------------------------------
+
+const parseSinglePhpUseSegment = (segment: string): { alias: string | null; namespace: string } => {
+  const asMatch = /^(.*?)[ \t]+as[ \t]+([A-Za-z_]\w*)$/.exec(segment.trim());
+
+  if (asMatch) {
+    return { alias: asMatch[2] ?? null, namespace: (asMatch[1] ?? "").trim().replace(/^\\/, "") };
+  }
+
+  return { alias: null, namespace: segment.trim().replace(/^\\/, "") };
+};
+
+const parsePhpUseStatement = (body: string): Array<{ alias: string | null; namespace: string }> => {
+  const groupMatch = /^(.*)\\\{([^}]*)\}$/.exec(body.trim());
+
+  if (groupMatch) {
+    const prefix = groupMatch[1]?.trim() ?? "";
+    const members = (groupMatch[2] ?? "")
+      .split(",")
+      .map((part) => part.trim())
+      .filter(Boolean);
+
+    return members.map((member) => parseSinglePhpUseSegment(`${prefix}\\${member}`));
+  }
+
+  return body
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => parseSinglePhpUseSegment(part));
+};
+
+const extractPhpReferences = (
+  sourceText: string
+): Array<{ line: number; namespace: string; rawTarget: string }> => {
+  const masked = maskNoise(sourceText, {
+    blockComment: ["/*", "*/"],
+    lineCommentPrefixes: ["//", "#"],
+    quoteChars: ['"', "'"]
+  });
+  const lineOffsets = buildLineIndex(masked);
+  const references: Array<{ line: number; namespace: string; rawTarget: string }> = [];
+  const pattern = new RegExp(PHP_USE_PATTERN.source, "gm");
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(masked))) {
+    const body = (match[1] ?? "").trim();
+
+    if (/^function\b/.test(body) || /^const\b/.test(body)) {
+      continue;
+    }
+
+    const line = lineNumberForOffset(lineOffsets, match.index);
+
+    for (const segment of parsePhpUseStatement(body)) {
+      if (segment.namespace) {
+        references.push({ line, namespace: segment.namespace, rawTarget: segment.namespace });
+      }
+    }
+  }
+
+  return references;
+};
+
+const resolvePsr4Namespace = (
+  namespace: string,
+  registry: Psr4Registry,
+  classifiedPaths: Set<string>
+): Resolution => {
+  const matchingPrefixes = [...registry.keys()].filter((prefix) => namespace.startsWith(prefix));
+
+  if (matchingPrefixes.length === 0) {
+    return { kind: "external" };
+  }
+
+  const longestPrefix = matchingPrefixes.reduce((best, candidate) =>
+    candidate.length > best.length ? candidate : best
+  );
+  const byModule = registry.get(longestPrefix);
+
+  if (!byModule || byModule.size === 0) {
+    return { kind: "external" };
+  }
+
+  if (byModule.size > 1) {
+    return { kind: "unresolved", reason: "ambiguous_local_namespace" };
+  }
+
+  const entry = [...byModule.values()][0] as Psr4Entry;
+  const remainder = namespace.slice(longestPrefix.length).replace(/\\+/g, "/");
+  const candidates = [...entry.baseDirs].map((baseDir) =>
+    path.posix.normalize(remainder ? `${baseDir}/${remainder}.php` : `${baseDir}.php`)
+  );
+  const existing = candidates.filter((candidate) => classifiedPaths.has(candidate));
+
+  if (existing.length === 1) {
+    return { kind: "module", moduleId: entry.moduleId };
+  }
+
+  return { kind: "unresolved", reason: existing.length === 0 ? "target_not_found" : "ambiguous_target" };
+};
+
+// --- Go source references -------------------------------------------------------
+
+const extractGoReferences = (sourceText: string): Array<{ line: number; rawTarget: string }> => {
+  const lineOffsets = buildLineIndex(sourceText);
+  const references: Array<{ line: number; rawTarget: string }> = [];
+
+  const blockPattern = new RegExp(GO_IMPORT_BLOCK_PATTERN.source, "gm");
+  let blockMatch: RegExpExecArray | null;
+
+  while ((blockMatch = blockPattern.exec(sourceText))) {
+    const blockContent = blockMatch[1] ?? "";
+    const openParenIndex = blockMatch[0].indexOf("(\n");
+    const blockContentStart = blockMatch.index + (openParenIndex === -1 ? 0 : openParenIndex + 2);
+    const linePattern = new RegExp(GO_IMPORT_BLOCK_LINE_PATTERN.source, "gm");
+    let lineMatch: RegExpExecArray | null;
+
+    while ((lineMatch = linePattern.exec(blockContent))) {
+      references.push({
+        line: lineNumberForOffset(lineOffsets, blockContentStart + lineMatch.index),
+        rawTarget: lineMatch[1] ?? ""
+      });
+    }
+  }
+
+  const singlePattern = new RegExp(GO_IMPORT_SINGLE_PATTERN.source, "gm");
+  let singleMatch: RegExpExecArray | null;
+
+  while ((singleMatch = singlePattern.exec(sourceText))) {
+    references.push({
+      line: lineNumberForOffset(lineOffsets, singleMatch.index),
+      rawTarget: singleMatch[1] ?? ""
+    });
+  }
+
+  return references;
+};
+
+const resolveGoImport = (
+  importPath: string,
+  goRegistry: Map<string, GoRegistryValue>,
+  classifiedByPath: Map<string, ClassifiedFile>
+): Resolution => {
+  const matchingModulePaths = [...goRegistry.keys()].filter(
+    (modulePath) => importPath === modulePath || importPath.startsWith(`${modulePath}/`)
+  );
+
+  if (matchingModulePaths.length === 0) {
+    return { kind: "external" };
+  }
+
+  const longest = matchingModulePaths.reduce((best, candidate) =>
+    candidate.length > best.length ? candidate : best
+  );
+  const entry = goRegistry.get(longest);
+
+  if (entry === "ambiguous") {
+    return { kind: "unresolved", reason: "ambiguous_local_module" };
+  }
+
+  if (!entry) {
+    return { kind: "external" };
+  }
+
+  const suffix = importPath === longest ? "" : importPath.slice(longest.length + 1);
+  const targetDir = path.posix.normalize(
+    suffix ? `${entry.moduleRoot === "." ? "" : `${entry.moduleRoot}/`}${suffix}` : entry.moduleRoot
+  );
+  const hasDirectGoSource = [...classifiedByPath.entries()].some(
+    ([filePath, file]) =>
+      path.posix.dirname(filePath) === targetDir && file.kind === "source" && file.format === "go"
+  );
+
+  if (!hasDirectGoSource) {
+    return { kind: "unresolved", reason: "target_not_found" };
+  }
+
+  return { kind: "module", moduleId: entry.moduleId };
+};
+
+// --- Orchestration ----------------------------------------------------------
+
+export const runMapModuleDependenciesJob = async (
+  projectRootPath: string
+): Promise<MapModuleDependenciesResult> => {
+  const reportsDir = discoveryReportsDir(projectRootPath);
+
+  let classified: ClassifiedFilesDocument;
+
+  try {
+    classified = JSON.parse(
+      await readFile(path.join(reportsDir, "CLASSIFIED_FILES.json"), "utf8")
+    ) as ClassifiedFilesDocument;
+  } catch (error) {
+    throw new Error(`Unable to read CLASSIFIED_FILES.json: ${(error as Error).message}`);
+  }
+
+  let base: ModuleMapBaseDocument;
+
+  try {
+    base = JSON.parse(
+      await readFile(path.join(reportsDir, "MODULE_MAP_BASE.json"), "utf8")
+    ) as ModuleMapBaseDocument;
+  } catch (error) {
+    throw new Error(`Unable to read MODULE_MAP_BASE.json: ${(error as Error).message}`);
+  }
+
+  if (!Array.isArray(classified.files) || !Array.isArray(base.modules)) {
+    throw new Error("Invalid structured input for map_module_dependencies.");
+  }
+
+  const pathToModuleId = new Map<string, string>();
+  const moduleIds = new Set<string>();
+
+  for (const module of base.modules) {
+    if (moduleIds.has(module.id)) {
+      throw new Error(`Duplicate module id: ${module.id}`);
+    }
+
+    moduleIds.add(module.id);
+
+    for (const filePath of module.paths) {
+      if (pathToModuleId.has(filePath)) {
+        throw new Error(`Duplicate path ownership: ${filePath}`);
+      }
+
+      pathToModuleId.set(filePath, module.id);
+    }
+  }
+
+  const classifiedByPath = new Map(classified.files.map((file) => [file.path, file]));
+
+  if (classifiedByPath.size !== classified.files.length) {
+    throw new Error("Duplicate classified path detected.");
+  }
+
+  const classifiedPaths = new Set(classifiedByPath.keys());
+  const basePaths = new Set(pathToModuleId.keys());
+
+  if (
+    classifiedPaths.size !== basePaths.size ||
+    [...classifiedPaths].some((filePath) => !basePaths.has(filePath))
+  ) {
+    throw new Error("CLASSIFIED_FILES.json and MODULE_MAP_BASE.json path sets do not match.");
+  }
+
+  const rootToModuleId = new Map(base.modules.map((module) => [module.root, module.id]));
+  const unparsedManifestPaths = new Set<string>();
+
+  const packageJsonLocations = locateModuleRootManifests(base.modules, "package.json");
+  const packageJsonCache = await readJsonManifestCache(
+    projectRootPath,
+    packageJsonLocations,
+    unparsedManifestPaths
+  );
+  const jsPackageRegistry = buildNameRegistry(packageJsonLocations, packageJsonCache);
+
+  const composerJsonLocations = locateModuleRootManifests(base.modules, "composer.json");
+  const composerJsonCache = await readJsonManifestCache(
+    projectRootPath,
+    composerJsonLocations,
+    unparsedManifestPaths
+  );
+  const composerPackageRegistry = buildNameRegistry(composerJsonLocations, composerJsonCache);
+  const psr4Registry = buildPsr4Registry(composerJsonLocations, composerJsonCache);
+
+  const goModLocations = locateModuleRootManifests(base.modules, "go.mod");
+  const goModCache = await readRawManifestCache(
+    projectRootPath,
+    goModLocations,
+    unparsedManifestPaths,
+    (content) => extractGoModuleDirective(content) !== null
+  );
+  const goModuleRegistry = buildGoModuleRegistry(goModLocations, goModCache);
+
+  const cargoTomlLocations = locateModuleRootManifests(base.modules, "Cargo.toml");
+  const cargoTomlCache = await readTomlManifestCache(
+    projectRootPath,
+    cargoTomlLocations,
+    unparsedManifestPaths
+  );
+
+  const projectFileLocations = locateModuleRootProjectFiles(base.modules);
+  const projectFileCache = await readXmlManifestCache(
+    projectRootPath,
+    projectFileLocations,
+    unparsedManifestPaths
+  );
+
+  const analyzedManifestPaths = new Set<string>([
+    ...packageJsonCache.keys(),
+    ...composerJsonCache.keys(),
+    ...goModCache.keys(),
+    ...cargoTomlCache.keys(),
+    ...projectFileCache.keys()
+  ]);
+
+  const unsupportedManifestFiles: UnsupportedManifestFile[] = [];
+
+  for (const module of base.modules) {
+    for (const unsupportedName of MODULE_DEFINING_UNSUPPORTED_MANIFEST_NAMES) {
+      const manifestPath = manifestAtModuleRoot(module, unsupportedName);
+
+      if (manifestPath) {
+        unsupportedManifestFiles.push({ path: manifestPath, reason: "unsupported_manifest_reference" });
+      }
+    }
+  }
+
+  const edges: DependencyEdge[] = [];
+  const unresolved: UnresolvedReferenceEntry[] = [];
+
+  const manifestAnalyses = [
+    analyzePackageJsonReferences(packageJsonLocations, packageJsonCache, jsPackageRegistry, rootToModuleId),
+    analyzeComposerJsonReferences(composerJsonLocations, composerJsonCache, composerPackageRegistry),
+    analyzeGoModReferences(goModLocations, goModCache, goModuleRegistry),
+    analyzeCargoTomlReferences(cargoTomlLocations, cargoTomlCache, pathToModuleId, classifiedPaths),
+    analyzeMsBuildReferences(projectFileLocations, projectFileCache, pathToModuleId, classifiedPaths)
+  ];
+
+  for (const analysis of manifestAnalyses) {
+    edges.push(...analysis.edges);
+    unresolved.push(...analysis.unresolved);
+  }
+
+  const unsupportedSourceFiles: UnsupportedSourceFile[] = [];
+  const unparsedSourceFiles: UnparsedSourceFile[] = [];
+  const analyzedSourceFiles: string[] = [];
+
+  for (const file of classified.files) {
+    if (file.kind !== "source") {
+      continue;
+    }
+
+    if (!file.format || !SUPPORTED_SOURCE_FORMATS.has(file.format)) {
+      unsupportedSourceFiles.push({ format: file.format, path: file.path, reason: "unsupported_format" });
+      continue;
+    }
+
+    const sourceModuleId = pathToModuleId.get(file.path);
+
+    if (!sourceModuleId) {
+      continue;
+    }
+
+    let sourceText: string;
+
+    try {
+      sourceText = normalizeCanonicalText(await readFile(path.join(projectRootPath, file.path), "utf8"));
+    } catch (error) {
+      throw new Error(`Unable to read source file for ${file.path}: ${(error as Error).message}`);
+    }
+
+    if (
+      file.format === "javascript" ||
+      file.format === "jsx" ||
+      file.format === "typescript" ||
+      file.format === "tsx"
+    ) {
+      const extraction = extractJsTsReferences(file.path, sourceText, file.format);
+
+      if (extraction.parseError) {
+        unparsedSourceFiles.push({ format: file.format, path: file.path, reason: "parse_error" });
+        continue;
+      }
+
+      analyzedSourceFiles.push(file.path);
+
+      for (const dynamicRef of extraction.dynamicReferences) {
+        unresolved.push({
+          field: null,
+          line: dynamicRef.line,
+          raw_target: dynamicRef.rawTarget,
+          reason: "dynamic_reference",
+          source: file.path
+        });
+      }
+
+      for (const ref of extraction.references) {
+        const resolved = await resolveJsTsSpecifier(
+          projectRootPath,
+          file.path,
+          ref.rawTarget,
+          file.format,
+          classifiedPaths,
+          jsPackageRegistry
+        );
+        applyResolution(
+          sourceModuleId,
+          resolved.resolution,
+          {
+            field: null,
+            kind: "source_reference",
+            line: ref.line,
+            rawTarget: ref.rawTarget,
+            resolver: resolved.resolver,
+            source: file.path
+          },
+          pathToModuleId,
+          edges,
+          unresolved
+        );
+      }
+
+      continue;
+    }
+
+    if (file.format === "python") {
+      analyzedSourceFiles.push(file.path);
+
+      for (const entry of extractPythonReferences(sourceText)) {
+        for (const { rawTarget, resolution } of resolvePythonReference(file.path, entry, classifiedPaths)) {
+          applyResolution(
+            sourceModuleId,
+            resolution,
+            {
+              field: null,
+              kind: "source_reference",
+              line: entry.line,
+              rawTarget,
+              resolver: "python_relative",
+              source: file.path
+            },
+            pathToModuleId,
+            edges,
+            unresolved
+          );
+        }
+      }
+
+      continue;
+    }
+
+    if (file.format === "php") {
+      analyzedSourceFiles.push(file.path);
+
+      for (const ref of extractPhpReferences(sourceText)) {
+        const resolution = resolvePsr4Namespace(ref.namespace, psr4Registry, classifiedPaths);
+        applyResolution(
+          sourceModuleId,
+          resolution,
+          {
+            field: null,
+            kind: "source_reference",
+            line: ref.line,
+            rawTarget: ref.rawTarget,
+            resolver: "php_psr4_local_namespace",
+            source: file.path
+          },
+          pathToModuleId,
+          edges,
+          unresolved
+        );
+      }
+
+      continue;
+    }
+
+    if (file.format === "go") {
+      analyzedSourceFiles.push(file.path);
+
+      for (const ref of extractGoReferences(sourceText)) {
+        const resolution = resolveGoImport(ref.rawTarget, goModuleRegistry, classifiedByPath);
+        applyResolution(
+          sourceModuleId,
+          resolution,
+          {
+            field: null,
+            kind: "source_reference",
+            line: ref.line,
+            rawTarget: ref.rawTarget,
+            resolver: "go_local_module",
+            source: file.path
+          },
+          pathToModuleId,
+          edges,
+          unresolved
+        );
+      }
+    }
+  }
+
+  const dedupedEdgesMap = new Map<string, DependencyEdge>();
+
+  for (const edge of edges) {
+    dedupedEdgesMap.set(JSON.stringify(edge), edge);
+  }
+
+  const dedupedEdges = [...dedupedEdgesMap.values()];
+
+  dedupedEdges.sort((left, right) => {
+    if (left.source_module !== right.source_module) {
+      return left.source_module < right.source_module ? -1 : 1;
+    }
+
+    if (left.target_module !== right.target_module) {
+      return left.target_module < right.target_module ? -1 : 1;
+    }
+
+    if (left.evidence.source !== right.evidence.source) {
+      return left.evidence.source < right.evidence.source ? -1 : 1;
+    }
+
+    const lineDiff = compareNullableLast(left.evidence.line, right.evidence.line);
+
+    if (lineDiff !== 0) {
+      return lineDiff;
+    }
+
+    const fieldDiff = compareNullableLast(left.evidence.field, right.evidence.field);
+
+    if (fieldDiff !== 0) {
+      return fieldDiff;
+    }
+
+    return left.evidence.raw_target < right.evidence.raw_target
+      ? -1
+      : left.evidence.raw_target > right.evidence.raw_target
+        ? 1
+        : 0;
+  });
+
+  const dependsOnByModule = new Map<string, Set<string>>();
+
+  for (const edge of dedupedEdges) {
+    const set = dependsOnByModule.get(edge.source_module) ?? new Set<string>();
+    set.add(edge.target_module);
+    dependsOnByModule.set(edge.source_module, set);
+  }
+
+  unresolved.sort((left, right) => {
+    if (left.source !== right.source) {
+      return left.source < right.source ? -1 : 1;
+    }
+
+    const lineDiff = compareNullableLast(left.line, right.line);
+
+    if (lineDiff !== 0) {
+      return lineDiff;
+    }
+
+    const fieldDiff = compareNullableLast(left.field, right.field);
+
+    if (fieldDiff !== 0) {
+      return fieldDiff;
+    }
+
+    if (left.raw_target !== right.raw_target) {
+      return left.raw_target < right.raw_target ? -1 : 1;
+    }
+
+    return left.reason < right.reason ? -1 : left.reason > right.reason ? 1 : 0;
+  });
+
+  const unparsedManifestFiles: UnparsedManifestFile[] = [...unparsedManifestPaths]
+    .sort()
+    .map((filePath) => ({ path: filePath, reason: "parse_error" }));
+
+  await mkdir(contextDir(projectRootPath), { recursive: true });
+
+  await writeJson(path.join(contextDir(projectRootPath), "MODULE_MAP.json"), {
+    analysis_coverage: {
+      analyzed_manifest_files: [...analyzedManifestPaths].sort(),
+      analyzed_source_files: [...analyzedSourceFiles].sort(),
+      unparsed_manifest_files: unparsedManifestFiles,
+      unparsed_source_files: [...unparsedSourceFiles].sort(byPath),
+      unresolved_references: unresolved,
+      unsupported_manifest_files: [...unsupportedManifestFiles].sort(byPath),
+      unsupported_source_files: [...unsupportedSourceFiles].sort(byPath)
+    },
+    dependency_edges: dedupedEdges,
+    metadata: buildMetadata(),
+    modules: base.modules.map((module) => ({
+      depends_on: [...(dependsOnByModule.get(module.id) ?? new Set<string>())].sort(),
+      description: module.description,
+      description_evidence: module.description_evidence,
+      id: module.id,
+      name: module.name,
+      paths: module.paths,
+      root: module.root,
+      summary: module.summary
+    }))
+  });
+
+  return {
+    edge_count: dedupedEdges.length,
+    module_count: base.modules.length,
+    unresolved_count: unresolved.length
   };
 };

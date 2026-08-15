@@ -38,6 +38,7 @@ import {
   prepareIndexDocumentsJob,
   runClassifyFilesJob,
   runMapDependenciesJob,
+  runMapModuleDependenciesJob,
   runScanProjectJob
 } from "../discovery/discoveryJobService";
 import {
@@ -85,6 +86,7 @@ type JobServiceOptions = {
   runCaptureGitStateJob?: typeof runCaptureGitStateJob;
   runClassifyFilesJob?: typeof runClassifyFilesJob;
   runMapDependenciesJob?: typeof runMapDependenciesJob;
+  runMapModuleDependenciesJob?: typeof runMapModuleDependenciesJob;
   runPlaceInputsJob?: typeof runPlaceInputsJob;
   runScanProjectJob?: typeof runScanProjectJob;
   runSealRunJob?: typeof runSealRunJob;
@@ -124,6 +126,8 @@ export const createJobService = (options: JobServiceOptions = {}): JobService =>
   const executeFinalizeIndexDocumentsJob =
     options.finalizeIndexDocumentsJob ?? finalizeIndexDocumentsJob;
   const executeMapDependenciesJob = options.runMapDependenciesJob ?? runMapDependenciesJob;
+  const executeMapModuleDependenciesJob =
+    options.runMapModuleDependenciesJob ?? runMapModuleDependenciesJob;
   const executePlaceInputsJob = options.runPlaceInputsJob ?? runPlaceInputsJob;
   const executePrepareBuildContextJob =
     options.prepareBuildContextJob ?? prepareBuildContextJob;
@@ -725,17 +729,53 @@ export const createJobService = (options: JobServiceOptions = {}): JobService =>
       );
       emit(request, onProgress, {
         message: "Job 4 finalized; verifying build_context.",
-        progress: 97,
+        progress: 95,
         status: "started",
         stepId: "job-4-llm"
       });
 
-      return runProviderVerification(
+      const job4Verification = await runProviderVerification(
         request,
         { build_context: buildContextResult },
         onProgress,
         "job-4-llm",
-        97,
+        95,
+        97
+      );
+      const job4Json = getLastJsonObject(job4Verification.result.outputChunks);
+
+      if (job4Json?.ok !== true) {
+        emit(request, onProgress, {
+          message: "Job 4 verification did not pass; the stage stopped.",
+          progress: 97,
+          status: "failed",
+          stepId: "job-4-llm"
+        });
+        return job4Verification;
+      }
+
+      emit(request, onProgress, {
+        message: "Job 5 started: mapping module dependencies.",
+        progress: 98,
+        status: "started",
+        stepId: "job-5-local"
+      });
+      const mapModuleDependenciesResult = await executeMapModuleDependenciesJob(
+        request.project.rootPath
+      );
+      emit(request, onProgress, {
+        message: "Job 5 local execution completed.",
+        progress: 99,
+        status: "completed",
+        stepId: "job-5-local"
+      });
+
+      return runProviderVerification(
+        request,
+        { map_module_dependencies: mapModuleDependenciesResult },
+        onProgress,
+        "job-5-llm",
+        99,
         100
       );
     }

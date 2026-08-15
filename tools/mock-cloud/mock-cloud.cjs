@@ -93,6 +93,9 @@ const MAP_DEPENDENCIES_RULE_PATH =
 const BUILD_CONTEXT_RULE_PATH =
   process.env.FORGEPILOT_DISCOVERY_BUILD_CONTEXT_RULE ??
   "C:\\Github\\aiFactory\\.ai-factory\\020-Discovery\\rules\\020-build_context.rules.md";
+const MAP_MODULE_DEPENDENCIES_RULE_PATH =
+  process.env.FORGEPILOT_DISCOVERY_MAP_MODULE_DEPENDENCIES_RULE ??
+  "C:\\Github\\aiFactory\\.ai-factory\\020-Discovery\\rules\\021-map_module_dependencies.rules.md";
 
 const sendJson = (response, statusCode, payload) => {
   response.writeHead(statusCode, {
@@ -534,7 +537,36 @@ const createBuildContextVerificationPrompt = (requestBody) => {
   ].join("\n");
 };
 
+const createMapModuleDependenciesPrompt = (requestBody) => {
+  const rule = readRule(MAP_MODULE_DEPENDENCIES_RULE_PATH);
+
+  return [
+    "--- kural (RULE-D08, 021-map_module_dependencies.rules.md) ---",
+    rule,
+    "--- kural sonu ---",
+    "",
+    `exe_result (map_module_dependencies): ${JSON.stringify(requestBody.localExecution?.map_module_dependencies ?? null)}`,
+    "",
+    "EXE MODULE_MAP.json final output'unu yazdigini iddia ediyor.",
+    "Uretim yapma, edge uretme, dosya degistirme.",
+    "",
+    "RULE-D08 Verification listesini bagimsiz uygula.",
+    "Ozellikle base-preservation, path_to_module ownership, resolver fixture'larini,",
+    "depends_on <-> dependency_edges traceability'yi ve analysis_coverage'i dogrula.",
+    "",
+    "Son satira:",
+    '{"ok":true,"job":"map_module_dependencies","verified_rules":["RULE-D08"]}',
+    "veya",
+    '{"ok":false,"job":"map_module_dependencies","failed_at":"RULE-D08","violation":"...","detail":"..."}',
+    "yaz."
+  ].join("\n");
+};
+
 const createPrompt = (requestBody) => {
+  if (requestBody.localExecution?.map_module_dependencies) {
+    return createMapModuleDependenciesPrompt(requestBody);
+  }
+
   if (requestBody.localExecution?.build_context_evidence) {
     return createBuildContextEvidencePrompt(requestBody);
   }
@@ -587,6 +619,10 @@ const createPrompt = (requestBody) => {
 };
 
 const getStageId = (requestBody) => {
+  if (requestBody.localExecution?.map_module_dependencies) {
+    return "020-discovery:map-module-dependencies";
+  }
+
   if (requestBody.localExecution?.build_context_evidence) {
     return "020-discovery:build-context-evidence";
   }

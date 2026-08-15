@@ -9,6 +9,7 @@ import {
   prepareIndexDocumentsJob,
   runClassifyFilesJob,
   runMapDependenciesJob,
+  runMapModuleDependenciesJob,
   runScanProjectJob
 } from "@services/discovery/discoveryJobService";
 
@@ -318,6 +319,102 @@ const readModuleMapBase = (tempRoot: string): Promise<ModuleMapBase> =>
 const runBuildContextJob = async (tempRoot: string, patch: unknown = {}) => {
   const preparation = await prepareBuildContextJob(tempRoot);
   return finalizeBuildContextJob(tempRoot, preparation, patch);
+};
+
+type ModuleMapEntry = ModuleMapBase["modules"][number] & { depends_on: string[] };
+
+type ModuleMap = {
+  analysis_coverage: {
+    analyzed_manifest_files: string[];
+    analyzed_source_files: string[];
+    unparsed_manifest_files: Array<{ path: string; reason: string }>;
+    unparsed_source_files: Array<{ format: string | null; path: string; reason: string }>;
+    unresolved_references: Array<{
+      field: string | null;
+      line: number | null;
+      raw_target: string;
+      reason: string;
+      source: string;
+    }>;
+    unsupported_manifest_files: Array<{ path: string; reason: string }>;
+    unsupported_source_files: Array<{ format: string | null; path: string; reason: string }>;
+  };
+  dependency_edges: Array<{
+    evidence: {
+      field: string | null;
+      kind: string;
+      line: number | null;
+      raw_target: string;
+      resolver: string;
+      source: string;
+    };
+    source_module: string;
+    target_module: string;
+  }>;
+  modules: ModuleMapEntry[];
+};
+
+const writeModuleMapBase = async (
+  tempRoot: string,
+  modules: Array<{
+    description?: string;
+    description_evidence?: unknown;
+    id: string;
+    name?: string;
+    paths: string[];
+    root: string;
+    summary?: Partial<ModuleSummaryFixture>;
+  }>
+): Promise<void> => {
+  const reportsDir = path.join(tempRoot, ...REPORTS_DIR);
+  await mkdir(reportsDir, { recursive: true });
+  await writeFile(
+    path.join(reportsDir, "MODULE_MAP_BASE.json"),
+    JSON.stringify({
+      metadata: {},
+      modules: modules.map((module) => ({
+        description: module.description ?? "UNKNOWN",
+        description_evidence: module.description_evidence ?? null,
+        id: module.id,
+        name: module.name ?? module.id,
+        paths: module.paths,
+        root: module.root,
+        summary: {
+          file_count: module.paths.length,
+          formats: [],
+          kind_counts: {},
+          signals: [],
+          ...module.summary
+        }
+      }))
+    }),
+    "utf8"
+  );
+};
+
+const readModuleMap = (tempRoot: string): Promise<ModuleMap> =>
+  readFile(path.join(tempRoot, ".ai-factory", "context", "project", "MODULE_MAP.json"), "utf8").then(
+    (content) => JSON.parse(content) as ModuleMap
+  );
+
+const writeSourceFile = async (tempRoot: string, relativePath: string, content: string): Promise<void> => {
+  const absolutePath = path.join(tempRoot, relativePath);
+  await mkdir(path.dirname(absolutePath), { recursive: true });
+  await writeFile(absolutePath, content, "utf8");
+};
+
+const setupModules = async (
+  tempRoot: string,
+  modules: Array<{ files: ClassifiedFileFixture[]; id: string; root: string }>
+): Promise<void> => {
+  await writeClassifiedFiles(
+    tempRoot,
+    modules.flatMap((module) => module.files)
+  );
+  await writeModuleMapBase(
+    tempRoot,
+    modules.map((module) => ({ id: module.id, paths: module.files.map((file) => file.path), root: module.root }))
+  );
 };
 
 describe("discoveryJobService", () => {
@@ -1290,6 +1387,439 @@ describe("discoveryJobService", () => {
 
     it("fails when structured inputs are missing", async () => {
       await expect(prepareBuildContextJob(tempRoot)).rejects.toThrow();
+    });
+  });
+
+  describe("runMapModuleDependenciesJob (RULE-D08)", () => {
+    it("resolves a relative TypeScript import across modules and derives depends_on", async () => {
+      await setupModules(tempRoot, [
+        { files: [{ format: "typescript", kind: "source", path: "web/index.ts" }], id: "web", root: "web" },
+        { files: [{ format: "typescript", kind: "source", path: "auth/index.ts" }], id: "auth", root: "auth" }
+      ]);
+      await writeSourceFile(tempRoot, "web/index.ts", 'import { login } from "../auth/index";\n');
+      await writeSourceFile(tempRoot, "auth/index.ts", "export const login = () => {};\n");
+
+      const result = await runMapModuleDependenciesJob(tempRoot);
+      const map = await readModuleMap(tempRoot);
+
+      expect(result).toEqual({ edge_count: 1, module_count: 2, unresolved_count: 0 });
+      expect(map.modules.find((module) => module.id === "web")?.depends_on).toEqual(["auth"]);
+      expect(map.dependency_edges).toEqual([
+        {
+          evidence: {
+            field: null,
+            kind: "source_reference",
+            line: 1,
+            raw_target: "../auth/index",
+            resolver: "typescript_relative",
+            source: "web/index.ts"
+          },
+          source_module: "web",
+          target_module: "auth"
+        }
+      ]);
+    });
+
+    it("reports target_not_found and ambiguous_target for unresolved relative imports", async () => {
+      await setupModules(tempRoot, [
+        {
+          files: [
+            { format: "typescript", kind: "source", path: "web/a.ts" },
+            { format: "typescript", kind: "source", path: "web/dup.ts" },
+            { format: "javascript", kind: "source", path: "web/dup.js" }
+          ],
+          id: "web",
+          root: "web"
+        }
+      ]);
+      await writeSourceFile(tempRoot, "web/a.ts", 'import "./missing";\nimport "./dup";\n');
+      await writeSourceFile(tempRoot, "web/dup.ts", "export const dup = 1;\n");
+      await writeSourceFile(tempRoot, "web/dup.js", "module.exports.dup = 1;\n");
+
+      const result = await runMapModuleDependenciesJob(tempRoot);
+      const map = await readModuleMap(tempRoot);
+
+      expect(result.unresolved_count).toBe(2);
+      expect(map.analysis_coverage.unresolved_references).toEqual([
+        { field: null, line: 1, raw_target: "./missing", reason: "target_not_found", source: "web/a.ts" },
+        { field: null, line: 2, raw_target: "./dup", reason: "ambiguous_target", source: "web/a.ts" }
+      ]);
+    });
+
+    it("does not treat import-like text inside comments or string literals as a real reference", async () => {
+      await setupModules(tempRoot, [
+        { files: [{ format: "javascript", kind: "source", path: "web/index.js" }], id: "web", root: "web" },
+        { files: [{ format: "javascript", kind: "source", path: "auth/index.js" }], id: "auth", root: "auth" }
+      ]);
+      await writeSourceFile(
+        tempRoot,
+        "web/index.js",
+        [
+          '// import auth from "../auth/index";',
+          'const note = \'import auth from "../auth/index"\';',
+          "export const web = 1;",
+          ""
+        ].join("\n")
+      );
+      await writeSourceFile(tempRoot, "auth/index.js", "export const auth = 1;\n");
+
+      const result = await runMapModuleDependenciesJob(tempRoot);
+
+      expect(result).toEqual({ edge_count: 0, module_count: 2, unresolved_count: 0 });
+    });
+
+    it("resolves a bare specifier via the local package.json name registry and flags duplicate names as ambiguous", async () => {
+      await setupModules(tempRoot, [
+        {
+          files: [
+            { format: "json", kind: "manifest", path: "web/package.json" },
+            { format: "typescript", kind: "source", path: "web/index.ts" }
+          ],
+          id: "web",
+          root: "web"
+        },
+        {
+          files: [
+            { format: "json", kind: "manifest", path: "auth/package.json" },
+            { format: "typescript", kind: "source", path: "auth/index.ts" }
+          ],
+          id: "auth",
+          root: "auth"
+        },
+        {
+          files: [
+            { format: "json", kind: "manifest", path: "dup-a/package.json" },
+            { format: "typescript", kind: "source", path: "dup-a/index.ts" }
+          ],
+          id: "dup-a",
+          root: "dup-a"
+        },
+        {
+          files: [
+            { format: "json", kind: "manifest", path: "dup-b/package.json" },
+            { format: "typescript", kind: "source", path: "dup-b/index.ts" }
+          ],
+          id: "dup-b",
+          root: "dup-b"
+        }
+      ]);
+      await writeSourceFile(tempRoot, "web/package.json", JSON.stringify({ name: "@acme/web" }));
+      await writeSourceFile(tempRoot, "auth/package.json", JSON.stringify({ name: "@acme/auth" }));
+      await writeSourceFile(tempRoot, "dup-a/package.json", JSON.stringify({ name: "@acme/dup" }));
+      await writeSourceFile(tempRoot, "dup-b/package.json", JSON.stringify({ name: "@acme/dup" }));
+      await writeSourceFile(
+        tempRoot,
+        "web/index.ts",
+        'import { login } from "@acme/auth";\nimport { x } from "@acme/dup";\n'
+      );
+      await writeSourceFile(tempRoot, "auth/index.ts", "export const login = () => {};\n");
+      await writeSourceFile(tempRoot, "dup-a/index.ts", "export const x = 1;\n");
+      await writeSourceFile(tempRoot, "dup-b/index.ts", "export const x = 2;\n");
+
+      const result = await runMapModuleDependenciesJob(tempRoot);
+      const map = await readModuleMap(tempRoot);
+
+      expect(result.edge_count).toBe(1);
+      expect(map.modules.find((module) => module.id === "web")?.depends_on).toEqual(["auth"]);
+      expect(map.analysis_coverage.unresolved_references).toEqual([
+        { field: null, line: 2, raw_target: "@acme/dup", reason: "ambiguous_local_package", source: "web/index.ts" }
+      ]);
+    });
+
+    it("resolves an extensionless relative import through package.json main before falling back to index", async () => {
+      await setupModules(tempRoot, [
+        { files: [{ format: "typescript", kind: "source", path: "web/index.ts" }], id: "web", root: "web" },
+        {
+          files: [
+            { format: "json", kind: "manifest", path: "lib/package.json" },
+            { format: "javascript", kind: "source", path: "lib/entry.js" }
+          ],
+          id: "lib",
+          root: "lib"
+        }
+      ]);
+      await writeSourceFile(tempRoot, "web/index.ts", 'import "../lib";\n');
+      await writeSourceFile(tempRoot, "lib/package.json", JSON.stringify({ main: "entry.js" }));
+      await writeSourceFile(tempRoot, "lib/entry.js", "module.exports = {};\n");
+
+      const result = await runMapModuleDependenciesJob(tempRoot);
+      const map = await readModuleMap(tempRoot);
+
+      expect(result).toEqual({ edge_count: 1, module_count: 2, unresolved_count: 0 });
+      expect(map.modules.find((module) => module.id === "web")?.depends_on).toEqual(["lib"]);
+    });
+
+    it("resolves Python relative imports, ignores absolute imports, and reports an out-of-root ascent", async () => {
+      await setupModules(tempRoot, [
+        {
+          files: [
+            { format: "python", kind: "source", path: "app/main.py" },
+            { format: "python", kind: "source", path: "app/utils.py" }
+          ],
+          id: "app",
+          root: "app"
+        }
+      ]);
+      await writeSourceFile(
+        tempRoot,
+        "app/main.py",
+        ["from .utils import helper", "from .... import too_far", "import os", ""].join("\n")
+      );
+      await writeSourceFile(tempRoot, "app/utils.py", "def helper():\n    pass\n");
+
+      const result = await runMapModuleDependenciesJob(tempRoot);
+      const map = await readModuleMap(tempRoot);
+
+      expect(result.edge_count).toBe(0);
+      expect(result.unresolved_count).toBe(1);
+      expect(map.analysis_coverage.unresolved_references).toEqual([
+        { field: null, line: 2, raw_target: "too_far", reason: "outside_project", source: "app/main.py" }
+      ]);
+      expect(map.analysis_coverage.analyzed_source_files).toEqual(["app/main.py", "app/utils.py"]);
+    });
+
+    it("resolves PHP namespaces via the longest local PSR-4 prefix", async () => {
+      await setupModules(tempRoot, [
+        {
+          files: [
+            { format: "json", kind: "manifest", path: "web/composer.json" },
+            { format: "php", kind: "source", path: "web/src/Controller.php" }
+          ],
+          id: "web",
+          root: "web"
+        },
+        {
+          files: [
+            { format: "json", kind: "manifest", path: "auth/composer.json" },
+            { format: "php", kind: "source", path: "auth/src/Service.php" }
+          ],
+          id: "auth",
+          root: "auth"
+        }
+      ]);
+      await writeSourceFile(
+        tempRoot,
+        "web/composer.json",
+        JSON.stringify({ autoload: { "psr-4": { "Acme\\Web\\": "src/" } }, name: "acme/web" })
+      );
+      await writeSourceFile(
+        tempRoot,
+        "auth/composer.json",
+        JSON.stringify({ autoload: { "psr-4": { "Acme\\Auth\\": "src/" } }, name: "acme/auth" })
+      );
+      await writeSourceFile(
+        tempRoot,
+        "web/src/Controller.php",
+        ["<?php", "", "use Acme\\Auth\\Service;", "", "class Controller {}", ""].join("\n")
+      );
+      await writeSourceFile(tempRoot, "auth/src/Service.php", "<?php\n\nclass Service {}\n");
+
+      const result = await runMapModuleDependenciesJob(tempRoot);
+      const map = await readModuleMap(tempRoot);
+
+      expect(result).toEqual({ edge_count: 1, module_count: 2, unresolved_count: 0 });
+      expect(map.modules.find((module) => module.id === "web")?.depends_on).toEqual(["auth"]);
+      expect(map.dependency_edges[0]?.evidence.resolver).toBe("php_psr4_local_namespace");
+    });
+
+    it("resolves Go imports via the local go.mod registry and requires a directly-owned source file", async () => {
+      await setupModules(tempRoot, [
+        {
+          files: [
+            { format: "plain_text", kind: "manifest", path: "web/go.mod" },
+            { format: "go", kind: "source", path: "web/main.go" }
+          ],
+          id: "web",
+          root: "web"
+        },
+        {
+          files: [
+            { format: "plain_text", kind: "manifest", path: "auth/go.mod" },
+            { format: "go", kind: "source", path: "auth/client/client.go" }
+          ],
+          id: "auth",
+          root: "auth"
+        }
+      ]);
+      await writeSourceFile(tempRoot, "web/go.mod", "module github.com/acme/web\n\ngo 1.21\n");
+      await writeSourceFile(tempRoot, "auth/go.mod", "module github.com/acme/auth\n\ngo 1.21\n");
+      await writeSourceFile(
+        tempRoot,
+        "web/main.go",
+        ["package main", "", 'import "github.com/acme/auth/client"', "", "func main() {}", ""].join("\n")
+      );
+      await writeSourceFile(tempRoot, "auth/client/client.go", "package client\n");
+
+      const result = await runMapModuleDependenciesJob(tempRoot);
+      const map = await readModuleMap(tempRoot);
+
+      expect(result).toEqual({ edge_count: 1, module_count: 2, unresolved_count: 0 });
+      expect(map.modules.find((module) => module.id === "web")?.depends_on).toEqual(["auth"]);
+      expect(map.dependency_edges[0]?.evidence).toMatchObject({
+        kind: "source_reference",
+        line: 3,
+        raw_target: "github.com/acme/auth/client",
+        resolver: "go_local_module",
+        source: "web/main.go"
+      });
+    });
+
+    it("produces manifest-reference edges from package.json and composer.json dependency tables", async () => {
+      await setupModules(tempRoot, [
+        { files: [{ format: "json", kind: "manifest", path: "web/package.json" }], id: "web", root: "web" },
+        { files: [{ format: "json", kind: "manifest", path: "auth/package.json" }], id: "auth", root: "auth" },
+        { files: [{ format: "json", kind: "manifest", path: "api/composer.json" }], id: "api", root: "api" },
+        { files: [{ format: "json", kind: "manifest", path: "billing/composer.json" }], id: "billing", root: "billing" }
+      ]);
+      await writeSourceFile(
+        tempRoot,
+        "web/package.json",
+        JSON.stringify({ dependencies: { "@acme/auth": "1.0.0" }, name: "@acme/web" })
+      );
+      await writeSourceFile(tempRoot, "auth/package.json", JSON.stringify({ name: "@acme/auth" }));
+      await writeSourceFile(
+        tempRoot,
+        "api/composer.json",
+        JSON.stringify({ name: "acme/api", require: { "acme/billing": "^1.0", php: "^8.1" } })
+      );
+      await writeSourceFile(tempRoot, "billing/composer.json", JSON.stringify({ name: "acme/billing" }));
+
+      const result = await runMapModuleDependenciesJob(tempRoot);
+      const map = await readModuleMap(tempRoot);
+
+      expect(result).toEqual({ edge_count: 2, module_count: 4, unresolved_count: 0 });
+      expect(map.modules.find((module) => module.id === "web")?.depends_on).toEqual(["auth"]);
+      expect(map.modules.find((module) => module.id === "api")?.depends_on).toEqual(["billing"]);
+      expect(map.dependency_edges.find((edge) => edge.source_module === "web")?.evidence).toMatchObject({
+        field: "dependencies.@acme/auth",
+        kind: "manifest_reference",
+        line: null,
+        resolver: "package_json_local_dependency"
+      });
+      expect(map.dependency_edges.find((edge) => edge.source_module === "api")?.evidence).toMatchObject({
+        field: "require.acme/billing",
+        kind: "manifest_reference",
+        line: null,
+        resolver: "composer_json_local_dependency"
+      });
+    });
+
+    it("produces manifest-reference edges from go.mod require, Cargo.toml path dependencies, and MSBuild ProjectReference", async () => {
+      await setupModules(tempRoot, [
+        { files: [{ format: "plain_text", kind: "manifest", path: "svc/go.mod" }], id: "svc", root: "svc" },
+        { files: [{ format: "plain_text", kind: "manifest", path: "shared/go.mod" }], id: "shared", root: "shared" },
+        { files: [{ format: "toml", kind: "manifest", path: "core/Cargo.toml" }], id: "core", root: "core" },
+        { files: [{ format: "toml", kind: "manifest", path: "utils/Cargo.toml" }], id: "utils", root: "utils" },
+        { files: [{ format: "xml", kind: "manifest", path: "App/App.csproj" }], id: "App", root: "App" },
+        { files: [{ format: "xml", kind: "manifest", path: "Shared/Shared.csproj" }], id: "Shared", root: "Shared" }
+      ]);
+      await writeSourceFile(tempRoot, "svc/go.mod", "module github.com/acme/svc\n\nrequire github.com/acme/shared v1.0.0\n");
+      await writeSourceFile(tempRoot, "shared/go.mod", "module github.com/acme/shared\n");
+      await writeSourceFile(tempRoot, "core/Cargo.toml", '[package]\nname = "core"\n\n[dependencies]\nutils = { path = "../utils" }\n');
+      await writeSourceFile(tempRoot, "utils/Cargo.toml", '[package]\nname = "utils"\n');
+      await writeSourceFile(
+        tempRoot,
+        "App/App.csproj",
+        '<Project Sdk="Microsoft.NET.Sdk">\n  <ItemGroup>\n    <ProjectReference Include="..\\Shared\\Shared.csproj" />\n  </ItemGroup>\n</Project>\n'
+      );
+      await writeSourceFile(tempRoot, "Shared/Shared.csproj", '<Project Sdk="Microsoft.NET.Sdk" />\n');
+
+      const result = await runMapModuleDependenciesJob(tempRoot);
+      const map = await readModuleMap(tempRoot);
+
+      expect(result).toEqual({ edge_count: 3, module_count: 6, unresolved_count: 0 });
+      expect(map.modules.find((module) => module.id === "svc")?.depends_on).toEqual(["shared"]);
+      expect(map.modules.find((module) => module.id === "core")?.depends_on).toEqual(["utils"]);
+      expect(map.modules.find((module) => module.id === "App")?.depends_on).toEqual(["Shared"]);
+      expect(map.dependency_edges.map((edge) => edge.evidence.resolver).sort()).toEqual([
+        "cargo_toml_local_path_dependency",
+        "go_mod_local_dependency",
+        "msbuild_project_reference"
+      ]);
+    });
+
+    it("flags dynamic require()/import() calls as unresolved without guessing a target", async () => {
+      await setupModules(tempRoot, [
+        { files: [{ format: "javascript", kind: "source", path: "web/index.js" }], id: "web", root: "web" }
+      ]);
+      await writeSourceFile(
+        tempRoot,
+        "web/index.js",
+        ["const name = './auth';", "const mod = require(name);", "export default mod;", ""].join("\n")
+      );
+
+      const result = await runMapModuleDependenciesJob(tempRoot);
+      const map = await readModuleMap(tempRoot);
+
+      expect(result).toEqual({ edge_count: 0, module_count: 1, unresolved_count: 1 });
+      expect(map.analysis_coverage.unresolved_references[0]).toMatchObject({
+        line: 2,
+        reason: "dynamic_reference",
+        source: "web/index.js"
+      });
+    });
+
+    it("records unparsable source files in coverage without inventing edges", async () => {
+      await setupModules(tempRoot, [
+        { files: [{ format: "typescript", kind: "source", path: "web/broken.ts" }], id: "web", root: "web" }
+      ]);
+      await writeSourceFile(tempRoot, "web/broken.ts", 'import { from "./oops\n');
+
+      const result = await runMapModuleDependenciesJob(tempRoot);
+      const map = await readModuleMap(tempRoot);
+
+      expect(result).toEqual({ edge_count: 0, module_count: 1, unresolved_count: 0 });
+      expect(map.analysis_coverage.unparsed_source_files).toEqual([
+        { format: "typescript", path: "web/broken.ts", reason: "parse_error" }
+      ]);
+      expect(map.analysis_coverage.analyzed_source_files).toEqual([]);
+    });
+
+    it("records unsupported source formats and unsupported module-defining manifests in coverage", async () => {
+      await setupModules(tempRoot, [
+        {
+          files: [
+            { format: "java", kind: "source", path: "svc/App.java" },
+            { format: "toml", kind: "manifest", path: "svc/pyproject.toml" }
+          ],
+          id: "svc",
+          root: "svc"
+        }
+      ]);
+      await writeSourceFile(tempRoot, "svc/App.java", "class App {}\n");
+      await writeSourceFile(tempRoot, "svc/pyproject.toml", '[project]\nname = "svc"\n');
+
+      const result = await runMapModuleDependenciesJob(tempRoot);
+      const map = await readModuleMap(tempRoot);
+
+      expect(result).toEqual({ edge_count: 0, module_count: 1, unresolved_count: 0 });
+      expect(map.analysis_coverage.unsupported_source_files).toEqual([
+        { format: "java", path: "svc/App.java", reason: "unsupported_format" }
+      ]);
+      expect(map.analysis_coverage.unsupported_manifest_files).toEqual([
+        { path: "svc/pyproject.toml", reason: "unsupported_manifest_reference" }
+      ]);
+    });
+
+    it("preserves MODULE_MAP_BASE fields and only adds depends_on/dependency_edges/analysis_coverage", async () => {
+      await setupModules(tempRoot, [
+        { files: [{ format: "typescript", kind: "source", path: "web/index.ts" }], id: "web", root: "web" }
+      ]);
+      await writeSourceFile(tempRoot, "web/index.ts", "export const a = 1;\n");
+
+      await runMapModuleDependenciesJob(tempRoot);
+
+      const base = await readModuleMapBase(tempRoot);
+      const map = await readModuleMap(tempRoot);
+
+      expect(map.modules).toEqual([{ ...base.modules[0], depends_on: [] }]);
+    });
+
+    it("throws when CLASSIFIED_FILES.json and MODULE_MAP_BASE.json path sets disagree", async () => {
+      await writeClassifiedFiles(tempRoot, [{ format: "typescript", kind: "source", path: "web/index.ts" }]);
+      await writeModuleMapBase(tempRoot, [{ id: "web", paths: ["web/other.ts"], root: "web" }]);
+
+      await expect(runMapModuleDependenciesJob(tempRoot)).rejects.toThrow();
     });
   });
 });

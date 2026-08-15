@@ -86,6 +86,11 @@ type StartupExecutionMetadata = {
     unknown_count?: number;
     user_role_count?: number;
   };
+  map_module_dependencies?: {
+    edge_count?: number;
+    module_count?: number;
+    unresolved_count?: number;
+  };
 };
 
 const isStartupExecutionMetadata = (value: unknown): value is StartupExecutionMetadata =>
@@ -612,6 +617,30 @@ export const DashboardPage = (): ReactElement => {
                 <div>
                   <dt>Output</dt>
                   <dd>PROJECT_CONTEXT.json · MODULE_MAP_BASE.json</dd>
+                </div>
+              </dl>
+            </section>
+          ) : null}
+
+          {startupExecution?.map_module_dependencies ? (
+            <section className="startup-result" aria-label="Module dependency map result">
+              <h3>Module Dependencies</h3>
+              <dl>
+                <div>
+                  <dt>Modules</dt>
+                  <dd>{startupExecution.map_module_dependencies.module_count ?? "unknown"}</dd>
+                </div>
+                <div>
+                  <dt>Dependency edges</dt>
+                  <dd>{startupExecution.map_module_dependencies.edge_count ?? "unknown"}</dd>
+                </div>
+                <div>
+                  <dt>Unresolved references</dt>
+                  <dd>{startupExecution.map_module_dependencies.unresolved_count ?? "unknown"}</dd>
+                </div>
+                <div>
+                  <dt>Output</dt>
+                  <dd>MODULE_MAP.json</dd>
                 </div>
               </dl>
             </section>

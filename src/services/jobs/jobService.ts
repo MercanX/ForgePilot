@@ -648,6 +648,35 @@ export const createJobService = (options: JobServiceOptions = {}): JobService =>
       return runProviderVerification(request, null, onProgress, "provider-verification", 30, 100);
     }
 
+    const selectRunResult = await executeSelectRunJob(request.project.rootPath, request.newRun);
+
+    if (selectRunResult.decision === "already_sealed") {
+      emit(request, onProgress, {
+        message: "A valid sealed run already exists; Job 1 was skipped and only Job 2 is re-verified.",
+        progress: 30,
+        status: "started",
+        stepId: "job-2-llm"
+      });
+
+      const sealedSelectRunVerification = await runProviderVerification(
+        request,
+        { select_run: selectRunResult },
+        onProgress,
+        "job-2-llm",
+        34,
+        100
+      );
+
+      emit(request, onProgress, {
+        message: "A valid sealed run already exists; no further jobs are needed.",
+        progress: 100,
+        status: "completed",
+        stepId: "job-2-llm"
+      });
+
+      return sealedSelectRunVerification;
+    }
+
     emit(request, onProgress, {
       message: "Job 1 started: checking factory folder and reading config.",
       progress: 22,
@@ -682,12 +711,11 @@ export const createJobService = (options: JobServiceOptions = {}): JobService =>
     }
 
     emit(request, onProgress, {
-      message: "Job 2 started: selecting the AI Factory run folder.",
+      message: `Job 2 started: selecting the AI Factory run folder (decision: ${selectRunResult.decision}).`,
       progress: 50,
       status: "started",
       stepId: "job-2-local"
     });
-    const selectRunResult = await executeSelectRunJob(request.project.rootPath, request.newRun);
     emit(request, onProgress, {
       message: `Job 2 local execution completed with decision: ${selectRunResult.decision}.`,
       progress: 58,
@@ -706,14 +734,11 @@ export const createJobService = (options: JobServiceOptions = {}): JobService =>
     );
     const selectRunJson = getLastJsonObject(selectRunVerification.result.outputChunks);
 
-    if (selectRunJson?.ok !== true || selectRunResult.decision === "already_sealed") {
+    if (selectRunJson?.ok !== true) {
       emit(request, onProgress, {
-        message:
-          selectRunResult.decision === "already_sealed"
-            ? "A valid sealed run already exists; no further jobs are needed."
-            : "Job 2 verification did not pass; the stage stopped.",
-        progress: selectRunResult.decision === "already_sealed" ? 100 : 68,
-        status: selectRunResult.decision === "already_sealed" ? "completed" : "failed",
+        message: "Job 2 verification did not pass; the stage stopped.",
+        progress: 68,
+        status: "failed",
         stepId: "job-2-llm"
       });
       return selectRunVerification;

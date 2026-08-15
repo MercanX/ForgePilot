@@ -80,6 +80,12 @@ type StartupExecutionMetadata = {
     package_count?: number;
     technology_count?: number;
   };
+  build_context?: {
+    entity_count?: number;
+    module_count?: number;
+    unknown_count?: number;
+    user_role_count?: number;
+  };
 };
 
 const isStartupExecutionMetadata = (value: unknown): value is StartupExecutionMetadata =>
@@ -578,6 +584,34 @@ export const DashboardPage = (): ReactElement => {
                 <div>
                   <dt>Output</dt>
                   <dd>DEPENDENCY_MAP.json · TECHNOLOGY_STACK.json</dd>
+                </div>
+              </dl>
+            </section>
+          ) : null}
+
+          {startupExecution?.build_context ? (
+            <section className="startup-result" aria-label="Project context result">
+              <h3>Project Context</h3>
+              <dl>
+                <div>
+                  <dt>Modules</dt>
+                  <dd>{startupExecution.build_context.module_count ?? "unknown"}</dd>
+                </div>
+                <div>
+                  <dt>Entities</dt>
+                  <dd>{startupExecution.build_context.entity_count ?? "unknown"}</dd>
+                </div>
+                <div>
+                  <dt>User roles</dt>
+                  <dd>{startupExecution.build_context.user_role_count ?? "unknown"}</dd>
+                </div>
+                <div>
+                  <dt>Unresolved fields</dt>
+                  <dd>{startupExecution.build_context.unknown_count ?? "unknown"}</dd>
+                </div>
+                <div>
+                  <dt>Output</dt>
+                  <dd>PROJECT_CONTEXT.json · MODULE_MAP_BASE.json</dd>
                 </div>
               </dl>
             </section>

@@ -3,7 +3,9 @@ import os from "node:os";
 import path from "node:path";
 
 import {
+  finalizeBuildContextJob,
   finalizeIndexDocumentsJob,
+  prepareBuildContextJob,
   prepareIndexDocumentsJob,
   runClassifyFilesJob,
   runMapDependenciesJob,
@@ -180,6 +182,142 @@ const runIndexDocumentsJob = async (
 ) => {
   const preparation = await prepareIndexDocumentsJob(tempRoot);
   return finalizeIndexDocumentsJob(tempRoot, preparation, candidates);
+};
+
+type ModuleSummaryFixture = {
+  file_count: number;
+  formats: string[];
+  kind_counts: Record<string, number>;
+  signals: string[];
+};
+
+type ModuleMapBase = {
+  modules: Array<{
+    description: string;
+    description_evidence: unknown;
+    id: string;
+    name: string;
+    paths: string[];
+    root: string;
+    summary: ModuleSummaryFixture;
+  }>;
+};
+
+type ProjectContext = {
+  assumptions: Array<{ evidence: unknown; statement: string }>;
+  business_domain: { entities: unknown[]; name: string; name_evidence: unknown };
+  modules: Array<{ description: string; description_evidence: unknown; id: string; name: string; root: string }>;
+  project: {
+    evidence: { purpose: unknown; type: unknown };
+    name: string;
+    purpose: string;
+    root_path: string;
+    type: string;
+  };
+  sources: string[];
+  technology_stack: unknown[];
+  unknowns: Array<{ field: string; reason: string }>;
+  user_roles: unknown[];
+};
+
+const writeFileInventory = async (
+  tempRoot: string,
+  files: Array<{ path: string; size?: number; vcs_status?: string }>
+): Promise<void> => {
+  const reportsDir = path.join(tempRoot, ...REPORTS_DIR);
+  await mkdir(reportsDir, { recursive: true });
+  await writeFile(
+    path.join(reportsDir, "FILE_INVENTORY.json"),
+    JSON.stringify({
+      files: files.map((file) => ({ path: file.path, size: file.size ?? 1, vcs_status: file.vcs_status ?? "unknown" })),
+      metadata: {},
+      root: ".",
+      totals: { directories: 0, files: files.length }
+    }),
+    "utf8"
+  );
+};
+
+const writeTechnologyStack = async (
+  tempRoot: string,
+  stack: Array<{ category: string; evidence: ManifestEvidence; name: string }> = []
+): Promise<void> => {
+  const reportsDir = path.join(tempRoot, ...REPORTS_DIR);
+  await mkdir(reportsDir, { recursive: true });
+  await writeFile(
+    path.join(reportsDir, "TECHNOLOGY_STACK.json"),
+    JSON.stringify({ metadata: {}, stack }),
+    "utf8"
+  );
+};
+
+const writeDomainGlossaryFixture = async (
+  tempRoot: string,
+  terms: Array<{ category: string; evidence: { excerpt: string; line: number; source: string }; term: string }> = []
+): Promise<void> => {
+  const reportsDir = path.join(tempRoot, ...REPORTS_DIR);
+  await mkdir(reportsDir, { recursive: true });
+  await writeFile(
+    path.join(reportsDir, "DOMAIN_GLOSSARY.json"),
+    JSON.stringify({ metadata: {}, terms }),
+    "utf8"
+  );
+};
+
+const writeDocumentIndexFixture = async (
+  tempRoot: string,
+  documents: Array<{ format: string; path: string }> = []
+): Promise<void> => {
+  const reportsDir = path.join(tempRoot, ...REPORTS_DIR);
+  await mkdir(reportsDir, { recursive: true });
+  await writeFile(
+    path.join(reportsDir, "DOCUMENT_INDEX.json"),
+    JSON.stringify({
+      documents: documents.map((doc) => ({
+        capabilities: { anchors: false, code_blocks: false, headings: false, links: false, tables: false },
+        format: doc.format,
+        path: doc.path
+      })),
+      metadata: {},
+      standard_documents_inventory: {}
+    }),
+    "utf8"
+  );
+};
+
+const writeBuildContextInputs = async (
+  tempRoot: string,
+  options: {
+    classified: ClassifiedFileFixture[];
+    documents?: Array<{ format: string; path: string }>;
+    glossary?: Array<{ category: string; evidence: { excerpt: string; line: number; source: string }; term: string }>;
+    inventory?: Array<{ path: string; size?: number }>;
+    technologyStack?: Array<{ category: string; evidence: ManifestEvidence; name: string }>;
+  }
+): Promise<void> => {
+  await writeClassifiedFiles(tempRoot, options.classified);
+  await writeFileInventory(
+    tempRoot,
+    options.inventory ?? options.classified.map((file) => ({ path: file.path }))
+  );
+  await writeDocumentIndexFixture(tempRoot, options.documents ?? []);
+  await writeDomainGlossaryFixture(tempRoot, options.glossary ?? []);
+  await writeTechnologyStack(tempRoot, options.technologyStack ?? []);
+};
+
+const readProjectContext = (tempRoot: string): Promise<ProjectContext> =>
+  readFile(path.join(tempRoot, ".ai-factory", "context", "project", "PROJECT_CONTEXT.json"), "utf8").then(
+    (content) => JSON.parse(content) as ProjectContext
+  );
+
+const readModuleMapBase = (tempRoot: string): Promise<ModuleMapBase> =>
+  readFile(path.join(tempRoot, ...REPORTS_DIR, "MODULE_MAP_BASE.json"), "utf8").then(
+    (content) => JSON.parse(content) as ModuleMapBase
+  );
+
+const runBuildContextJob = async (tempRoot: string, patch: unknown = {}) => {
+  const preparation = await prepareBuildContextJob(tempRoot);
+  return finalizeBuildContextJob(tempRoot, preparation, patch);
 };
 
 describe("discoveryJobService", () => {
@@ -847,6 +985,311 @@ describe("discoveryJobService", () => {
 
     it("fails when CLASSIFIED_FILES.json is missing", async () => {
       await expect(prepareIndexDocumentsJob(tempRoot)).rejects.toThrow();
+    });
+  });
+
+  describe("build_context (RULE-D04)", () => {
+    it("treats a root package.json as the sole explicit module; src/ is not a separate module", async () => {
+      await writeBuildContextInputs(tempRoot, {
+        classified: [
+          { format: "json", kind: "manifest", path: "package.json" },
+          { format: "typescript", kind: "source", path: "src/index.ts" },
+          { format: "markdown", kind: "documentation", path: "README.md" }
+        ]
+      });
+
+      await runBuildContextJob(tempRoot);
+      const moduleMap = await readModuleMapBase(tempRoot);
+
+      expect(moduleMap.modules).toHaveLength(1);
+      expect(moduleMap.modules[0]).toMatchObject({ id: "root", root: "." });
+      expect(moduleMap.modules[0]?.paths).toEqual(["README.md", "package.json", "src/index.ts"]);
+    });
+
+    it("creates two distinct nested explicit modules for packages/a and packages/b", async () => {
+      await writeBuildContextInputs(tempRoot, {
+        classified: [
+          { format: "json", kind: "manifest", path: "packages/a/package.json" },
+          { format: "typescript", kind: "source", path: "packages/a/src/index.ts" },
+          { format: "json", kind: "manifest", path: "packages/b/package.json" },
+          { format: "typescript", kind: "source", path: "packages/b/src/index.ts" }
+        ]
+      });
+
+      await runBuildContextJob(tempRoot);
+      const moduleMap = await readModuleMapBase(tempRoot);
+      const ids = moduleMap.modules.map((module) => module.id).sort();
+
+      expect(ids).toEqual(["packages/a", "packages/b"]);
+      const moduleA = moduleMap.modules.find((module) => module.id === "packages/a");
+      expect(moduleA?.paths).toEqual(["packages/a/package.json", "packages/a/src/index.ts"]);
+      expect(moduleA?.name).toBe("a");
+    });
+
+    it("still creates a root module for a documentation/config-only project; no files are dropped", async () => {
+      await writeBuildContextInputs(tempRoot, {
+        classified: [
+          { format: "markdown", kind: "documentation", path: "README.md" },
+          { format: "yaml", kind: "configuration", path: "config/settings.yaml" }
+        ]
+      });
+
+      await runBuildContextJob(tempRoot);
+      const moduleMap = await readModuleMapBase(tempRoot);
+
+      expect(moduleMap.modules).toHaveLength(1);
+      expect(moduleMap.modules[0]).toMatchObject({ id: "root", root: "." });
+      expect(moduleMap.modules[0]?.paths).toEqual(["README.md", "config/settings.yaml"]);
+    });
+
+    it("does not duplicate a nested module's file into the parent module", async () => {
+      await writeBuildContextInputs(tempRoot, {
+        classified: [
+          { format: "json", kind: "manifest", path: "package.json" },
+          { format: "json", kind: "manifest", path: "packages/orders/package.json" },
+          { format: "typescript", kind: "source", path: "packages/orders/src/index.ts" },
+          { format: "typescript", kind: "source", path: "src/app.ts" }
+        ]
+      });
+
+      await runBuildContextJob(tempRoot);
+      const moduleMap = await readModuleMapBase(tempRoot);
+      const root = moduleMap.modules.find((module) => module.id === "root");
+      const orders = moduleMap.modules.find((module) => module.id === "packages/orders");
+
+      expect(orders?.paths).toEqual(["packages/orders/package.json", "packages/orders/src/index.ts"]);
+      expect(root?.paths).toEqual(["package.json", "src/app.ts"]);
+      expect(root?.paths).not.toContain("packages/orders/src/index.ts");
+    });
+
+    it("gives apps/api and packages/api distinct ids despite the same basename", async () => {
+      await writeBuildContextInputs(tempRoot, {
+        classified: [
+          { format: "json", kind: "manifest", path: "apps/api/package.json" },
+          { format: "typescript", kind: "source", path: "apps/api/index.ts" },
+          { format: "json", kind: "manifest", path: "packages/api/package.json" },
+          { format: "typescript", kind: "source", path: "packages/api/index.ts" }
+        ]
+      });
+
+      await runBuildContextJob(tempRoot);
+      const moduleMap = await readModuleMapBase(tempRoot);
+      const ids = moduleMap.modules.map((module) => module.id).sort();
+
+      expect(ids).toEqual(["apps/api", "packages/api"]);
+    });
+
+    it("never opens a fallback module purely from a top-level dir with only documentation files", async () => {
+      await writeBuildContextInputs(tempRoot, {
+        classified: [
+          { format: "markdown", kind: "documentation", path: "docs/guide.md" },
+          { format: "typescript", kind: "source", path: "app.ts" }
+        ]
+      });
+
+      await runBuildContextJob(tempRoot);
+      const moduleMap = await readModuleMapBase(tempRoot);
+
+      expect(moduleMap.modules).toHaveLength(1);
+      expect(moduleMap.modules[0]?.id).toBe("root");
+      expect(moduleMap.modules[0]?.paths).toEqual(["app.ts", "docs/guide.md"]);
+    });
+
+    it("opens a fallback module for a top-level dir containing an eligible source/database/script file", async () => {
+      await writeBuildContextInputs(tempRoot, {
+        classified: [
+          { format: "typescript", kind: "source", path: "app.ts" },
+          { format: "typescript", kind: "source", path: "backend/server.ts" },
+          { format: "markdown", kind: "documentation", path: "backend/NOTES.md" }
+        ]
+      });
+
+      await runBuildContextJob(tempRoot);
+      const moduleMap = await readModuleMapBase(tempRoot);
+      const ids = moduleMap.modules.map((module) => module.id).sort();
+
+      expect(ids).toEqual(["backend", "root"]);
+      const backend = moduleMap.modules.find((module) => module.id === "backend");
+      expect(backend?.paths).toEqual(["backend/NOTES.md", "backend/server.ts"]);
+    });
+
+    it("does not write a depends_on field on MODULE_MAP_BASE modules", async () => {
+      await writeBuildContextInputs(tempRoot, {
+        classified: [{ format: "typescript", kind: "source", path: "app.ts" }]
+      });
+
+      await runBuildContextJob(tempRoot);
+      const moduleMap = await readModuleMapBase(tempRoot);
+
+      expect(moduleMap.modules[0]).not.toHaveProperty("depends_on");
+    });
+
+    it("keeps PROJECT_CONTEXT.modules[] and MODULE_MAP_BASE.modules[] on the same id set", async () => {
+      await writeBuildContextInputs(tempRoot, {
+        classified: [
+          { format: "json", kind: "manifest", path: "packages/a/package.json" },
+          { format: "typescript", kind: "source", path: "packages/a/src/index.ts" },
+          { format: "markdown", kind: "documentation", path: "README.md" }
+        ]
+      });
+
+      await runBuildContextJob(tempRoot);
+      const projectContext = await readProjectContext(tempRoot);
+      const moduleMap = await readModuleMapBase(tempRoot);
+
+      expect(projectContext.modules.map((module) => module.id).sort()).toEqual(
+        moduleMap.modules.map((module) => module.id).sort()
+      );
+    });
+
+    it("computes module summary file_count/kind_counts/formats/signals correctly", async () => {
+      await writeBuildContextInputs(tempRoot, {
+        classified: [
+          { format: "typescript", kind: "source", path: "user.test.ts", signals: ["test"] },
+          { format: "typescript", kind: "source", path: "app.ts" },
+          { format: "markdown", kind: "documentation", path: "README.md" }
+        ]
+      });
+
+      await runBuildContextJob(tempRoot);
+      const moduleMap = await readModuleMapBase(tempRoot);
+      const root = moduleMap.modules.find((module) => module.id === "root");
+
+      expect(root?.summary).toEqual({
+        file_count: 3,
+        formats: ["markdown", "typescript"],
+        kind_counts: { documentation: 1, source: 2 },
+        signals: ["test"]
+      });
+    });
+
+    it("copies technology_stack from TECHNOLOGY_STACK.json unchanged", async () => {
+      const stack = [{ category: "Language", evidence: { note: "n", source: "s" }, name: "TypeScript" }];
+      await writeBuildContextInputs(tempRoot, {
+        classified: [{ format: "typescript", kind: "source", path: "app.ts" }],
+        technologyStack: stack
+      });
+
+      await runBuildContextJob(tempRoot);
+      const projectContext = await readProjectContext(tempRoot);
+
+      expect(projectContext.technology_stack).toEqual(stack);
+    });
+
+    it("transplants entities only from glossary entity_name records, and roles only from role records", async () => {
+      await writeBuildContextInputs(tempRoot, {
+        classified: [{ format: "typescript", kind: "source", path: "app.ts" }],
+        glossary: [
+          { category: "entity_name", evidence: { excerpt: "An Order", line: 1, source: "domain.md" }, term: "Order" },
+          { category: "role", evidence: { excerpt: "as Admin", line: 2, source: "domain.md" }, term: "Admin" },
+          { category: "business_term", evidence: { excerpt: "checkout flow", line: 3, source: "domain.md" }, term: "checkout" }
+        ]
+      });
+
+      await runBuildContextJob(tempRoot);
+      const projectContext = await readProjectContext(tempRoot);
+
+      expect(projectContext.business_domain.entities).toEqual([
+        { evidence: { excerpt: "An Order", line: 1, source: "domain.md" }, term: "Order" }
+      ]);
+      expect(projectContext.user_roles).toEqual([
+        { evidence: { excerpt: "as Admin", line: 2, source: "domain.md" }, term: "Admin" }
+      ]);
+    });
+
+    it("accepts a semantic patch value only when its evidence excerpt genuinely occurs at source+line", async () => {
+      await writeBuildContextInputs(tempRoot, {
+        classified: [{ format: "typescript", kind: "source", path: "app.ts" }],
+        documents: [{ format: "markdown", path: "README.md" }]
+      });
+      await writeFile(path.join(tempRoot, "README.md"), "This is a CLI tool for developers.\n", "utf8");
+
+      const result = await runBuildContextJob(tempRoot, {
+        project: {
+          evidence: { type: { excerpt: "CLI tool", line: 1, source: "README.md" } },
+          type: "cli"
+        }
+      });
+      const projectContext = await readProjectContext(tempRoot);
+
+      expect(projectContext.project.type).toBe("cli");
+      expect(projectContext.project.evidence.type).toEqual({
+        excerpt: "CLI tool",
+        line: 1,
+        source: "README.md"
+      });
+      expect(projectContext.sources).toEqual(["README.md"]);
+      expect(result.unknown_count).toBe(3);
+    });
+
+    it("rejects a semantic patch value when the evidence excerpt does not occur at the claimed location, leaving it UNKNOWN", async () => {
+      await writeBuildContextInputs(tempRoot, {
+        classified: [{ format: "typescript", kind: "source", path: "app.ts" }],
+        documents: [{ format: "markdown", path: "README.md" }]
+      });
+      await writeFile(path.join(tempRoot, "README.md"), "This is a CLI tool for developers.\n", "utf8");
+
+      const result = await runBuildContextJob(tempRoot, {
+        project: {
+          evidence: { type: { excerpt: "totally fabricated text", line: 1, source: "README.md" } },
+          type: "cli"
+        }
+      });
+      const projectContext = await readProjectContext(tempRoot);
+
+      expect(projectContext.project.type).toBe("UNKNOWN");
+      expect(projectContext.unknowns).toContainEqual({
+        field: "project.type",
+        reason: "No direct evidence found in allowed sources."
+      });
+      expect(result.unknown_count).toBe(4);
+    });
+
+    it("resolves module descriptions from patch entries and marks unresolved ones UNKNOWN with an unknowns[] entry", async () => {
+      await writeBuildContextInputs(tempRoot, {
+        classified: [
+          { format: "json", kind: "manifest", path: "packages/a/package.json" },
+          { format: "typescript", kind: "source", path: "packages/a/src/index.ts" },
+          { format: "json", kind: "manifest", path: "packages/b/package.json" },
+          { format: "typescript", kind: "source", path: "packages/b/src/index.ts" }
+        ],
+        documents: [{ format: "markdown", path: "README.md" }]
+      });
+      await writeFile(path.join(tempRoot, "README.md"), "Module a handles orders.\n", "utf8");
+
+      const result = await runBuildContextJob(tempRoot, {
+        modules: [
+          {
+            description: "Module a handles orders.",
+            description_evidence: { excerpt: "Module a handles orders.", line: 1, source: "README.md" },
+            id: "packages/a"
+          }
+        ]
+      });
+      const projectContext = await readProjectContext(tempRoot);
+      const moduleA = projectContext.modules.find((module) => module.id === "packages/a");
+      const moduleB = projectContext.modules.find((module) => module.id === "packages/b");
+
+      expect(moduleA?.description).toBe("Module a handles orders.");
+      expect(moduleB?.description).toBe("UNKNOWN");
+      expect(projectContext.unknowns).toContainEqual({
+        field: "modules[packages/b].description",
+        reason: "No direct evidence found in allowed sources."
+      });
+      expect(result.unknown_count).toBe(4);
+    });
+
+    it("fails when FILE_INVENTORY.json and CLASSIFIED_FILES.json path sets do not match", async () => {
+      await writeBuildContextInputs(tempRoot, {
+        classified: [{ format: "typescript", kind: "source", path: "app.ts" }],
+        inventory: [{ path: "different.ts" }]
+      });
+
+      await expect(prepareBuildContextJob(tempRoot)).rejects.toThrow();
+    });
+
+    it("fails when structured inputs are missing", async () => {
+      await expect(prepareBuildContextJob(tempRoot)).rejects.toThrow();
     });
   });
 });

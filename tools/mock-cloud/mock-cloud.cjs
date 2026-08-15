@@ -1,12 +1,43 @@
 const http = require("node:http");
+const os = require("node:os");
+const path = require("node:path");
 const { randomUUID } = require("node:crypto");
-const { readFileSync } = require("node:fs");
+const { readFileSync, writeFileSync } = require("node:fs");
 
 const PORT = Number(process.env.FORGEPILOT_MOCK_CLOUD_PORT ?? 4317);
 const jobs = new Map();
-const passedStageJobsByProject = new Map();
 const STARTUP_SEAL_STAGE_ID = "010-startup:seal-run";
 const DISCOVERY_CLASSIFY_STAGE_ID = "020-discovery:classify-files";
+
+// Persisted to disk (not just in-memory) so that stage-completion status
+// survives a mock-cloud restart. This process is restarted frequently during
+// development; losing this state made already-sealed/already-completed
+// stages look "not done" again in the dashboard, inviting redundant reruns.
+const STATE_FILE_PATH =
+  process.env.FORGEPILOT_MOCK_CLOUD_STATE_FILE ??
+  path.join(os.tmpdir(), "forgepilot-mock-cloud-state.json");
+
+const loadPassedStageJobsByProject = () => {
+  try {
+    const raw = JSON.parse(readFileSync(STATE_FILE_PATH, "utf8"));
+    return new Map(Object.entries(raw).map(([projectId, stageJobKeys]) => [projectId, new Set(stageJobKeys)]));
+  } catch {
+    return new Map();
+  }
+};
+
+const passedStageJobsByProject = loadPassedStageJobsByProject();
+
+const persistPassedStageJobsByProject = () => {
+  try {
+    const serializable = Object.fromEntries(
+      [...passedStageJobsByProject].map(([projectId, stageJobKeys]) => [projectId, [...stageJobKeys]])
+    );
+    writeFileSync(STATE_FILE_PATH, JSON.stringify(serializable), "utf8");
+  } catch {
+    // Best-effort persistence; a write failure should not crash the mock server.
+  }
+};
 
 const getProjectStageSet = (projectId) =>
   (projectId && passedStageJobsByProject.get(projectId)) || new Set();
@@ -21,6 +52,7 @@ const markStagePassed = (projectId, stageJobKey) => {
   }
 
   passedStageJobsByProject.get(projectId).add(stageJobKey);
+  persistPassedStageJobsByProject();
 };
 const CHECK_FACTORY_RULE_PATH =
   process.env.FORGEPILOT_STARTUP_CHECK_FACTORY_RULE ??
@@ -58,6 +90,9 @@ const INDEX_DOCUMENTS_RULE_PATH =
 const MAP_DEPENDENCIES_RULE_PATH =
   process.env.FORGEPILOT_DISCOVERY_MAP_DEPENDENCIES_RULE ??
   "C:\\Github\\aiFactory\\.ai-factory\\020-Discovery\\rules\\017-map_dependencies.rules.md";
+const BUILD_CONTEXT_RULE_PATH =
+  process.env.FORGEPILOT_DISCOVERY_BUILD_CONTEXT_RULE ??
+  "C:\\Github\\aiFactory\\.ai-factory\\020-Discovery\\rules\\020-build_context.rules.md";
 
 const sendJson = (response, statusCode, payload) => {
   response.writeHead(statusCode, {
@@ -434,7 +469,80 @@ const createIndexDocumentsAndMapDependenciesVerificationPrompt = (requestBody) =
   ].join("\n");
 };
 
+const createBuildContextEvidencePrompt = (requestBody) => {
+  const rule = readRule(BUILD_CONTEXT_RULE_PATH);
+  const evidence = requestBody.localExecution?.build_context_evidence ?? {};
+  const documents = evidence.documents ?? [];
+  const canonicalView = documents
+    .map((doc) => {
+      const numberedLines = (doc.lines ?? []).map((line, index) => `${index + 1}: ${line}`).join("\n");
+      return `--- document (${doc.source}) ---\n${numberedLines}\n--- document sonu ---`;
+    })
+    .join("\n\n");
+
+  return [
+    "--- kural (RULE-D04, 020-build_context.rules.md) ---",
+    rule,
+    "--- kural sonu ---",
+    "",
+    "Asagidaki bounded semantic evidence view uzerinden yalniz RULE-D04'un izin",
+    "verdigi semantic alanlar icin structured JSON patch uret:",
+    "project.type, project.purpose, business_domain.name, assumptions[], modules[].description.",
+    "",
+    `modules: ${JSON.stringify(evidence.modules ?? [])}`,
+    `manifest_descriptions: ${JSON.stringify(evidence.manifestDescriptionCandidates ?? [])}`,
+    `glossary_business_terms: ${JSON.stringify(evidence.businessTerms ?? [])}`,
+    "",
+    canonicalView,
+    "",
+    "Deterministik alanlari degistirme.",
+    "Kanitsiz deger uretme; kanit yoksa RULE-D04'te tanimlandigi gibi UNKNOWN/[] kullan.",
+    "Filesystem'e yazma.",
+    "Baska top-level/semantic alan uretme.",
+    "",
+    "Yalniz JSON dondur:",
+    '{"project":{"type":"...","purpose":"...","evidence":{"type":{...},"purpose":{...}}},' +
+      '"business_domain":{"name":"...","name_evidence":{...}},' +
+      '"assumptions":[{"statement":"...","evidence":{...}}],' +
+      '"modules":[{"id":"...","description":"...","description_evidence":{...}}]}'
+  ].join("\n");
+};
+
+const createBuildContextVerificationPrompt = (requestBody) => {
+  const rule = readRule(BUILD_CONTEXT_RULE_PATH);
+
+  return [
+    "--- kural (RULE-D04, 020-build_context.rules.md) ---",
+    rule,
+    "--- kural sonu ---",
+    "",
+    `exe_result (build_context): ${JSON.stringify(requestBody.localExecution?.build_context ?? null)}`,
+    "",
+    "EXE PROJECT_CONTEXT.json ve MODULE_MAP_BASE.json final output'larini yazdigini iddia ediyor.",
+    "Uretim yapma, dosya degistirme.",
+    "RULE-D04 Verification listesini bagimsiz uygula.",
+    "",
+    "Ozellikle canonical module ownership, root/fallback/catch-all davranisi,",
+    "PROJECT_CONTEXT <-> MODULE_MAP_BASE id esitligi, technology exact copy ve",
+    "semantic evidence/UNKNOWN invariant'larini dogrula.",
+    "",
+    "Son satira:",
+    '{"ok":true,"job":"build_context","verified_rules":["RULE-D04"]}',
+    "veya",
+    '{"ok":false,"job":"build_context","failed_at":"RULE-D04","violation":"...","detail":"..."}',
+    "yaz."
+  ].join("\n");
+};
+
 const createPrompt = (requestBody) => {
+  if (requestBody.localExecution?.build_context_evidence) {
+    return createBuildContextEvidencePrompt(requestBody);
+  }
+
+  if (requestBody.localExecution?.build_context) {
+    return createBuildContextVerificationPrompt(requestBody);
+  }
+
   if (requestBody.localExecution?.index_documents_candidates) {
     return createIndexDocumentsCandidatesPrompt(requestBody);
   }
@@ -479,6 +587,14 @@ const createPrompt = (requestBody) => {
 };
 
 const getStageId = (requestBody) => {
+  if (requestBody.localExecution?.build_context_evidence) {
+    return "020-discovery:build-context-evidence";
+  }
+
+  if (requestBody.localExecution?.build_context) {
+    return "020-discovery:build-context";
+  }
+
   if (requestBody.localExecution?.index_documents_candidates) {
     return "020-discovery:index-documents-candidates";
   }

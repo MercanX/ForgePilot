@@ -2,6 +2,12 @@
 
 ## 2026-08-15
 
+- Added a "Project Context" section to the dashboard startup results, displaying module, entity, user role, and unresolved field counts.
+- Implemented build context preparation service that analyzes file inventories, classifies files into modules, and extracts manifest descriptions.
+- Added build context finalization service that validates semantic evidence and generates PROJECT_CONTEXT.json with resolved project type, purpose, and domain information.
+- Introduced module assignment logic that groups files by manifest roots with fallback to top-level directories.
+- Added support for extracting and validating descriptions from common manifest formats including package.json, composer.json, pyproject.toml, and Cargo.toml.
+
 - Added project-scoped stage completion tracking in the mock cloud server to prevent cross-project state leakage.
 - Extended the `/workflows/current` endpoint with a `projectId` query parameter for project-specific workflow stage responses.
 - Associated job submissions and verification results with their project ID for accurate stage status reporting.

@@ -959,14 +959,32 @@ describe("jobService", () => {
       missing_document_count: 0,
       reference_count: 0
     };
+    const buildContextPreparationResult = {
+      businessTerms: [],
+      documents: [],
+      entities: [],
+      manifestDescriptionCandidates: [],
+      modules: [{ id: "root", name: "root", paths: [], root: ".", summary: { file_count: 0, formats: [], kind_counts: {}, signals: [] } }],
+      projectName: "ForgePilot",
+      technologyStack: [],
+      userRoles: []
+    };
+    const buildContextResult = {
+      entity_count: 0,
+      module_count: 1,
+      unknown_count: 4,
+      user_role_count: 0
+    };
 
-    it("runs Job 1-3 through to the index_documents+map_dependencies verification when everything passes", async () => {
+    it("runs Job 1-4 through to the build_context verification when everything passes", async () => {
       const requestedLocalExecutions: unknown[] = [];
       const jobIds = [
         "11111111-1111-4111-8111-111111111111",
         "55555555-5555-4555-8555-555555555555",
         "22222222-2222-4222-8222-222222222222",
-        "33333333-3333-4333-8333-333333333333"
+        "33333333-3333-4333-8333-333333333333",
+        "44444444-4444-4444-8444-444444444444",
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
       ];
       let jobCounter = 0;
       const postMock = vi.fn((path: string, body: unknown): Promise<unknown> => {
@@ -1009,13 +1027,17 @@ describe("jobService", () => {
         "66666666-6666-4666-8666-666666666666",
         "77777777-7777-4777-8777-777777777777",
         "88888888-8888-4888-8888-888888888888",
-        "99999999-9999-4999-8999-999999999999"
+        "99999999-9999-4999-8999-999999999999",
+        "aaaaaaaa-bbbb-4aaa-8aaa-aaaaaaaaaaaa",
+        "cccccccc-dddd-4ccc-8ccc-cccccccccccc"
       ];
       const taskOutputs = [
         '{"ok":true,"job":"scan_project","verified_rules":["RULE-D01"]}\n',
         '{"ok":true,"job":"classify_files","verified_rules":["RULE-D02"]}\n',
         '{"candidates":[]}\n',
-        '{"ok":true,"job":"index_documents_and_map_dependencies","verified_rules":["RULE-D03","RULE-D09"]}\n'
+        '{"ok":true,"job":"index_documents_and_map_dependencies","verified_rules":["RULE-D03","RULE-D09"]}\n',
+        "{}\n",
+        '{"ok":true,"job":"build_context","verified_rules":["RULE-D04"]}\n'
       ];
       let startCounter = 0;
       const taskService: TaskExecutionService = {
@@ -1070,7 +1092,9 @@ describe("jobService", () => {
       };
       const service = createJobService({
         createClient: () => client,
+        finalizeBuildContextJob: vi.fn(() => Promise.resolve(buildContextResult)),
         finalizeIndexDocumentsJob: vi.fn(() => Promise.resolve(indexDocumentsResult)),
+        prepareBuildContextJob: vi.fn(() => Promise.resolve(buildContextPreparationResult)),
         prepareIndexDocumentsJob: vi.fn(() => Promise.resolve(preparationResult)),
         runClassifyFilesJob: vi.fn(() => Promise.resolve(classifyFilesResult)),
         runMapDependenciesJob: vi.fn(() => Promise.resolve(mapDependenciesResult)),
@@ -1088,15 +1112,28 @@ describe("jobService", () => {
         timeoutMs: 1_000
       });
 
-      expect(taskService.start).toHaveBeenCalledTimes(4);
+      expect(taskService.start).toHaveBeenCalledTimes(6);
       expect(requestedLocalExecutions).toEqual([
         { scan_project: scanProjectResult },
         { classify_files: classifyFilesResult },
         { index_documents_candidates: preparationResult.candidateDocuments },
-        { index_documents: indexDocumentsResult, map_dependencies: mapDependenciesResult }
+        { index_documents: indexDocumentsResult, map_dependencies: mapDependenciesResult },
+        {
+          build_context_evidence: {
+            businessTerms: buildContextPreparationResult.businessTerms,
+            documents: buildContextPreparationResult.documents,
+            manifestDescriptionCandidates: buildContextPreparationResult.manifestDescriptionCandidates,
+            modules: buildContextPreparationResult.modules.map((module) => ({
+              id: module.id,
+              name: module.name,
+              root: module.root
+            }))
+          }
+        },
+        { build_context: buildContextResult }
       ]);
       expect(response.result.outputChunks.at(-1)?.text).toContain(
-        '"job":"index_documents_and_map_dependencies"'
+        '"job":"build_context"'
       );
     });
 

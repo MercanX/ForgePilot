@@ -31,8 +31,10 @@ import type { ProviderId } from "@shared/schemas/provider";
 
 import { createHttpClient, type HttpClient } from "../api/httpClient";
 import {
+  finalizeBuildContextJob,
   finalizeIndexDocumentsJob,
   type GlossaryCandidateInput,
+  prepareBuildContextJob,
   prepareIndexDocumentsJob,
   runClassifyFilesJob,
   runMapDependenciesJob,
@@ -72,7 +74,9 @@ export type JobRunProgressListener = (event: JobRunProgressEvent) => void;
 type JobServiceOptions = {
   createClient?: (serverUrl: string) => HttpClient;
   desktopVersion?: string;
+  finalizeBuildContextJob?: typeof finalizeBuildContextJob;
   finalizeIndexDocumentsJob?: typeof finalizeIndexDocumentsJob;
+  prepareBuildContextJob?: typeof prepareBuildContextJob;
   prepareIndexDocumentsJob?: typeof prepareIndexDocumentsJob;
   runBuildFactoryManifestJob?: typeof runBuildFactoryManifestJob;
   runBuildSourceManifestJob?: typeof runBuildSourceManifestJob;
@@ -113,10 +117,14 @@ export const createJobService = (options: JobServiceOptions = {}): JobService =>
     options.runBuildSourceManifestJob ?? runBuildSourceManifestJob;
   const executeCaptureGitStateJob = options.runCaptureGitStateJob ?? runCaptureGitStateJob;
   const executeClassifyFilesJob = options.runClassifyFilesJob ?? runClassifyFilesJob;
+  const executeFinalizeBuildContextJob =
+    options.finalizeBuildContextJob ?? finalizeBuildContextJob;
   const executeFinalizeIndexDocumentsJob =
     options.finalizeIndexDocumentsJob ?? finalizeIndexDocumentsJob;
   const executeMapDependenciesJob = options.runMapDependenciesJob ?? runMapDependenciesJob;
   const executePlaceInputsJob = options.runPlaceInputsJob ?? runPlaceInputsJob;
+  const executePrepareBuildContextJob =
+    options.prepareBuildContextJob ?? prepareBuildContextJob;
   const executePrepareIndexDocumentsJob =
     options.prepareIndexDocumentsJob ?? prepareIndexDocumentsJob;
   const executeScanProjectJob = options.runScanProjectJob ?? runScanProjectJob;
@@ -358,7 +366,7 @@ export const createJobService = (options: JobServiceOptions = {}): JobService =>
     stepId: string,
     progressStarted: number,
     progressCompleted: number
-  ): Promise<{ candidates: unknown[]; response: JobRunResponse }> => {
+  ): Promise<{ patch: unknown; response: JobRunResponse }> => {
     const outputChunks: ProviderOutputChunk[] = [];
     onProgress?.({
       message: "Requesting LLM semantic-production job from the cloud.",
@@ -441,8 +449,7 @@ export const createJobService = (options: JobServiceOptions = {}): JobService =>
         submitResponse.findings,
         request.serverUrl
       );
-      const parsed = getLastJsonObject(outputChunks) as { candidates?: unknown } | null;
-      const candidates = Array.isArray(parsed?.candidates) ? parsed.candidates : [];
+      const patch = getLastJsonObject(outputChunks);
 
       onProgress?.({
         message:
@@ -457,7 +464,7 @@ export const createJobService = (options: JobServiceOptions = {}): JobService =>
       });
 
       return {
-        candidates,
+        patch,
         response: {
           job,
           result,
@@ -609,7 +616,7 @@ export const createJobService = (options: JobServiceOptions = {}): JobService =>
       ]);
       emit(request, onProgress, {
         message: "Job 3 local execution completed; requesting domain glossary candidates.",
-        progress: 88,
+        progress: 84,
         status: "completed",
         stepId: "job-3-local"
       });
@@ -619,27 +626,94 @@ export const createJobService = (options: JobServiceOptions = {}): JobService =>
         { index_documents_candidates: indexDocumentsPreparation.candidateDocuments },
         onProgress,
         "job-3-semantic",
-        88,
-        92
+        84,
+        86
       );
+      const glossaryPatch = glossarySemantic.patch as { candidates?: unknown } | null;
+      const glossaryCandidates = Array.isArray(glossaryPatch?.candidates) ? glossaryPatch.candidates : [];
       const indexDocumentsResult = await executeFinalizeIndexDocumentsJob(
         request.project.rootPath,
         indexDocumentsPreparation,
-        glossarySemantic.candidates as GlossaryCandidateInput[]
+        glossaryCandidates as GlossaryCandidateInput[]
       );
       emit(request, onProgress, {
         message: "Job 3 finalized; verifying index_documents and map_dependencies.",
-        progress: 94,
+        progress: 87,
         status: "started",
         stepId: "job-3-llm"
       });
 
-      return runProviderVerification(
+      const job3Verification = await runProviderVerification(
         request,
         { index_documents: indexDocumentsResult, map_dependencies: mapDependenciesResult },
         onProgress,
         "job-3-llm",
+        87,
+        90
+      );
+      const job3Json = getLastJsonObject(job3Verification.result.outputChunks);
+
+      if (job3Json?.ok !== true) {
+        emit(request, onProgress, {
+          message: "Job 3 verification did not pass; the stage stopped.",
+          progress: 90,
+          status: "failed",
+          stepId: "job-3-llm"
+        });
+        return job3Verification;
+      }
+
+      emit(request, onProgress, {
+        message: "Job 4 started: building project context.",
+        progress: 92,
+        status: "started",
+        stepId: "job-4-local"
+      });
+      const buildContextPreparation = await executePrepareBuildContextJob(request.project.rootPath);
+      emit(request, onProgress, {
+        message: "Job 4 local execution completed; requesting semantic context resolution.",
+        progress: 94,
+        status: "completed",
+        stepId: "job-4-local"
+      });
+
+      const buildContextSemantic = await runProviderSemantic(
+        request,
+        {
+          build_context_evidence: {
+            businessTerms: buildContextPreparation.businessTerms,
+            documents: buildContextPreparation.documents,
+            manifestDescriptionCandidates: buildContextPreparation.manifestDescriptionCandidates,
+            modules: buildContextPreparation.modules.map((module) => ({
+              id: module.id,
+              name: module.name,
+              root: module.root
+            }))
+          }
+        },
+        onProgress,
+        "job-4-semantic",
         94,
+        96
+      );
+      const buildContextResult = await executeFinalizeBuildContextJob(
+        request.project.rootPath,
+        buildContextPreparation,
+        buildContextSemantic.patch
+      );
+      emit(request, onProgress, {
+        message: "Job 4 finalized; verifying build_context.",
+        progress: 97,
+        status: "started",
+        stepId: "job-4-llm"
+      });
+
+      return runProviderVerification(
+        request,
+        { build_context: buildContextResult },
+        onProgress,
+        "job-4-llm",
+        97,
         100
       );
     }

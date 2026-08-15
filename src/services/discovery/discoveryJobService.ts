@@ -1808,3 +1808,785 @@ export const finalizeIndexDocumentsJob = async (
     reference_count: preparation.references.length
   };
 };
+
+// ---------------------------------------------------------------------------
+// RULE-D04 — build_context
+// ---------------------------------------------------------------------------
+
+export type BuildContextResult = {
+  entity_count: number;
+  module_count: number;
+  unknown_count: number;
+  user_role_count: number;
+};
+
+type SemanticEvidence =
+  | { excerpt: string; field: string; source: string }
+  | { excerpt: string; line: number; source: string };
+
+type ModuleSummary = {
+  file_count: number;
+  formats: FileFormat[];
+  kind_counts: Record<string, number>;
+  signals: FileSignal[];
+};
+
+type ModuleBaseEntry = {
+  id: string;
+  name: string;
+  paths: string[];
+  root: string;
+  summary: ModuleSummary;
+};
+
+type ManifestDescriptionCandidate = {
+  field: string;
+  moduleId: string;
+  source: string;
+  value: string;
+};
+
+type GlossaryTransplant = {
+  evidence: { excerpt: string; line: number; source: string };
+  term: string;
+};
+
+export type BuildContextEvidenceDocument = {
+  lines: string[];
+  source: string;
+};
+
+export type BuildContextPreparation = {
+  businessTerms: GlossaryTransplant[];
+  documents: BuildContextEvidenceDocument[];
+  entities: GlossaryTransplant[];
+  manifestDescriptionCandidates: ManifestDescriptionCandidate[];
+  modules: ModuleBaseEntry[];
+  projectName: string;
+  technologyStack: TechnologyStackEntry[];
+  userRoles: GlossaryTransplant[];
+};
+
+type FileInventoryDocument = {
+  files: Array<{ path: string; size: number; vcs_status: VcsStatus }>;
+  root: string;
+  totals: { directories: number; files: number };
+};
+
+type TechnologyStackDocument = {
+  metadata: Record<string, unknown>;
+  stack: TechnologyStackEntry[];
+};
+
+type DocumentIndexDocument = {
+  documents: Array<{ capabilities: DocumentCapabilities; format: FileFormat; path: string }>;
+  metadata: Record<string, unknown>;
+  standard_documents_inventory: Record<string, { paths: string[]; present: boolean }>;
+};
+
+type DomainGlossaryDocument = {
+  metadata: Record<string, unknown>;
+  terms: GlossaryTerm[];
+};
+
+const PROJECT_TYPES = new Set([
+  "application",
+  "service",
+  "library",
+  "cli",
+  "monorepo",
+  "infrastructure",
+  "UNKNOWN"
+]);
+const MODULE_DEFINING_MANIFEST_EXACT_NAMES = new Set([
+  "package.json",
+  "composer.json",
+  "pyproject.toml",
+  "Cargo.toml",
+  "go.mod",
+  "pom.xml",
+  "build.gradle",
+  "build.gradle.kts",
+  "Gemfile",
+  "Pipfile"
+]);
+const MODULE_DEFINING_MANIFEST_EXTENSIONS = new Set([".csproj", ".fsproj", ".vbproj"]);
+const MODULE_ROOT_FALLBACK_KINDS = new Set<FileKind>(["source", "database", "script"]);
+const CANONICAL_SIGNAL_ORDER: FileSignal[] = ["test", "migration", "seed", "infrastructure"];
+const UNRESOLVED_REASON = "No direct evidence found in allowed sources.";
+const CONTEXT_DIR_SEGMENTS = [".ai-factory", "context", "project"];
+const MANIFEST_DESCRIPTION_JSON_NAMES = new Set(["package.json", "composer.json"]);
+
+const contextDir = (projectRootPath: string): string =>
+  path.join(projectRootPath, ...CONTEXT_DIR_SEGMENTS);
+
+const isModuleDefiningManifestPath = (filePath: string): boolean => {
+  const base = path.posix.basename(filePath);
+
+  if (MODULE_DEFINING_MANIFEST_EXACT_NAMES.has(base)) {
+    return true;
+  }
+
+  return MODULE_DEFINING_MANIFEST_EXTENSIONS.has(path.posix.extname(base));
+};
+
+const moduleRootOf = (filePath: string): string => {
+  const dir = path.posix.dirname(filePath);
+
+  return dir === "." ? "." : dir;
+};
+
+const isPathUnderModuleRoot = (filePath: string, root: string): boolean =>
+  root === "." || filePath === root || filePath.startsWith(`${root}/`);
+
+const moduleRootDepth = (root: string): number => (root === "." ? 0 : root.split("/").length);
+
+const readNestedString = (source: unknown, keys: string[]): string | null => {
+  let current: unknown = source;
+
+  for (const key of keys) {
+    if (typeof current !== "object" || current === null) {
+      return null;
+    }
+
+    current = (current as Record<string, unknown>)[key];
+  }
+
+  return typeof current === "string" && current.trim() ? current : null;
+};
+
+const readManifestDescription = async (
+  projectRootPath: string,
+  manifestPath: string
+): Promise<string | null> => {
+  const base = path.posix.basename(manifestPath);
+  const absolutePath = path.join(projectRootPath, manifestPath);
+
+  try {
+    if (MANIFEST_DESCRIPTION_JSON_NAMES.has(base)) {
+      const json = await readJsonFile<Record<string, unknown>>(absolutePath);
+
+      return typeof json.description === "string" && json.description.trim() ? json.description : null;
+    }
+
+    if (base === "pyproject.toml") {
+      const raw = await readFile(absolutePath, "utf8");
+      const parsed = parseToml(raw);
+
+      return (
+        readNestedString(parsed, ["project", "description"]) ??
+        readNestedString(parsed, ["tool", "poetry", "description"])
+      );
+    }
+
+    if (base === "Cargo.toml") {
+      const raw = await readFile(absolutePath, "utf8");
+      const parsed = parseToml(raw);
+
+      return readNestedString(parsed, ["package", "description"]);
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+};
+
+const dedupeGlossaryTransplants = (terms: GlossaryTerm[]): GlossaryTransplant[] => {
+  const seen = new Set<string>();
+  const result: GlossaryTransplant[] = [];
+
+  for (const term of terms) {
+    const key = `${term.term.toLowerCase()} ${term.evidence.source} ${term.evidence.line}`;
+
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    result.push({ evidence: term.evidence, term: term.term });
+  }
+
+  result.sort((left, right) => {
+    const leftKey = left.term.toLowerCase();
+    const rightKey = right.term.toLowerCase();
+
+    if (leftKey !== rightKey) {
+      return leftKey < rightKey ? -1 : 1;
+    }
+
+    if (left.evidence.source !== right.evidence.source) {
+      return left.evidence.source < right.evidence.source ? -1 : 1;
+    }
+
+    return left.evidence.line - right.evidence.line;
+  });
+
+  return result;
+};
+
+const findLineText = (
+  documents: BuildContextEvidenceDocument[],
+  source: string,
+  line: number
+): string | null => {
+  const document = documents.find((candidate) => candidate.source === source);
+  const text = document?.lines[line - 1];
+
+  return typeof text === "string" ? text : null;
+};
+
+const findManifestFieldValue = (
+  candidates: ManifestDescriptionCandidate[],
+  source: string,
+  field: string
+): string | null => {
+  const candidate = candidates.find((entry) => entry.source === source && entry.field === field);
+
+  return candidate ? candidate.value : null;
+};
+
+const validateSemanticEvidence = (
+  raw: unknown,
+  documents: BuildContextEvidenceDocument[],
+  manifestCandidates: ManifestDescriptionCandidate[]
+): SemanticEvidence | null => {
+  if (typeof raw !== "object" || raw === null) {
+    return null;
+  }
+
+  const obj = raw as Record<string, unknown>;
+  const source = typeof obj.source === "string" ? obj.source : null;
+  const excerpt = typeof obj.excerpt === "string" ? obj.excerpt.trim() : null;
+
+  if (!source || !excerpt) {
+    return null;
+  }
+
+  if (typeof obj.line === "number" && Number.isInteger(obj.line) && obj.line > 0) {
+    const lineText = findLineText(documents, source, obj.line);
+
+    return typeof lineText === "string" && lineText.includes(excerpt)
+      ? { excerpt, line: obj.line, source }
+      : null;
+  }
+
+  if (typeof obj.field === "string" && obj.field) {
+    const fieldValue = findManifestFieldValue(manifestCandidates, source, obj.field);
+
+    return typeof fieldValue === "string" && fieldValue.includes(excerpt)
+      ? { excerpt, field: obj.field, source }
+      : null;
+  }
+
+  return null;
+};
+
+export const prepareBuildContextJob = async (
+  projectRootPath: string
+): Promise<BuildContextPreparation> => {
+  const reportsDir = discoveryReportsDir(projectRootPath);
+
+  let inventory: FileInventoryDocument;
+
+  try {
+    inventory = JSON.parse(
+      await readFile(path.join(reportsDir, "FILE_INVENTORY.json"), "utf8")
+    ) as FileInventoryDocument;
+  } catch (error) {
+    throw new Error(`Unable to read FILE_INVENTORY.json: ${(error as Error).message}`);
+  }
+
+  let classified: ClassifiedFilesDocument;
+
+  try {
+    classified = JSON.parse(
+      await readFile(path.join(reportsDir, "CLASSIFIED_FILES.json"), "utf8")
+    ) as ClassifiedFilesDocument;
+  } catch (error) {
+    throw new Error(`Unable to read CLASSIFIED_FILES.json: ${(error as Error).message}`);
+  }
+
+  let documentIndex: DocumentIndexDocument;
+
+  try {
+    documentIndex = JSON.parse(
+      await readFile(path.join(reportsDir, "DOCUMENT_INDEX.json"), "utf8")
+    ) as DocumentIndexDocument;
+  } catch (error) {
+    throw new Error(`Unable to read DOCUMENT_INDEX.json: ${(error as Error).message}`);
+  }
+
+  let glossary: DomainGlossaryDocument;
+
+  try {
+    glossary = JSON.parse(
+      await readFile(path.join(reportsDir, "DOMAIN_GLOSSARY.json"), "utf8")
+    ) as DomainGlossaryDocument;
+  } catch (error) {
+    throw new Error(`Unable to read DOMAIN_GLOSSARY.json: ${(error as Error).message}`);
+  }
+
+  let technologyStackDoc: TechnologyStackDocument;
+
+  try {
+    technologyStackDoc = JSON.parse(
+      await readFile(path.join(reportsDir, "TECHNOLOGY_STACK.json"), "utf8")
+    ) as TechnologyStackDocument;
+  } catch (error) {
+    throw new Error(`Unable to read TECHNOLOGY_STACK.json: ${(error as Error).message}`);
+  }
+
+  if (
+    !Array.isArray(inventory.files) ||
+    !Array.isArray(classified.files) ||
+    !Array.isArray(technologyStackDoc.stack) ||
+    !Array.isArray(glossary.terms)
+  ) {
+    throw new Error("Invalid structured input for build_context.");
+  }
+
+  const inventoryPaths = new Set<string>();
+
+  for (const file of inventory.files) {
+    if (inventoryPaths.has(file.path)) {
+      throw new Error(`Duplicate inventory path: ${file.path}`);
+    }
+
+    inventoryPaths.add(file.path);
+  }
+
+  const classifiedByPath = new Map(classified.files.map((file) => [file.path, file]));
+
+  if (classifiedByPath.size !== classified.files.length) {
+    throw new Error("Duplicate classified path detected.");
+  }
+
+  const classifiedPaths = new Set(classifiedByPath.keys());
+
+  if (
+    inventoryPaths.size !== classifiedPaths.size ||
+    [...inventoryPaths].some((filePath) => !classifiedPaths.has(filePath))
+  ) {
+    throw new Error("FILE_INVENTORY.json and CLASSIFIED_FILES.json path sets do not match.");
+  }
+
+  const explicitRootManifests = new Map<string, string[]>();
+
+  for (const file of classified.files) {
+    if (file.kind !== "manifest" || !isModuleDefiningManifestPath(file.path)) {
+      continue;
+    }
+
+    const root = moduleRootOf(file.path);
+    const list = explicitRootManifests.get(root) ?? [];
+
+    list.push(file.path);
+    explicitRootManifests.set(root, list);
+  }
+
+  const explicitRootsDeepestFirst = [...explicitRootManifests.keys()].sort(
+    (left, right) => moduleRootDepth(right) - moduleRootDepth(left)
+  );
+
+  const sortedInventoryPaths = [...inventoryPaths].sort();
+  const assignment = new Map<string, string>();
+
+  for (const filePath of sortedInventoryPaths) {
+    const matchedRoot = explicitRootsDeepestFirst.find((root) => isPathUnderModuleRoot(filePath, root));
+
+    if (matchedRoot) {
+      assignment.set(filePath, matchedRoot);
+    }
+  }
+
+  const unassignedAfterExplicit = sortedInventoryPaths.filter((filePath) => !assignment.has(filePath));
+  const unassignedByTopDir = new Map<string, string[]>();
+
+  for (const filePath of unassignedAfterExplicit) {
+    const slashIndex = filePath.indexOf("/");
+
+    if (slashIndex === -1) {
+      continue;
+    }
+
+    const topDir = filePath.slice(0, slashIndex);
+    const list = unassignedByTopDir.get(topDir) ?? [];
+
+    list.push(filePath);
+    unassignedByTopDir.set(topDir, list);
+  }
+
+  for (const [topDir, paths] of unassignedByTopDir) {
+    const hasFallbackEligibleFile = paths.some((filePath) => {
+      const kind = classifiedByPath.get(filePath)?.kind;
+
+      return kind ? MODULE_ROOT_FALLBACK_KINDS.has(kind) : false;
+    });
+
+    if (!hasFallbackEligibleFile) {
+      continue;
+    }
+
+    for (const filePath of paths) {
+      assignment.set(filePath, topDir);
+    }
+  }
+
+  const stillUnassigned = sortedInventoryPaths.filter((filePath) => !assignment.has(filePath));
+
+  for (const filePath of stillUnassigned) {
+    assignment.set(filePath, ".");
+  }
+
+  const pathsByRoot = new Map<string, string[]>();
+
+  for (const [filePath, root] of assignment) {
+    const list = pathsByRoot.get(root) ?? [];
+
+    list.push(filePath);
+    pathsByRoot.set(root, list);
+  }
+
+  const modules: ModuleBaseEntry[] = [];
+
+  for (const [root, paths] of pathsByRoot) {
+    const id = root === "." ? "root" : root;
+    const name = root === "." ? "root" : (root.split("/").pop() ?? root);
+    const sortedPaths = [...paths].sort();
+    const kindCounts: Record<string, number> = {};
+    const formatsSet = new Set<NonNullable<FileFormat>>();
+    const signalsSet = new Set<FileSignal>();
+
+    for (const filePath of sortedPaths) {
+      const classifiedFile = classifiedByPath.get(filePath);
+
+      if (!classifiedFile) {
+        continue;
+      }
+
+      kindCounts[classifiedFile.kind] = (kindCounts[classifiedFile.kind] ?? 0) + 1;
+
+      if (classifiedFile.format) {
+        formatsSet.add(classifiedFile.format);
+      }
+
+      for (const signal of classifiedFile.signals) {
+        signalsSet.add(signal);
+      }
+    }
+
+    modules.push({
+      id,
+      name,
+      paths: sortedPaths,
+      root,
+      summary: {
+        file_count: sortedPaths.length,
+        formats: [...formatsSet].sort(),
+        kind_counts: kindCounts,
+        signals: CANONICAL_SIGNAL_ORDER.filter((signal) => signalsSet.has(signal))
+      }
+    });
+  }
+
+  modules.sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0));
+  const rootIndex = modules.findIndex((module) => module.id === "root");
+
+  if (rootIndex > 0) {
+    const rootModule = modules[rootIndex];
+
+    if (rootModule) {
+      modules.splice(rootIndex, 1);
+      modules.unshift(rootModule);
+    }
+  }
+
+  const manifestDescriptionCandidates: ManifestDescriptionCandidate[] = [];
+
+  for (const [root, manifestPaths] of explicitRootManifests) {
+    const moduleId = root === "." ? "root" : root;
+
+    for (const manifestPath of [...manifestPaths].sort()) {
+      const description = await readManifestDescription(projectRootPath, manifestPath);
+
+      if (description) {
+        manifestDescriptionCandidates.push({
+          field: "description",
+          moduleId,
+          source: manifestPath,
+          value: description
+        });
+      }
+    }
+  }
+
+  const documents: BuildContextEvidenceDocument[] = [];
+
+  for (const doc of documentIndex.documents) {
+    const absolutePath = path.join(projectRootPath, doc.path);
+    let canonicalText: string;
+
+    try {
+      canonicalText = await extractCanonicalText(absolutePath, doc.format);
+    } catch (error) {
+      throw new Error(`Unable to extract canonical text for ${doc.path}: ${(error as Error).message}`);
+    }
+
+    documents.push({ lines: canonicalText.split("\n"), source: doc.path });
+  }
+
+  const entities = dedupeGlossaryTransplants(glossary.terms.filter((term) => term.category === "entity_name"));
+  const userRoles = dedupeGlossaryTransplants(glossary.terms.filter((term) => term.category === "role"));
+  const businessTerms = dedupeGlossaryTransplants(
+    glossary.terms.filter((term) => term.category === "business_term" || term.category === "entity_name")
+  );
+
+  return {
+    businessTerms,
+    documents,
+    entities,
+    manifestDescriptionCandidates,
+    modules,
+    projectName: path.basename(projectRootPath),
+    technologyStack: technologyStackDoc.stack,
+    userRoles
+  };
+};
+
+type BuildContextModulePatchEntry = {
+  description?: unknown;
+  description_evidence?: unknown;
+  id?: unknown;
+};
+
+type BuildContextAssumptionPatchEntry = {
+  evidence?: unknown;
+  statement?: unknown;
+};
+
+type BuildContextPatchInput = {
+  assumptions?: unknown;
+  business_domain?: { name?: unknown; name_evidence?: unknown };
+  modules?: unknown;
+  project?: { evidence?: { purpose?: unknown; type?: unknown }; purpose?: unknown; type?: unknown };
+};
+
+export const finalizeBuildContextJob = async (
+  projectRootPath: string,
+  preparation: BuildContextPreparation,
+  patch: unknown
+): Promise<BuildContextResult> => {
+  const patchObject: BuildContextPatchInput =
+    typeof patch === "object" && patch !== null ? (patch) : {};
+  const unknowns: Array<{ field: string; reason: string }> = [];
+  const usedSources = new Set<string>();
+
+  let resolvedType = "UNKNOWN";
+  let typeEvidence: SemanticEvidence | null = null;
+  const claimedType = patchObject.project?.type;
+
+  if (typeof claimedType === "string" && claimedType !== "UNKNOWN" && PROJECT_TYPES.has(claimedType)) {
+    const evidence = validateSemanticEvidence(
+      patchObject.project?.evidence?.type,
+      preparation.documents,
+      preparation.manifestDescriptionCandidates
+    );
+
+    if (evidence) {
+      resolvedType = claimedType;
+      typeEvidence = evidence;
+      usedSources.add(evidence.source);
+    }
+  }
+
+  if (resolvedType === "UNKNOWN") {
+    unknowns.push({ field: "project.type", reason: UNRESOLVED_REASON });
+  }
+
+  let resolvedPurpose = "UNKNOWN";
+  let purposeEvidence: SemanticEvidence | null = null;
+  const claimedPurpose = patchObject.project?.purpose;
+
+  if (typeof claimedPurpose === "string" && claimedPurpose.trim() && claimedPurpose !== "UNKNOWN") {
+    const evidence = validateSemanticEvidence(
+      patchObject.project?.evidence?.purpose,
+      preparation.documents,
+      preparation.manifestDescriptionCandidates
+    );
+
+    if (evidence) {
+      resolvedPurpose = claimedPurpose.trim();
+      purposeEvidence = evidence;
+      usedSources.add(evidence.source);
+    }
+  }
+
+  if (resolvedPurpose === "UNKNOWN") {
+    unknowns.push({ field: "project.purpose", reason: UNRESOLVED_REASON });
+  }
+
+  let resolvedDomainName = "UNKNOWN";
+  let domainNameEvidence: SemanticEvidence | null = null;
+  const claimedDomainName = patchObject.business_domain?.name;
+
+  if (typeof claimedDomainName === "string" && claimedDomainName.trim() && claimedDomainName !== "UNKNOWN") {
+    const evidence = validateSemanticEvidence(
+      patchObject.business_domain?.name_evidence,
+      preparation.documents,
+      preparation.manifestDescriptionCandidates
+    );
+
+    if (evidence) {
+      resolvedDomainName = claimedDomainName.trim();
+      domainNameEvidence = evidence;
+      usedSources.add(evidence.source);
+    }
+  }
+
+  if (resolvedDomainName === "UNKNOWN") {
+    unknowns.push({ field: "business_domain.name", reason: UNRESOLVED_REASON });
+  }
+
+  const modulePatchById = new Map<string, BuildContextModulePatchEntry>();
+
+  if (Array.isArray(patchObject.modules)) {
+    for (const entry of patchObject.modules as unknown[]) {
+      if (typeof entry !== "object" || entry === null) {
+        continue;
+      }
+
+      const typedEntry = entry as BuildContextModulePatchEntry;
+
+      if (typeof typedEntry.id === "string" && !modulePatchById.has(typedEntry.id)) {
+        modulePatchById.set(typedEntry.id, typedEntry);
+      }
+    }
+  }
+
+  const moduleContextEntries: Array<{
+    description: string;
+    description_evidence: SemanticEvidence | null;
+    id: string;
+    name: string;
+    root: string;
+  }> = [];
+
+  for (const module of preparation.modules) {
+    const patchEntry = modulePatchById.get(module.id);
+    let description = "UNKNOWN";
+    let descriptionEvidence: SemanticEvidence | null = null;
+
+    if (
+      patchEntry &&
+      typeof patchEntry.description === "string" &&
+      patchEntry.description.trim() &&
+      patchEntry.description !== "UNKNOWN"
+    ) {
+      const evidence = validateSemanticEvidence(
+        patchEntry.description_evidence,
+        preparation.documents,
+        preparation.manifestDescriptionCandidates
+      );
+
+      if (evidence) {
+        description = patchEntry.description.trim();
+        descriptionEvidence = evidence;
+        usedSources.add(evidence.source);
+      }
+    }
+
+    if (description === "UNKNOWN") {
+      unknowns.push({ field: `modules[${module.id}].description`, reason: UNRESOLVED_REASON });
+    }
+
+    moduleContextEntries.push({
+      description,
+      description_evidence: descriptionEvidence,
+      id: module.id,
+      name: module.name,
+      root: module.root
+    });
+  }
+
+  const resolvedAssumptions: Array<{ evidence: SemanticEvidence; statement: string }> = [];
+
+  if (Array.isArray(patchObject.assumptions)) {
+    for (const entry of patchObject.assumptions as unknown[]) {
+      if (typeof entry !== "object" || entry === null) {
+        continue;
+      }
+
+      const typedEntry = entry as BuildContextAssumptionPatchEntry;
+
+      if (typeof typedEntry.statement !== "string" || !typedEntry.statement.trim()) {
+        continue;
+      }
+
+      const evidence = validateSemanticEvidence(
+        typedEntry.evidence,
+        preparation.documents,
+        preparation.manifestDescriptionCandidates
+      );
+
+      if (!evidence) {
+        continue;
+      }
+
+      resolvedAssumptions.push({ evidence, statement: typedEntry.statement.trim() });
+      usedSources.add(evidence.source);
+    }
+  }
+
+  unknowns.sort((left, right) => (left.field < right.field ? -1 : left.field > right.field ? 1 : 0));
+  const sources = [...usedSources].sort();
+
+  await mkdir(discoveryReportsDir(projectRootPath), { recursive: true });
+  await mkdir(contextDir(projectRootPath), { recursive: true });
+
+  await writeJson(path.join(contextDir(projectRootPath), "PROJECT_CONTEXT.json"), {
+    assumptions: resolvedAssumptions,
+    business_domain: {
+      entities: preparation.entities,
+      name: resolvedDomainName,
+      name_evidence: domainNameEvidence
+    },
+    metadata: buildMetadata(),
+    modules: moduleContextEntries,
+    project: {
+      evidence: { purpose: purposeEvidence, type: typeEvidence },
+      name: preparation.projectName,
+      purpose: resolvedPurpose,
+      root_path: ".",
+      type: resolvedType
+    },
+    sources,
+    technology_stack: preparation.technologyStack,
+    unknowns,
+    user_roles: preparation.userRoles
+  });
+
+  await writeJson(path.join(discoveryReportsDir(projectRootPath), "MODULE_MAP_BASE.json"), {
+    metadata: buildMetadata(),
+    modules: preparation.modules.map((module) => {
+      const contextEntry = moduleContextEntries.find((entry) => entry.id === module.id);
+
+      return {
+        description: contextEntry?.description ?? "UNKNOWN",
+        description_evidence: contextEntry?.description_evidence ?? null,
+        id: module.id,
+        name: module.name,
+        paths: module.paths,
+        root: module.root,
+        summary: module.summary
+      };
+    })
+  });
+
+  return {
+    entity_count: preparation.entities.length,
+    module_count: preparation.modules.length,
+    unknown_count: unknowns.length,
+    user_role_count: preparation.userRoles.length
+  };
+};

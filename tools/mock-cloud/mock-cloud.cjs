@@ -4,9 +4,24 @@ const { readFileSync } = require("node:fs");
 
 const PORT = Number(process.env.FORGEPILOT_MOCK_CLOUD_PORT ?? 4317);
 const jobs = new Map();
-const passedStageJobs = new Set();
+const passedStageJobsByProject = new Map();
 const STARTUP_SEAL_STAGE_ID = "010-startup:seal-run";
 const DISCOVERY_CLASSIFY_STAGE_ID = "020-discovery:classify-files";
+
+const getProjectStageSet = (projectId) =>
+  (projectId && passedStageJobsByProject.get(projectId)) || new Set();
+
+const markStagePassed = (projectId, stageJobKey) => {
+  if (!projectId || !stageJobKey) {
+    return;
+  }
+
+  if (!passedStageJobsByProject.has(projectId)) {
+    passedStageJobsByProject.set(projectId, new Set());
+  }
+
+  passedStageJobsByProject.get(projectId).add(stageJobKey);
+};
 const CHECK_FACTORY_RULE_PATH =
   process.env.FORGEPILOT_STARTUP_CHECK_FACTORY_RULE ??
   "C:\\Github\\aiFactory\\.ai-factory\\010-Startup\\rules\\010-check_factory.rules.md";
@@ -86,9 +101,10 @@ const getLastJsonObject = (outputChunks) => {
   }
 };
 
-const buildStages = () => {
-  const startupCompleted = passedStageJobs.has(STARTUP_SEAL_STAGE_ID);
-  const discoveryCompleted = passedStageJobs.has(DISCOVERY_CLASSIFY_STAGE_ID);
+const buildStages = (projectId) => {
+  const passed = getProjectStageSet(projectId);
+  const startupCompleted = passed.has(STARTUP_SEAL_STAGE_ID);
+  const discoveryCompleted = passed.has(DISCOVERY_CLASSIFY_STAGE_ID);
 
   return [
     {
@@ -555,10 +571,11 @@ const server = http.createServer(async (request, response) => {
     }
 
     if (request.method === "GET" && url.pathname === "/workflows/current") {
+      const projectId = url.searchParams.get("projectId");
       sendJson(response, 200, {
         workflowId: "mock-workflow",
         workflowVersion: "1.0.0",
-        stages: buildStages()
+        stages: buildStages(projectId)
       });
       return;
     }
@@ -566,10 +583,11 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "POST" && url.pathname === "/jobs/request") {
       const body = await readJson(request);
       const job = createJob(body);
-      jobs.set(job.id, job);
+      const projectId = body.project?.id ?? null;
+      jobs.set(job.id, { ...job, projectId });
 
       if (body.localExecution?.select_run?.decision === "already_sealed") {
-        passedStageJobs.add(STARTUP_SEAL_STAGE_ID);
+        markStagePassed(projectId, STARTUP_SEAL_STAGE_ID);
       }
 
       sendJson(response, 200, job);
@@ -601,7 +619,7 @@ const server = http.createServer(async (request, response) => {
 
         const verification = getLastJsonObject(body.outputChunks);
         if (verification?.ok === true) {
-          passedStageJobs.add(job.stageId);
+          markStagePassed(job.projectId, job.stageId);
         }
       }
       sendJson(response, 200, { accepted: true, findings: [] });

@@ -1,5 +1,5 @@
 {
-  "lastFingerprint": "e5ecfb62c6ca285f270775640dd8d33681f6da03",
+  "lastFingerprint": "c65cbd455155674ddd027525ea5d010b1195906f",
   "lastDate": "2026-08-15",
-  "lastContent": "- Added document index result section to dashboard showing document, reference, missing document, and glossary term counts\n- Added dependency map result section to dashboard displaying package and technology counts\n- Extended startup execution metadata type definitions to support new index and dependency map result data\n- Added support for parsing package manifests including package.json, pyproject.toml, and other dependency files\n- Integrated document parsing capabilities for PDF and DOCX file formats"
+  "lastContent": "- Added project-scoped stage completion tracking in the mock cloud server to prevent cross-project state leakage.\n- Extended the `/workflows/current` endpoint with a `projectId` query parameter for project-specific workflow stage responses.\n- Associated job submissions and verification results with their project ID for accurate stage status reporting."
 }

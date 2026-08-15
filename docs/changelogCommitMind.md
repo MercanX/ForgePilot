@@ -2,6 +2,10 @@
 
 ## 2026-08-15
 
+- Added project-scoped stage completion tracking in the mock cloud server to prevent cross-project state leakage.
+- Extended the `/workflows/current` endpoint with a `projectId` query parameter for project-specific workflow stage responses.
+- Associated job submissions and verification results with their project ID for accurate stage status reporting.
+
 - Added document index result section to dashboard showing document, reference, missing document, and glossary term counts
 - Added dependency map result section to dashboard displaying package and technology counts
 - Extended startup execution metadata type definitions to support new index and dependency map result data

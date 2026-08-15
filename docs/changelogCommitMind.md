@@ -19,6 +19,12 @@
 
 ## 2026-08-15
 
+- Reduced dashboard activity log display from 10 to 5 entries for a more concise view.
+- Switched activity list markup from ordered to unordered for consistent styling.
+- Simplified mock cloud startup flow by removing redundant verification steps and adjusting progress ranges.
+- Added a seal check before final verification in the startup sequence to prevent unnecessary provider calls.
+- Reformatted mock cloud code for improved readability and maintainability.
+
 - Added server-driven execution directive protocol (`POST /executions/next`) replacing stage-specific client orchestration.
 - Moved provider command generation to `ProviderAdapter.createExecutionCommand()` and centralized process lifecycle in a shared execution service.
 - Introduced crash recovery journal for idempotent replay of local directive results.

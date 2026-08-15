@@ -1,5 +1,5 @@
 {
-  "lastFingerprint": "c51de00f645325bfb7915650bd93b21bd0f62e3b",
+  "lastFingerprint": "024ff149bcd270457aee68147eceb7fcf2931c1c",
   "lastDate": "2026-08-15",
-  "lastContent": "- Added server-driven execution directive protocol (`POST /executions/next`) replacing stage-specific client orchestration.\n- Moved provider command generation to `ProviderAdapter.createExecutionCommand()` and centralized process lifecycle in a shared execution service.\n- Introduced crash recovery journal for idempotent replay of local directive results.\n- Passed task instruction bodies via stdin instead of temporary prompt files.\n- Bumped protocol to v2 and application version to 0.2.1 with handshake compatibility checks."
+  "lastContent": "- Reduced dashboard activity log display from 10 to 5 entries for a more concise view.\n- Switched activity list markup from ordered to unordered for consistent styling.\n- Simplified mock cloud startup flow by removing redundant verification steps and adjusting progress ranges.\n- Added a seal check before final verification in the startup sequence to prevent unnecessary provider calls.\n- Reformatted mock cloud code for improved readability and maintainability."
 }

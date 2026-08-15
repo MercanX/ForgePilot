@@ -135,7 +135,7 @@ export const DashboardPage = (): ReactElement => {
     return isStartupExecutionMetadata(metadata) ? metadata : null;
   }, [lastRun]);
   const visibleActivityEntries = useMemo(
-    () => activityEntries.slice(-10).reverse(),
+    () => activityEntries.slice(-5).reverse(),
     [activityEntries]
   );
   const validationJson = useMemo(() => {
@@ -304,7 +304,7 @@ export const DashboardPage = (): ReactElement => {
             {visibleActivityEntries.length === 0 ? (
               <p>The stage has not started yet.</p>
             ) : (
-              <ol>
+              <ul>
                 {visibleActivityEntries.map((entry, index) => (
                   <li
                     className={`activity-item activity-item-${entry.status}${
@@ -315,7 +315,7 @@ export const DashboardPage = (): ReactElement => {
                     {entry.message}
                   </li>
                 ))}
-              </ol>
+              </ul>
             )}
           </section>
 

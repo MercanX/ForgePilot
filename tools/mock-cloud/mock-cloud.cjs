@@ -23,7 +23,9 @@ const STATE_FILE_PATH =
 const loadPassedStagesByProject = () => {
   try {
     const raw = JSON.parse(readFileSync(STATE_FILE_PATH, "utf8"));
-    return new Map(Object.entries(raw).map(([projectId, stageIds]) => [projectId, new Set(stageIds)]));
+    return new Map(
+      Object.entries(raw).map(([projectId, stageIds]) => [projectId, new Set(stageIds)])
+    );
   } catch {
     return new Map();
   }
@@ -141,8 +143,7 @@ const getLastJsonObject = (outputChunks) => {
 
 const buildStages = (projectId) => {
   const passed = getProjectStageSet(projectId);
-  const startupCompleted =
-    passed.has(STARTUP_STAGE_ID) || passed.has(LEGACY_STARTUP_SEAL_STAGE_ID);
+  const startupCompleted = passed.has(STARTUP_STAGE_ID) || passed.has(LEGACY_STARTUP_SEAL_STAGE_ID);
   const discoveryCompleted =
     passed.has(DISCOVERY_STAGE_ID) || passed.has(LEGACY_DISCOVERY_FINAL_STAGE_ID);
 
@@ -167,9 +168,30 @@ const buildStages = (projectId) => {
           ? "Waiting for execution directive"
           : null
     },
-    { id: "030-context", name: "030-Context", status: "waiting", progress: 0, currentAgent: null, currentOperation: null },
-    { id: "040-implementation", name: "040-Implementation", status: "waiting", progress: 0, currentAgent: null, currentOperation: null },
-    { id: "050-validation", name: "050-Validation", status: "waiting", progress: 0, currentAgent: null, currentOperation: null }
+    {
+      id: "030-context",
+      name: "030-Context",
+      status: "waiting",
+      progress: 0,
+      currentAgent: null,
+      currentOperation: null
+    },
+    {
+      id: "040-implementation",
+      name: "040-Implementation",
+      status: "waiting",
+      progress: 0,
+      currentAgent: null,
+      currentOperation: null
+    },
+    {
+      id: "050-validation",
+      name: "050-Validation",
+      status: "waiting",
+      progress: 0,
+      currentAgent: null,
+      currentOperation: null
+    }
   ];
 };
 
@@ -398,7 +420,9 @@ const createIndexDocumentsCandidatesPrompt = (requestBody) => {
   const candidateDocuments = requestBody.localExecution?.index_documents_candidates ?? [];
   const canonicalView = candidateDocuments
     .map((doc) => {
-      const numberedLines = (doc.lines ?? []).map((line, index) => `${index + 1}: ${line}`).join("\n");
+      const numberedLines = (doc.lines ?? [])
+        .map((line, index) => `${index + 1}: ${line}`)
+        .join("\n");
       return `--- document (${doc.source}) ---\n${numberedLines}\n--- document sonu ---`;
     })
     .join("\n\n");
@@ -459,7 +483,9 @@ const createBuildContextEvidencePrompt = (requestBody) => {
   const documents = evidence.documents ?? [];
   const canonicalView = documents
     .map((doc) => {
-      const numberedLines = (doc.lines ?? []).map((line, index) => `${index + 1}: ${line}`).join("\n");
+      const numberedLines = (doc.lines ?? [])
+        .map((line, index) => `${index + 1}: ${line}`)
+        .join("\n");
       return `--- document (${doc.source}) ---\n${numberedLines}\n--- document sonu ---`;
     })
     .join("\n\n");
@@ -671,7 +697,15 @@ const localDirective = (operation, inputs, saveAs, messages, progress) => ({
   saveAs: saveAs ?? null
 });
 
-const providerDirective = (session, localExecution, mode, requireOk, saveAs, messages, progress) => {
+const providerDirective = (
+  session,
+  localExecution,
+  mode,
+  requireOk,
+  saveAs,
+  messages,
+  progress
+) => {
   const requestBody = {
     capabilities: [],
     localExecution,
@@ -716,7 +750,7 @@ const startupDirectiveFor = (session) => {
         { newRun: session.newRun },
         "selectRun",
         ["Selecting the AI Factory run folder.", "Run folder selection completed."],
-        [20, 25]
+        [20, 28]
       );
     case 1:
       if (selectRun.decision === "already_sealed") {
@@ -730,137 +764,99 @@ const startupDirectiveFor = (session) => {
           [30, 100]
         );
       }
+
       return localDirective(
         "startup.check",
         {},
         "startupCheck",
-        ["Checking the factory folder and configuration.", "Factory and configuration check completed."],
-        [28, 35]
+        [
+          "Checking the factory folder and configuration.",
+          "Factory and configuration check completed."
+        ],
+        [30, 38]
       );
     case 2:
       if (selectRun.decision === "already_sealed") {
-        return terminalDirective("completed", "A valid sealed run already exists; Startup is complete.", 100);
+        return terminalDirective(
+          "completed",
+          "A valid sealed run already exists; Startup is complete.",
+          100
+        );
       }
-      return providerDirective(
-        session,
-        session.context.startupCheck,
-        "verification",
-        true,
-        null,
-        ["Verifying factory/configuration state.", "Factory/configuration verification completed."],
-        [38, 48]
-      );
-    case 3:
-      return providerDirective(
-        session,
-        { select_run: selectRun },
-        "verification",
-        true,
-        null,
-        ["Verifying run-folder selection.", "Run-folder selection verification completed."],
-        [50, 60]
-      );
-    case 4:
+
       return localDirective(
         "startup.place-inputs",
         { runId: selectRun.run_id },
         "placeInputs",
         ["Placing SCOPE.md and BASELINE.md.", "Input placement completed."],
-        [62, 70]
+        [40, 50]
       );
-    case 5:
-      return providerDirective(
-        session,
-        { place_inputs: placeInputs },
-        "verification",
-        true,
-        null,
-        ["Verifying Startup input files.", "Startup input verification completed."],
-        [72, 78]
-      );
-    case 6:
+    case 3:
       if (placeInputs.status === "waiting_for_input") {
         return terminalDirective(
           "blocked",
           "SCOPE.md and BASELINE.md need user review before Startup can continue.",
-          78
+          50
         );
       }
+
       return localDirective(
         "startup.capture-git-state",
         { runId: selectRun.run_id },
         "gitState",
         ["Capturing git state.", "Git state captured."],
-        [80, 84]
+        [52, 62]
       );
-    case 7:
-      return providerDirective(
-        session,
-        { capture_git_state: session.context.gitState },
-        "verification",
-        true,
-        null,
-        ["Verifying captured git state.", "Git-state verification completed."],
-        [85, 88]
-      );
-    case 8:
+    case 4:
       return localDirective(
         "startup.build-source-manifest",
         { runId: selectRun.run_id },
         "sourceManifest",
         ["Building SOURCE_MANIFEST.csv.", "Source manifest built."],
-        [89, 91]
+        [64, 74]
       );
-    case 9:
-      return providerDirective(
-        session,
-        { build_source_manifest: session.context.sourceManifest },
-        "verification",
-        true,
-        null,
-        ["Verifying source manifest.", "Source-manifest verification completed."],
-        [92, 94]
-      );
-    case 10:
+    case 5:
       return localDirective(
         "startup.build-factory-manifest",
         { runId: selectRun.run_id },
         "factoryManifest",
         ["Building FACTORY_MANIFEST.csv.", "Factory manifest built."],
-        [95, 96]
+        [76, 86]
       );
-    case 11:
-      return providerDirective(
-        session,
-        { build_factory_manifest: session.context.factoryManifest },
-        "verification",
-        true,
-        null,
-        ["Verifying factory manifest.", "Factory-manifest verification completed."],
-        [96, 97]
-      );
-    case 12:
+    case 6:
       return localDirective(
         "startup.seal-run",
         { runId: selectRun.run_id },
         "sealRun",
         ["Sealing the Startup run.", "Startup seal calculation completed."],
-        [98, 99]
+        [88, 94]
       );
-    case 13:
+    case 7:
+      if (sealRun.decision !== "PASS") {
+        return terminalDirective(
+          "blocked",
+          "Startup seal did not pass; review the missing run artifacts.",
+          94
+        );
+      }
+
       return providerDirective(
         session,
         { seal_run: sealRun },
         "verification",
         true,
         null,
-        ["Verifying the Startup seal.", "Startup seal verification completed."],
-        [99, 100]
+        ["Performing final Startup verification.", "Final Startup verification completed."],
+        [95, 100]
       );
     default:
       return sealRun.decision === "PASS"
         ? terminalDirective("completed", "Startup completed and the run is sealed.", 100)
-        : terminalDirective("blocked", "Startup seal did not pass; review the missing run artifacts.", 100);
+        : terminalDirective(
+            "blocked",
+            "Startup seal did not pass; review the missing run artifacts.",
+            100
+          );
   }
 };
 
@@ -912,7 +908,10 @@ const discoveryDirectiveFor = (session) => {
         "discovery.prepare-index-and-map",
         {},
         "indexAndMapPreparation",
-        ["Preparing document index and dependency map.", "Document/dependency preparation completed."],
+        [
+          "Preparing document index and dependency map.",
+          "Document/dependency preparation completed."
+        ],
         [74, 79]
       );
     case 5:
@@ -922,7 +921,10 @@ const discoveryDirectiveFor = (session) => {
         "semantic",
         false,
         "glossaryPatch",
-        ["Resolving domain glossary candidates.", "Domain glossary candidate generation completed."],
+        [
+          "Resolving domain glossary candidates.",
+          "Domain glossary candidate generation completed."
+        ],
         [80, 83]
       );
     case 6:
@@ -946,7 +948,10 @@ const discoveryDirectiveFor = (session) => {
         "verification",
         true,
         null,
-        ["Verifying document index and dependency map.", "Document/dependency verification completed."],
+        [
+          "Verifying document index and dependency map.",
+          "Document/dependency verification completed."
+        ],
         [87, 90]
       );
     case 8:
@@ -1016,7 +1021,11 @@ const nextDirectiveFor = (session) => {
     return discoveryDirectiveFor(session);
   }
 
-  return terminalDirective("failed", `Mock cloud has no execution plan for stage: ${session.stageId}`, 0);
+  return terminalDirective(
+    "failed",
+    `Mock cloud has no execution plan for stage: ${session.stageId}`,
+    0
+  );
 };
 
 const applyPreviousResult = (session, previous) => {
@@ -1087,11 +1096,12 @@ const handleExecutionNext = (body) => {
     session.pending = nextDirectiveFor(session);
   }
 
-  if (
-    session.pending.kind === "local" &&
-    !Array.isArray(body.localOperations)
-  ) {
-    session.pending = terminalDirective("failed", "Desktop did not report local operations.", session.lastProgress);
+  if (session.pending.kind === "local" && !Array.isArray(body.localOperations)) {
+    session.pending = terminalDirective(
+      "failed",
+      "Desktop did not report local operations.",
+      session.lastProgress
+    );
   } else if (
     session.pending.kind === "local" &&
     Array.isArray(body.localOperations) &&

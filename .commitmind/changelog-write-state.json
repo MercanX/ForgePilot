@@ -1,5 +1,5 @@
 {
-  "lastFingerprint": "9527b02ad8c48ecf23b55074790f5c2bb8bd60ed",
-  "lastDate": "2026-08-14",
-  "lastContent": "- Added place_inputs job to the startup flow that places SCOPE.md and BASELINE.md into the selected run folder using RULE-A04.\n- Implemented fallback logic that copies approved root files or writes tr-TR templates, reporting waiting_for_input status when review markers remain.\n- Extended the Dashboard to display place_inputs results including status, run ID, and file placement details.\n- Updated mock cloud to read the 040-place_inputs.rules.md file at runtime for LLM verification prompt generation.\n- Added unit tests covering template placement, root file copying, and the chained job service flow."
+  "lastFingerprint": "90090f5bdb7793391784a393adc1e08e82cecaab",
+  "lastDate": "2026-08-15",
+  "lastContent": "- Added dynamic stage status tracking to the mock cloud server for realistic workflow simulation\n- Implemented stage completion detection based on job acknowledgment and verification results\n- Updated workflow stage responses to reflect actual progress of startup and discovery phases"
 }

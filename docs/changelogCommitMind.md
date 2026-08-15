@@ -1,5 +1,10 @@
 # Changelog CommitMind
 
+## 2026-08-15
+- Added dynamic stage status tracking to the mock cloud server for realistic workflow simulation
+- Implemented stage completion detection based on job acknowledgment and verification results
+- Updated workflow stage responses to reflect actual progress of startup and discovery phases
+
 ## 2026-08-14
 
 - `010-Startup` akisi `JOB.md` ile uyumlu olarak Job 5 `build_source_manifest`,

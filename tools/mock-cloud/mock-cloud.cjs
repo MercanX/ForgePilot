@@ -4,6 +4,9 @@ const { readFileSync } = require("node:fs");
 
 const PORT = Number(process.env.FORGEPILOT_MOCK_CLOUD_PORT ?? 4317);
 const jobs = new Map();
+const passedStageJobs = new Set();
+const STARTUP_SEAL_STAGE_ID = "010-startup:seal-run";
+const DISCOVERY_CLASSIFY_STAGE_ID = "020-discovery:classify-files";
 const CHECK_FACTORY_RULE_PATH =
   process.env.FORGEPILOT_STARTUP_CHECK_FACTORY_RULE ??
   "C:\\Github\\aiFactory\\.ai-factory\\010-Startup\\rules\\010-check_factory.rules.md";
@@ -54,6 +57,80 @@ const readJson = async (request) =>
   });
 
 const readRule = (rulePath) => readFileSync(rulePath, "utf8");
+
+const getLastJsonObject = (outputChunks) => {
+  const lines = (outputChunks ?? [])
+    .map((chunk) => chunk.text)
+    .join("")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const jsonLine = [...lines].reverse().find((line) => line.startsWith("{") && line.endsWith("}"));
+
+  if (!jsonLine) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(jsonLine);
+
+    return typeof parsed === "object" && parsed !== null ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
+const buildStages = () => {
+  const startupCompleted = passedStageJobs.has(STARTUP_SEAL_STAGE_ID);
+  const discoveryCompleted = passedStageJobs.has(DISCOVERY_CLASSIFY_STAGE_ID);
+
+  return [
+    {
+      id: "010-startup",
+      name: "010-Startup",
+      status: startupCompleted ? "completed" : "ready",
+      progress: startupCompleted ? 100 : 0,
+      currentAgent: "Startup Agent",
+      currentOperation: startupCompleted ? "Run sealed." : "Waiting to open the provider session"
+    },
+    {
+      id: "020-discovery",
+      name: "020-Discovery",
+      status: discoveryCompleted ? "completed" : startupCompleted ? "ready" : "waiting",
+      progress: discoveryCompleted ? 100 : 0,
+      currentAgent: startupCompleted ? "Discovery Agent" : null,
+      currentOperation: discoveryCompleted
+        ? "Discovery jobs sealed."
+        : startupCompleted
+          ? "Waiting to open the provider session"
+          : null
+    },
+    {
+      id: "030-context",
+      name: "030-Context",
+      status: "waiting",
+      progress: 0,
+      currentAgent: null,
+      currentOperation: null
+    },
+    {
+      id: "040-implementation",
+      name: "040-Implementation",
+      status: "waiting",
+      progress: 0,
+      currentAgent: null,
+      currentOperation: null
+    },
+    {
+      id: "050-validation",
+      name: "050-Validation",
+      status: "waiting",
+      progress: 0,
+      currentAgent: null,
+      currentOperation: null
+    }
+  ];
+};
 
 const createStartupPrompt = (requestBody) => {
   const checkFactoryRule = readRule(CHECK_FACTORY_RULE_PATH);
@@ -399,48 +476,7 @@ const server = http.createServer(async (request, response) => {
       sendJson(response, 200, {
         workflowId: "mock-workflow",
         workflowVersion: "1.0.0",
-        stages: [
-          {
-            id: "010-startup",
-            name: "010-Startup",
-            status: "ready",
-            progress: 0,
-            currentAgent: "Startup Agent",
-            currentOperation: "Waiting to open the provider session"
-          },
-          {
-            id: "020-discovery",
-            name: "020-Discovery",
-            status: "waiting",
-            progress: 0,
-            currentAgent: null,
-            currentOperation: null
-          },
-          {
-            id: "030-context",
-            name: "030-Context",
-            status: "waiting",
-            progress: 0,
-            currentAgent: null,
-            currentOperation: null
-          },
-          {
-            id: "040-implementation",
-            name: "040-Implementation",
-            status: "waiting",
-            progress: 0,
-            currentAgent: null,
-            currentOperation: null
-          },
-          {
-            id: "050-validation",
-            name: "050-Validation",
-            status: "waiting",
-            progress: 0,
-            currentAgent: null,
-            currentOperation: null
-          }
-        ]
+        stages: buildStages()
       });
       return;
     }
@@ -449,6 +485,11 @@ const server = http.createServer(async (request, response) => {
       const body = await readJson(request);
       const job = createJob(body);
       jobs.set(job.id, job);
+
+      if (body.localExecution?.select_run?.decision === "already_sealed") {
+        passedStageJobs.add(STARTUP_SEAL_STAGE_ID);
+      }
+
       sendJson(response, 200, job);
       return;
     }
@@ -475,6 +516,11 @@ const server = http.createServer(async (request, response) => {
         job.status = body.status === "completed" ? "acked" : "failed";
         job.finishedAt = new Date().toISOString();
         job.exitCode = body.exitCode;
+
+        const verification = getLastJsonObject(body.outputChunks);
+        if (verification?.ok === true) {
+          passedStageJobs.add(job.stageId);
+        }
       }
       sendJson(response, 200, { accepted: true, findings: [] });
       return;

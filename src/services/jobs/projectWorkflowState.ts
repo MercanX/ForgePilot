@@ -157,8 +157,14 @@ export const createProjectWorkflowState = (projectRootPath: string): ProjectWork
       }
 
       if (restart) {
-        for (const stage of stages.slice(stageIndex)) {
-          delete document.stages[stage.id];
+        if (stageId === "010-startup") {
+          for (const stage of stages.slice(stageIndex)) {
+            delete document.stages[stage.id];
+          }
+        } else {
+          // Discovery sub-stages restart independently. Restarting D05 must not
+          // erase unrelated completed sub-stages or later workflow state.
+          delete document.stages[stageId];
         }
       }
 
@@ -215,15 +221,44 @@ export const createProjectWorkflowState = (projectRootPath: string): ProjectWork
     },
 
     mergeWorkflow: async (workflow) => {
-      // Deleting .ai-factory is an explicit reset. Cloud/mock status is ignored.
-      const document = (await factoryExists()) ? await read() : emptyState();
-      let foundFirstIncomplete = false;
+      // Cloud owns readiness/dependency decisions. Local state only overlays
+      // activity/report plus completed/failed/interrupted execution state.
+      // This is required for manually selectable Discovery sub-stages.
+      const exists = await factoryExists();
+      if (!exists) {
+        return {
+          ...workflow,
+          stages: workflow.stages.map((stage) =>
+            stage.id === "010-startup"
+              ? {
+                  ...stage,
+                  activity: [],
+                  currentOperation: "Waiting for execution directive",
+                  progress: 0,
+                  report: null,
+                  status: "ready" as const
+                }
+              : {
+                  ...stage,
+                  activity: [],
+                  currentAgent: null,
+                  currentOperation: null,
+                  progress: 0,
+                  report: null,
+                  status: "waiting" as const
+                }
+          )
+        };
+      }
 
+      const document = await read();
       const stages = workflow.stages.map((stage): WorkflowStage => {
         const local = document.stages[stage.id];
-        const completed = !foundFirstIncomplete && local?.status === "completed";
+        if (!local) {
+          return stage;
+        }
 
-        if (completed) {
+        if (local.status === "completed") {
           return {
             ...stage,
             activity: local.activity,
@@ -234,31 +269,24 @@ export const createProjectWorkflowState = (projectRootPath: string): ProjectWork
           };
         }
 
-        if (!foundFirstIncomplete) {
-          foundFirstIncomplete = true;
-          const failed = local?.status === "failed";
-          const interrupted = local?.status === "running";
-
+        if (local.status === "failed") {
           return {
             ...stage,
-            activity: local?.activity ?? [],
-            currentOperation:
-              local?.report?.message ??
-              (interrupted ? "Ready to continue or restart" : stage.currentOperation),
-            progress: 0,
-            report: local?.report ?? null,
-            status: failed ? "failed" : "ready"
+            activity: local.activity,
+            currentOperation: local.report?.message ?? stage.currentOperation,
+            progress: stage.progress ?? 0,
+            report: local.report,
+            status: "failed"
           };
         }
 
         return {
           ...stage,
-          activity: local?.activity ?? [],
-          currentAgent: null,
-          currentOperation: null,
-          progress: 0,
-          report: local?.report ?? null,
-          status: "waiting"
+          activity: local.activity,
+          currentOperation: local.report?.message ?? "Ready to continue or restart",
+          progress: stage.progress ?? 0,
+          report: local.report,
+          status: stage.status === "waiting" ? "waiting" : "ready"
         };
       });
 

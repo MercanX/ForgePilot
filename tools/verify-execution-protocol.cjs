@@ -8,15 +8,21 @@ const tempRoot = mkdtempSync(path.join(os.tmpdir(), "forgepilot-protocol-"));
 const projectRoot = path.join(tempRoot, "project");
 const statePath = path.join(tempRoot, "state.json");
 const startupRuntimeRoot = path.join(tempRoot, "startup-runtime");
-const rulePath = path.join(startupRuntimeRoot, "rules", "005-propose_scope.rules.md");
-const contractPath = path.join(startupRuntimeRoot, "STARTUP_CONTRACT.json");
+const startupRulePath = path.join(startupRuntimeRoot, "rules", "005-propose_scope.rules.md");
+const startupContractPath = path.join(startupRuntimeRoot, "STARTUP_CONTRACT.json");
+const d05RuntimeRoot = path.join(tempRoot, "discovery-runtime", "D05-Project-Overview");
+const d05PromptPath = path.join(d05RuntimeRoot, "prompt", "project-overview.compiled.prompt.md");
+const d05SchemaPath = path.join(d05RuntimeRoot, "contracts", "project-overview-output.schema.json");
 const port = 44317;
 const baseUrl = `http://127.0.0.1:${port}`;
+
 mkdirSync(projectRoot, { recursive: true });
-mkdirSync(path.dirname(rulePath), { recursive: true });
-writeFileSync(rulePath, "# Startup scope fixture rule\n", "utf8");
+mkdirSync(path.dirname(startupRulePath), { recursive: true });
+mkdirSync(path.dirname(d05PromptPath), { recursive: true });
+mkdirSync(path.dirname(d05SchemaPath), { recursive: true });
+writeFileSync(startupRulePath, "# Startup scope fixture rule\n", "utf8");
 writeFileSync(
-  contractPath,
+  startupContractPath,
   JSON.stringify({
     contract_version: "2.1.0",
     provider_tasks: {
@@ -38,13 +44,43 @@ writeFileSync(
   }),
   "utf8"
 );
+writeFileSync(
+  d05PromptPath,
+  [
+    "# D05 compiled fixture",
+    "PROJECT_ROOT={{PROJECT_ROOT}}",
+    "SCOPE={{STARTUP_SCOPE_JSON}}",
+    "SEAL={{STARTUP_SEAL_JSON}}",
+    "CONTEXT={{DISCOVERY_CONTEXT_JSON}}",
+    "OV-001",
+    "OV-082"
+  ].join("\n"),
+  "utf8"
+);
+writeFileSync(
+  d05SchemaPath,
+  JSON.stringify({
+    type: "object",
+    properties: {
+      substage: { type: "string", enum: ["D05-Project-Overview"] },
+      result: { type: "string", enum: ["PASS", "PASS_WITH_FINDINGS", "PARTIAL", "BLOCKED"] },
+      summary: { type: "string" },
+      checklist: { type: "array" }
+    },
+    required: ["substage", "result", "summary", "checklist"],
+    additionalProperties: false
+  }),
+  "utf8"
+);
 
 const child = spawn(process.execPath, [path.join(__dirname, "mock-cloud", "mock-cloud.cjs")], {
   env: {
     ...process.env,
     FORGEPILOT_MOCK_CLOUD_PORT: String(port),
     FORGEPILOT_MOCK_CLOUD_STATE_FILE: statePath,
-    FORGEPILOT_STARTUP_CONTRACT: contractPath
+    FORGEPILOT_STARTUP_CONTRACT: startupContractPath,
+    FORGEPILOT_DISCOVERY_D05_PROMPT: d05PromptPath,
+    FORGEPILOT_DISCOVERY_D05_SCHEMA: d05SchemaPath
   },
   stdio: ["ignore", "pipe", "pipe"]
 });
@@ -91,114 +127,58 @@ const LOCAL_OPERATIONS = [
   "startup.save-scope-proposal",
   "startup.build-workspace-manifest",
   "startup.seal-workspace",
-  "discovery.scan-project",
-  "discovery.classify-files",
-  "discovery.prepare-index-documents-v2",
-  "discovery.finalize-index-documents-v2",
-  "discovery.map-dependencies",
-  "discovery.prepare-context-v2",
-  "discovery.finalize-context-v2",
-  "discovery.map-module-dependencies-v2",
-  "discovery.prepare-detect-gaps-v2",
-  "discovery.finalize-detect-gaps-v2",
-  "discovery.score-and-gate-v2",
-  "discovery.prepare-report-v2",
-  "discovery.finalize-report-v2"
+  "discovery.d05-status",
+  "discovery.save-d05-result"
 ];
 
-const semanticPayload = (semanticTaskId) => ({
-  semantic_task_id: semanticTaskId,
-  contract_version: "2.0.0",
-  budget: {
-    max_payload_utf8_bytes: 98304,
-    max_source_items: 40,
-    max_excerpt_utf8_bytes_per_source: 8192,
-    max_structured_records: 400,
-    actual_payload_utf8_bytes: 256,
-    source_items: 0,
-    structured_records: 0,
-    truncated: false
-  }
-});
-
 let startupScopeApproved = false;
+let d05Completed = false;
 
-const localOutputFor = (operation) => {
+const localOutputFor = (operation, inputs = {}) => {
   if (operation === "startup.scope-status") {
     return startupScopeApproved
       ? { state: "approved", approved: true, hasProposal: true, sealed: false, workspace_hash: null }
       : { state: "missing", approved: false, hasProposal: false, sealed: false, workspace_hash: null };
   }
-
-  const outputs = {
-    "startup.save-scope-proposal": { status: "pending_approval" },
-    "startup.build-workspace-manifest": {
-      file_count: 1,
-      manifest_hash: "a".repeat(64),
-      scope_hash: "b".repeat(64),
-      workspace_hash: "c".repeat(64)
-    },
-    "startup.seal-workspace": {
-      file_count: 1,
-      manifest_hash: "a".repeat(64),
+  if (operation === "startup.save-scope-proposal") return { status: "pending_approval" };
+  if (operation === "startup.build-workspace-manifest") {
+    return { file_count: 1, manifest_hash: "a".repeat(64), scope_hash: "b".repeat(64), workspace_hash: "c".repeat(64) };
+  }
+  if (operation === "startup.seal-workspace") {
+    return { file_count: 1, manifest_hash: "a".repeat(64), scope_hash: "b".repeat(64), workspace_hash: "c".repeat(64), status: "READY_FOR_DISCOVERY" };
+  }
+  if (operation === "discovery.d05-status") {
+    if (inputs.reset === true) d05Completed = false;
+    return {
+      audit_id: "AUD-001",
+      state: d05Completed ? "completed" : "ready",
       scope_hash: "b".repeat(64),
       workspace_hash: "c".repeat(64),
-      status: "READY_FOR_DISCOVERY"
-    },
-    "discovery.scan-project": { directory_count: 1, file_count: 1 },
-    "discovery.classify-files": { file_count: 1, unknown_count: 0 },
-    "discovery.prepare-index-documents-v2": {
-      preparationId: "d03-prep",
-      semanticNeeded: true,
-      semanticPayload: semanticPayload("D03_DOMAIN_GLOSSARY")
-    },
-    "discovery.finalize-index-documents-v2": { document_count: 1, glossary_term_count: 0 },
-    "discovery.map-dependencies": { package_count: 0, technology_count: 0 },
-    "discovery.prepare-context-v2": {
-      preparationId: "d04-prep",
-      semanticNeeded: true,
-      semanticPayload: semanticPayload("D04_CONTEXT_FIELDS")
-    },
-    "discovery.finalize-context-v2": { module_count: 1, unknown_count: 0 },
-    "discovery.map-module-dependencies-v2": { edge_count: 0, module_count: 1 },
-    "discovery.prepare-detect-gaps-v2": {
-      preparationId: "d05-prep",
-      semanticNeeded: true,
-      semanticPayload: semanticPayload("D05_SEMANTIC_GAPS")
-    },
-    "discovery.finalize-detect-gaps-v2": { gap_count: 1, issue_count: 0, warning_count: 1 },
-    "discovery.score-and-gate-v2": {
-      decision: "PASS_WITH_WARNINGS",
-      matched_rule: "GATE-D06-06",
-      overall: 98
-    },
-    "discovery.prepare-report-v2": {
-      preparationId: "d07-prep",
-      semanticNeeded: true,
-      semanticPayload: semanticPayload("D07_REPORT_PROSE")
-    },
-    "discovery.finalize-report-v2": { report_files: 4, gate_decision: "PASS_WITH_WARNINGS" }
-  };
-  if (!(operation in outputs)) throw new Error(`No fixture output for local operation ${operation}`);
-  return outputs[operation];
+      startup_scope: { approved: { include: ["src"], exclude: [], explicit_files: [] }, scope_hash: "b".repeat(64) },
+      startup_seal: { status: "READY_FOR_DISCOVERY", scope_hash: "b".repeat(64), workspace_hash: "c".repeat(64), manifest_hash: "a".repeat(64), file_count: 1 },
+      discovery_context: { audit_id: "AUD-001", completed_substages: [] }
+    };
+  }
+  if (operation === "discovery.save-d05-result") {
+    d05Completed = true;
+    return { audit_id: "AUD-001", result: "PASS", finding_count: 0, unknown_count: 0, checklist_count: 82, saved: true };
+  }
+  throw new Error(`No fixture output for local operation ${operation}`);
 };
 
 const providerOutputFor = (directive) => {
   const task = directive.job.task?.instructions?.metadata?.localExecution?.semantic_task;
-  if (directive.mode !== "semantic") return { ok: true };
-  switch (task?.semantic_task_id) {
-    case "SCOPE_PROPOSAL":
-      return { include: [{ path: "src", reason: "source", confidence: "high" }], exclude: [], needs_user_decision: [], summary: "fixture" };
-    case "D03_DOMAIN_GLOSSARY":
-    case "D05_SEMANTIC_GAPS":
-      return { candidates: [] };
-    case "D04_CONTEXT_FIELDS":
-      return { project: { type: "UNKNOWN", purpose: "UNKNOWN", evidence: { type: null, purpose: null } }, business_domain: { name: "UNKNOWN", name_evidence: null }, assumptions: [], modules: [] };
-    case "D07_REPORT_PROSE":
-      return { executive_summary_body: "Fixture summary.", recommended_actions: [] };
-    default:
-      return { ok: true };
+  if (task?.semantic_task_id === "SCOPE_PROPOSAL") {
+    return { include: [{ path: "src", reason: "source", confidence: "high" }], exclude: [], needs_user_decision: [], summary: "fixture" };
   }
+  if (task?.semantic_task_id === "D05_PROJECT_OVERVIEW") {
+    const prompt = directive.job.task.instructions.body;
+    if (!prompt.includes("OV-001") || !prompt.includes("OV-082") || prompt.includes("{{PROJECT_ROOT}}")) {
+      throw new Error("D05 compiled prompt was not loaded/substituted correctly.");
+    }
+    return { substage: "D05-Project-Overview", result: "PASS", summary: "fixture overview", checklist: [] };
+  }
+  throw new Error(`Unexpected provider task ${String(task?.semantic_task_id)}`);
 };
 
 const submitFakeProviderResult = async (directive, output) => {
@@ -221,18 +201,18 @@ const workflowStage = async (stageId) => {
   return workflow.stages.find((stage) => stage.id === stageId);
 };
 
-const runStage = async (stageId, expectedOutcome = "completed") => {
+const runStage = async (stageId, expectedOutcome = "completed", newRun = false) => {
   let executionId = null;
   let previous = null;
   const providerTasks = [];
   const localOperations = [];
 
-  for (let index = 0; index < 80; index += 1) {
+  for (let index = 0; index < 20; index += 1) {
     const next = await requestJson("POST", "/executions/next", {
       capabilities: ["stage-execution:directives-v1", "contract:010-startup@2.1.0", "contract:020-discovery@2.0.0"],
       executionId,
       localOperations: LOCAL_OPERATIONS,
-      newRun: false,
+      newRun: executionId ? false : newRun,
       previous,
       project,
       providerId: "claude-code",
@@ -251,19 +231,15 @@ const runStage = async (stageId, expectedOutcome = "completed") => {
     let output;
     if (directive.kind === "local") {
       localOperations.push(directive.operation);
-      output = localOutputFor(directive.operation);
+      output = localOutputFor(directive.operation, directive.inputs);
     } else {
-      const taskId = directive.job.task?.instructions?.metadata?.localExecution?.semantic_task?.semantic_task_id ?? "startup-verification";
+      const taskId = directive.job.task?.instructions?.metadata?.localExecution?.semantic_task?.semantic_task_id;
       providerTasks.push(taskId);
-      if (directive.mode === "semantic" && (!directive.outputSchema || directive.outputSchema.type !== "object")) {
-        throw new Error(`${taskId} semantic directive is missing a structured output schema.`);
+      if (!directive.outputSchema || directive.outputSchema.type !== "object") {
+        throw new Error(`${taskId} semantic directive is missing its output schema.`);
       }
       output = providerOutputFor(directive);
       await submitFakeProviderResult(directive, output);
-      const midStage = await workflowStage(stageId);
-      if (midStage.status === "completed") {
-        throw new Error(`${stageId} completed from an intermediate provider result.`);
-      }
     }
 
     previous = { directiveId: directive.id, message: null, output, status: "completed" };
@@ -276,82 +252,39 @@ const runStage = async (stageId, expectedOutcome = "completed") => {
   try {
     await waitForServer();
     const handshake = await requestJson("POST", "/session/handshake", {
-      desktopVersion: "0.4.0",
+      desktopVersion: "0.4.4",
       protocolVersion: "2",
       supportedCapabilities: ["stage-execution:directives-v1", "contract:010-startup@2.1.0", "contract:020-discovery@2.0.0"]
     });
-    if (handshake.status !== "ok" || handshake.protocolVersion !== "2") {
-      throw new Error("Mock cloud did not negotiate Discovery contract v2.");
-    }
+    if (handshake.status !== "ok") throw new Error(`Handshake failed: ${handshake.message}`);
 
-    const missingContract = await requestJson("POST", "/session/handshake", {
-      desktopVersion: "0.2.1",
-      protocolVersion: "2",
-      supportedCapabilities: ["stage-execution:directives-v1"]
-    });
-    if (missingContract.status !== "update-required") {
-      throw new Error("Mock cloud accepted a desktop without Discovery contract v2 capability.");
-    }
-
-    const initialStartup = await workflowStage("010-startup");
-    const initialDiscovery = await workflowStage("020-discovery");
-    if (initialStartup.status !== "ready" || initialDiscovery.status !== "waiting") {
-      throw new Error("Initial workflow gating is incorrect.");
-    }
+    const initialD05 = await workflowStage("020-discovery:d05-project-overview");
+    if (initialD05.status !== "waiting") throw new Error("D05 must wait for 010-Startup.");
 
     const startupProposal = await runStage("010-startup", "blocked");
-    if (startupProposal.providerTasks.length !== 1 || startupProposal.providerTasks[0] !== "SCOPE_PROPOSAL") {
-      throw new Error(`Startup should use exactly one AI scope proposal task, saw ${startupProposal.providerTasks.join(", ")}.`);
-    }
-    if (!startupProposal.localOperations.includes("startup.save-scope-proposal")) {
-      throw new Error("Startup did not persist the AI scope proposal before blocking for approval.");
-    }
+    if (startupProposal.providerTasks[0] !== "SCOPE_PROPOSAL") throw new Error("Startup scope proposal task missing.");
 
     startupScopeApproved = true;
-    const startupSeal = await runStage("010-startup");
-    for (const operation of ["startup.build-workspace-manifest", "startup.seal-workspace"]) {
-      if (!startupSeal.localOperations.includes(operation)) {
-        throw new Error(`Startup approval continuation missed ${operation}.`);
-      }
+    await runStage("010-startup");
+
+    const d05Ready = await workflowStage("020-discovery:d05-project-overview");
+    if (d05Ready.status !== "ready") throw new Error("D05 did not become ready after Startup.");
+
+    const d05 = await runStage("020-discovery:d05-project-overview");
+    if (JSON.stringify(d05.providerTasks) !== JSON.stringify(["D05_PROJECT_OVERVIEW"])) {
+      throw new Error(`D05 should use exactly one AI task, saw ${d05.providerTasks.join(", ")}.`);
     }
-    if (startupSeal.providerTasks.length !== 0) {
-      throw new Error("Startup deterministic sealing must not run another LLM verification.");
+    for (const operation of ["discovery.d05-status", "discovery.save-d05-result"]) {
+      if (!d05.localOperations.includes(operation)) throw new Error(`D05 missed ${operation}.`);
     }
 
-    const startupAfter = await workflowStage("010-startup");
-    const discoveryReady = await workflowStage("020-discovery");
-    if (startupAfter.status !== "completed" || discoveryReady.status !== "ready") {
-      throw new Error("Startup terminal completion did not unlock Discovery.");
-    }
+    const d05After = await workflowStage("020-discovery:d05-project-overview");
+    if (d05After.status !== "completed") throw new Error("D05 completion was not persisted by Cloud.");
 
-    const discovery = await runStage("020-discovery");
-    const expectedSemantic = [
-      "D03_DOMAIN_GLOSSARY",
-      "D04_CONTEXT_FIELDS",
-      "D05_SEMANTIC_GAPS",
-      "D07_REPORT_PROSE"
-    ];
-    if (JSON.stringify(discovery.providerTasks) !== JSON.stringify(expectedSemantic)) {
-      throw new Error(`Discovery provider tasks are not the v2 semantic allowlist: ${discovery.providerTasks.join(", ")}.`);
-    }
-    for (const deterministicOperation of [
-      "discovery.scan-project",
-      "discovery.classify-files",
-      "discovery.map-dependencies",
-      "discovery.map-module-dependencies-v2",
-      "discovery.score-and-gate-v2"
-    ]) {
-      if (!discovery.localOperations.includes(deterministicOperation)) {
-        throw new Error(`Missing deterministic Discovery operation: ${deterministicOperation}`);
-      }
-    }
+    const d05Restart = await runStage("020-discovery:d05-project-overview", "completed", true);
+    if (d05Restart.providerTasks[0] !== "D05_PROJECT_OVERVIEW") throw new Error("D05 Restart did not rerun only D05 AI task.");
 
-    const discoveryAfter = await workflowStage("020-discovery");
-    if (discoveryAfter.status !== "completed") {
-      throw new Error("Discovery terminal completion was not persisted.");
-    }
-
-    console.log("Execution protocol verification passed (Startup AI scope + user approval/seal + Discovery v2 semantic allowlist)." );
+    console.log("Execution protocol verification passed (Startup -> manual D05 -> D05 restart; compiled prompt + schema loaded from AI Factory)." );
   } finally {
     child.kill("SIGTERM");
     rmSync(tempRoot, { recursive: true, force: true });

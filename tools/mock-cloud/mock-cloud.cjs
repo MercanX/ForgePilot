@@ -8,6 +8,7 @@ const PORT = Number(process.env.FORGEPILOT_MOCK_CLOUD_PORT ?? 4317);
 const jobs = new Map();
 const STARTUP_STAGE_ID = "010-startup";
 const DISCOVERY_STAGE_ID = "020-discovery";
+const DISCOVERY_D05_STAGE_ID = "020-discovery:d05-project-overview";
 const LEGACY_DISCOVERY_FINAL_STAGE_ID = "020-discovery:build-context";
 const executions = new Map();
 
@@ -58,6 +59,12 @@ const markStagePassed = (projectId, stageId) => {
   passedStagesByProject.get(projectId).add(stageId);
   persistPassedStagesByProject();
 };
+
+const unmarkStagePassed = (projectId, stageId) => {
+  if (!projectId || !stageId) return;
+  passedStagesByProject.get(projectId)?.delete(stageId);
+  persistPassedStagesByProject();
+};
 const STARTUP_CONTRACT_PATH =
   process.env.FORGEPILOT_STARTUP_CONTRACT ??
   "C:\\Github\\aiFactory\\.ai-factory\\010-Startup\\STARTUP_CONTRACT.json";
@@ -75,6 +82,16 @@ const getStartupProviderTask = (taskId) => {
     rulePath: path.resolve(path.dirname(STARTUP_CONTRACT_PATH), task.rule)
   };
 };
+
+const DISCOVERY_D05_PROMPT_PATH =
+  process.env.FORGEPILOT_DISCOVERY_D05_PROMPT ??
+  "C:\\Github\\aiFactory\\.ai-factory\\020-Discovery\\D05-Project-Overview\\prompt\\project-overview.compiled.prompt.md";
+const DISCOVERY_D05_SCHEMA_PATH =
+  process.env.FORGEPILOT_DISCOVERY_D05_SCHEMA ??
+  "C:\\Github\\aiFactory\\.ai-factory\\020-Discovery\\D05-Project-Overview\\contracts\\project-overview-output.schema.json";
+
+const loadDiscoveryD05Prompt = () => readFileSync(DISCOVERY_D05_PROMPT_PATH, "utf8");
+const loadDiscoveryD05Schema = () => JSON.parse(readFileSync(DISCOVERY_D05_SCHEMA_PATH, "utf8"));
 
 
 const sendJson = (response, statusCode, payload) => {
@@ -122,8 +139,7 @@ const getLastJsonObject = (outputChunks) => {
 const buildStages = (projectId) => {
   const passed = getProjectStageSet(projectId);
   const startupCompleted = passed.has(STARTUP_STAGE_ID);
-  const discoveryCompleted =
-    passed.has(DISCOVERY_STAGE_ID) || passed.has(LEGACY_DISCOVERY_FINAL_STAGE_ID);
+  const d05Completed = passed.has(DISCOVERY_D05_STAGE_ID);
 
   return [
     {
@@ -137,13 +153,21 @@ const buildStages = (projectId) => {
     {
       id: DISCOVERY_STAGE_ID,
       name: "020-Discovery",
-      status: discoveryCompleted ? "completed" : startupCompleted ? "ready" : "waiting",
-      progress: discoveryCompleted ? 100 : 0,
-      currentAgent: startupCompleted ? "Discovery Agent" : null,
-      currentOperation: discoveryCompleted
-        ? "Discovery jobs completed."
+      status: "waiting",
+      progress: d05Completed ? 7 : 0,
+      currentAgent: startupCompleted ? "Discovery" : null,
+      currentOperation: startupCompleted ? "Select a Discovery sub-stage." : null
+    },
+    {
+      id: DISCOVERY_D05_STAGE_ID,
+      name: "D05 Project Overview",
+      status: d05Completed ? "completed" : startupCompleted ? "ready" : "waiting",
+      progress: d05Completed ? 100 : 0,
+      currentAgent: startupCompleted ? "D05 Project Overview Agent" : null,
+      currentOperation: d05Completed
+        ? "Project Overview audit completed."
         : startupCompleted
-          ? "Waiting for execution directive"
+          ? "Ready for manual start."
           : null
     },
     {
@@ -172,7 +196,6 @@ const buildStages = (projectId) => {
     }
   ];
 };
-
 const createStartupScopePrompt = (requestBody) => {
   const task = getStartupProviderTask("SCOPE_PROPOSAL");
   const rule = readRule(task.rulePath);
@@ -256,11 +279,27 @@ const createDiscoverySemanticPrompt = (requestBody) => {
   throw new Error(`Unsupported Discovery semantic task: ${String(taskId)}`);
 };
 
+const createDiscoveryD05Prompt = (requestBody) => {
+  const task = requestBody.localExecution?.semantic_task ?? {};
+  const runtimeInputs = task.runtime_inputs ?? {};
+  const template = loadDiscoveryD05Prompt();
+
+  return template
+    .replaceAll("{{PROJECT_ROOT}}", requestBody.project.rootPath)
+    .replaceAll("{{STARTUP_SCOPE_JSON}}", JSON.stringify(runtimeInputs.startup_scope ?? {}))
+    .replaceAll("{{STARTUP_SEAL_JSON}}", JSON.stringify(runtimeInputs.startup_seal ?? {}))
+    .replaceAll("{{DISCOVERY_CONTEXT_JSON}}", JSON.stringify(runtimeInputs.discovery_context ?? {}));
+};
+
 const createPrompt = (requestBody) => {
   const semanticTask = requestBody.localExecution?.semantic_task?.semantic_task_id;
 
   if (semanticTask === "SCOPE_PROPOSAL") {
     return createStartupScopePrompt(requestBody);
+  }
+
+  if (semanticTask === "D05_PROJECT_OVERVIEW") {
+    return createDiscoveryD05Prompt(requestBody);
   }
 
   if (typeof semanticTask === "string") {
@@ -269,11 +308,14 @@ const createPrompt = (requestBody) => {
 
   throw new Error("Provider job does not identify a supported semantic task.");
 };
-
 const getStageId = (requestBody) => {
   const semanticTask = requestBody.localExecution?.semantic_task?.semantic_task_id;
   if (semanticTask === "SCOPE_PROPOSAL") {
     return "010-startup:scope-proposal";
+  }
+
+  if (semanticTask === "D05_PROJECT_OVERVIEW") {
+    return DISCOVERY_D05_STAGE_ID;
   }
 
   if (typeof semanticTask === "string") {
@@ -282,21 +324,23 @@ const getStageId = (requestBody) => {
 
   return "unknown";
 };
-
-const createTask = (jobId, requestBody) => ({
-  id: randomUUID(),
-  jobId,
-  instructions: {
-    body: createPrompt(requestBody),
-    format: "plain-text",
-    metadata: {
-      localExecution: requestBody.localExecution ?? null,
-      source: "mock-cloud",
-      stageId: getStageId(requestBody)
-    }
-  },
-  timeoutMs: 300000
-});
+const createTask = (jobId, requestBody) => {
+  const stageId = getStageId(requestBody);
+  return {
+    id: randomUUID(),
+    jobId,
+    instructions: {
+      body: createPrompt(requestBody),
+      format: "plain-text",
+      metadata: {
+        localExecution: requestBody.localExecution ?? null,
+        source: "mock-cloud",
+        stageId
+      }
+    },
+    timeoutMs: stageId === DISCOVERY_D05_STAGE_ID ? 900000 : 300000
+  };
+};
 
 const createJob = (requestBody) => {
   const jobId = randomUUID();
@@ -355,6 +399,9 @@ const semanticOutputSchema = (localExecution) => {
   const taskId = localExecution?.semantic_task?.semantic_task_id;
   if (taskId === "SCOPE_PROPOSAL") {
     return getStartupProviderTask("SCOPE_PROPOSAL").output_schema;
+  }
+  if (taskId === "D05_PROJECT_OVERVIEW") {
+    return loadDiscoveryD05Schema();
   }
   return discoverySemanticOutputSchema(localExecution);
 };
@@ -932,6 +979,83 @@ const discoveryDirectiveFor = (session) => {
   return terminalDirective("completed", "Discovery v2 completed successfully.", 100);
 };
 
+const discoveryD05DirectiveFor = (session) => {
+  if (!hasOutput(session, "d05Status")) {
+    return localDirective(
+      "discovery.d05-status",
+      { reset: session.newRun === true },
+      "d05Status",
+      [
+        session.newRun ? "Resetting only D05 Project Overview state." : "Checking D05 Project Overview prerequisites.",
+        session.newRun ? "D05 Project Overview state reset." : "D05 Project Overview prerequisites verified."
+      ],
+      [12, 18]
+    );
+  }
+
+  const status = outputObject(session, "d05Status");
+  if (status.state === "completed") {
+    return terminalDirective(
+      "completed",
+      "D05 Project Overview is already completed for this sealed workspace. Use Restart to run D05 again.",
+      100
+    );
+  }
+
+  if (!hasOutput(session, "d05Result")) {
+    return providerDirective(
+      session,
+      {
+        semantic_task: {
+          semantic_task_id: "D05_PROJECT_OVERVIEW",
+          runtime_inputs: {
+            audit_id: status.audit_id ?? null,
+            discovery_context: status.discovery_context ?? {},
+            startup_scope: status.startup_scope ?? {},
+            startup_seal: status.startup_seal ?? {}
+          }
+        }
+      },
+      "semantic",
+      false,
+      "d05Result",
+      [
+        "AI is running D05 Project Overview against the approved Startup scope.",
+        "D05 Project Overview AI audit completed."
+      ],
+      [20, 90]
+    );
+  }
+
+  if (!hasOutput(session, "d05Saved")) {
+    return localDirective(
+      "discovery.save-d05-result",
+      { result: session.context.d05Result },
+      "d05Saved",
+      [
+        "Validating D05 evidence, checklist coverage, and canonical records.",
+        "D05 Project Overview result saved to the active audit snapshot."
+      ],
+      [92, 99]
+    );
+  }
+
+  const saved = outputObject(session, "d05Saved");
+  if (saved.result === "BLOCKED") {
+    return terminalDirective(
+      "blocked",
+      "D05 Project Overview returned BLOCKED. Review the recorded unknowns/limitations before retrying.",
+      99
+    );
+  }
+
+  return terminalDirective(
+    "completed",
+    `D05 Project Overview completed (${String(saved.result ?? "UNKNOWN")}); ${String(saved.finding_count ?? 0)} findings, ${String(saved.unknown_count ?? 0)} unknowns, ${String(saved.checklist_count ?? 0)} checklist dispositions.`,
+    100
+  );
+};
+
 const nextDirectiveFor = (session) => {
   if (session.failure) {
     return terminalDirective("failed", session.failure, session.lastProgress ?? 0);
@@ -942,7 +1066,15 @@ const nextDirectiveFor = (session) => {
   }
 
   if (session.stageId === DISCOVERY_STAGE_ID) {
-    return discoveryDirectiveFor(session);
+    return terminalDirective(
+      "blocked",
+      "020-Discovery is a stage group. Start D05 Project Overview manually.",
+      0
+    );
+  }
+
+  if (session.stageId === DISCOVERY_D05_STAGE_ID) {
+    return discoveryD05DirectiveFor(session);
   }
 
   return terminalDirective(
@@ -951,7 +1083,6 @@ const nextDirectiveFor = (session) => {
     0
   );
 };
-
 const applyPreviousResult = (session, previous) => {
   if (previous.directiveId === session.lastAppliedDirectiveId) {
     return;
@@ -1002,6 +1133,9 @@ const createExecution = (body) => {
 };
 
 const handleExecutionNext = (body) => {
+  if (!body.executionId && body.newRun === true && body.stageId === DISCOVERY_D05_STAGE_ID) {
+    unmarkStagePassed(body.project?.id, DISCOVERY_D05_STAGE_ID);
+  }
   const session = body.executionId ? executions.get(body.executionId) : createExecution(body);
 
   if (!session) {
@@ -1064,24 +1198,38 @@ const server = http.createServer(async (request, response) => {
       const startupRuntimeCompatible = startupContract.contract_version === "2.1.0";
       const startupContractCompatible = capabilities.includes("contract:010-startup@2.1.0");
       const discoveryContractCompatible = capabilities.includes("contract:020-discovery@2.0.0");
+      let d05RuntimeCompatible = false;
+      try {
+        const d05Prompt = loadDiscoveryD05Prompt();
+        const d05Schema = loadDiscoveryD05Schema();
+        d05RuntimeCompatible =
+          d05Prompt.includes("OV-001") &&
+          d05Prompt.includes("OV-082") &&
+          d05Schema?.properties?.substage?.enum?.includes("D05-Project-Overview");
+      } catch {
+        d05RuntimeCompatible = false;
+      }
       const compatible =
         protocolCompatible &&
         startupRuntimeCompatible &&
         startupContractCompatible &&
-        discoveryContractCompatible;
+        discoveryContractCompatible &&
+        d05RuntimeCompatible;
       sendJson(response, 200, {
         status: compatible ? "ok" : "update-required",
-        serverVersion: "mock-0.4.0",
+        serverVersion: "mock-0.4.4-d05",
         protocolVersion: "2",
         message: compatible
-          ? "Mock cloud connected (Startup 2.1.0, Discovery 2.0.0)"
+          ? "Mock cloud connected (Startup 2.1.0, Discovery D05 trial)"
           : !protocolCompatible
             ? "Desktop protocol v2 is required for server-driven execution directives."
             : !startupRuntimeCompatible
               ? `AI Factory Startup runtime contract 2.1.0 is required; server loaded ${String(startupContract.contract_version ?? "unknown")}.`
               : !startupContractCompatible
                 ? "Desktop must support AI Factory Startup contract 2.1.0."
-                : "Desktop must support AI Factory Discovery contract 2.0.0."
+                : !discoveryContractCompatible
+                  ? "Desktop must support AI Factory Discovery contract 2.0.0."
+                  : "AI Factory D05 runtime files are missing or invalid. Expected the approved D05 compiled prompt and output schema."
       });
       return;
     }

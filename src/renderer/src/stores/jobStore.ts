@@ -143,7 +143,7 @@ export const useJobStore = create<JobStoreState>((set) => ({
                   };
                 }
 
-                if (newRun && index > stageIndex) {
+                if (newRun && stageId === "010-startup" && index > stageIndex) {
                   return {
                     ...stage,
                     activity: [],
@@ -197,7 +197,7 @@ export const useJobStore = create<JobStoreState>((set) => ({
         providerId: provider.id,
         serverUrl,
         stageId,
-        timeoutMs: 300_000
+        timeoutMs: stageId?.startsWith("020-discovery:") ? 900_000 : 300_000
       });
       const finalOperation = getFinalOperation(lastRun);
       set({

@@ -484,3 +484,33 @@ export const runSealWorkspaceJob = async (projectRootPath: string): Promise<Star
   await writeJson(sealPath(projectRootPath), seal);
   return seal;
 };
+
+export type StartupWorkspaceSnapshotVerification = {
+  current_workspace_hash: string;
+  expected_workspace_hash: string;
+  matches: boolean;
+};
+
+export const verifyStartupWorkspaceSnapshot = async (
+  projectRootPath: string
+): Promise<StartupWorkspaceSnapshotVerification> => {
+  const scope = await readScope(projectRootPath);
+  const seal = await readSeal(projectRootPath);
+
+  if (!scope || scope.status !== "approved" || !scope.approved || !scope.scope_hash) {
+    throw new Error("Startup scope is not approved.");
+  }
+  if (!seal || seal.status !== "READY_FOR_DISCOVERY" || seal.scope_hash !== scope.scope_hash) {
+    throw new Error("Startup seal is missing or does not match the approved scope.");
+  }
+
+  const files = await collectApprovedFiles(projectRootPath, scope.approved);
+  const canonicalFiles = files.map((file) => `${file.path}\0${file.size}\0${file.sha256}`).join("\n");
+  const currentWorkspaceHash = sha256(`scope:${scope.scope_hash}\n${canonicalFiles}`);
+
+  return {
+    current_workspace_hash: currentWorkspaceHash,
+    expected_workspace_hash: seal.workspace_hash,
+    matches: currentWorkspaceHash === seal.workspace_hash
+  };
+};

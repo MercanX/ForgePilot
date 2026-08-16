@@ -16,10 +16,8 @@ export type MainWindowOptions = {
 };
 
 export const DEFAULT_WINDOW_BOUNDS = {
-  width: 1180,
-  height: 760,
-  minWidth: 960,
-  minHeight: 640
+  width: 1440,
+  height: 900
 } as const;
 
 export const getDefaultWebPreferences = (preloadPath: string): WebPreferences => ({
@@ -36,6 +34,7 @@ export const createMainWindow = async (
 ): Promise<ElectronBrowserWindow> => {
   const mainWindow = new BrowserWindow({
     ...DEFAULT_WINDOW_BOUNDS,
+    resizable: false,
     show: false,
     title: "ForgePilot",
     webPreferences: getDefaultWebPreferences(join(__dirname, "../preload/index.cjs"))

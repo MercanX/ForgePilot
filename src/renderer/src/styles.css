@@ -171,9 +171,16 @@ h1 {
 
 .dashboard-summary-grid {
   display: grid;
-  grid-template-columns: minmax(220px, 1.4fr) repeat(3, minmax(150px, 0.7fr));
-  gap: 10px;
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: 14px;
   margin: 0;
+}
+
+.dashboard-summary-status {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  min-width: 0;
 }
 
 .dashboard-summary-card {
@@ -406,8 +413,8 @@ h1 {
 
 .dashboard-grid {
   display: grid;
-  grid-template-columns: minmax(220px, 0.7fr) minmax(0, 1.3fr);
-  gap: 18px;
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: 14px;
 }
 
 .stage-rail,
@@ -866,6 +873,7 @@ h1 {
   }
 
   .dashboard-summary-grid,
+  .dashboard-summary-status,
   .settings-status-grid {
     grid-template-columns: 1fr;
   }

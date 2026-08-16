@@ -7,6 +7,10 @@
 
 ## 2026-08-16
 
+- Aligned dashboard summary cards with the stage area using a consistent two-column layout for improved visual coherence.
+- Set the ForgePilot main window to open at a fixed 1440x900 size and disabled user resizing while preserving the native menu bar.
+- Grouped Cloud, Provider, and Model status cards into a dedicated status container for better visual separation and responsive behavior.
+
 - Reworked dashboard runtime summary into a card-based layout with Project, Cloud, Provider, and Model status indicators.
 - Added color-coded connection states to runtime cards, highlighting active and missing provider/model configurations.
 - Moved provider environment check from dashboard to Settings page and added a runtime status section there.
@@ -15,6 +19,8 @@
 
 - Dashboard runtime özeti kartlı hale getirildi; Project, Cloud, Provider ve Model bilgileri daha görünür biçimde gösteriliyor.
 - Bağlı/aktif Dashboard ve Settings runtime kartları koyu renkli durum yüzeyleriyle vurgulandı; eksik provider/model durumları uyarı rengiyle ayrıştırıldı.
+- Dashboard üst runtime kartları ve alt stage alanı aynı iki kolon hizasına alındı; `Project` kartı `Stages` paneliyle, sağdaki üç durum kartı `Stage` detay paneliyle aynı başlangıç/bitiş çizgisini kullanıyor.
+- ForgePilot ana penceresi açılışta sabit `1440x900` boyutunda açılacak ve kullanıcı tarafından yeniden boyutlandırılamayacak şekilde ayarlandı; native menü çubuğu korunuyor.
 - Provider environment check alanı Dashboard altından Settings sayfasına taşındı ve Settings'e Cloud/Provider/Model runtime status bölümü eklendi.
 - Global üst durum barı tekrar eden Cloud/Provider bilgisinden arındırılıp bridge durumuna sadeleştirildi.
 

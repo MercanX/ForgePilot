@@ -19,6 +19,11 @@ olarak düzenlendi ve seçili model bilgisi eklendi.
 - Provider environment check kartları Settings sayfasına taşındı.
 - Settings sayfasına Cloud, Provider ve Model bilgisini gösteren runtime status
   bölümü eklendi.
+- Ana pencere açılışta sabit `1440x900` boyutunda açılır ve kullanıcı tarafından
+  yeniden boyutlandırılamaz hale getirildi; native menü çubuğu korunur.
+- Dashboard iki kolon hizasına alındı: `Project` kartı ve `Stages` paneli aynı
+  sol kolon genişliğini, `Cloud/Provider/Model` kartları ve `Stage` detay paneli
+  aynı sağ kolon başlangıç/bitiş hizasını kullanır.
 
 ## Doğrulama
 
@@ -26,6 +31,9 @@ olarak düzenlendi ve seçili model bilgisi eklendi.
 
 - `corepack pnpm exec eslint src/renderer/src/App.tsx src/renderer/src/pages/DashboardPage.tsx src/renderer/src/pages/SettingsPage.tsx src/services/jobs/stageExecutionService.ts`
 - `corepack pnpm exec eslint src/renderer/src/pages/DashboardPage.tsx src/renderer/src/pages/SettingsPage.tsx`
+- `corepack pnpm exec eslint src/main/app/window.ts src/renderer/src/pages/DashboardPage.tsx`
+- `corepack pnpm exec eslint src/main/app/window.ts`
+- `corepack pnpm vitest run tests/main/window.test.ts tests/main/security.test.ts`
 
 Çalıştırıldı ancak repo genelindeki eski test fixture uyumsuzlukları nedeniyle
 geçmedi:

@@ -275,29 +275,31 @@ export const DashboardPage = (): ReactElement => {
             <dt>Project</dt>
             <dd>{activeProject.rootPath}</dd>
           </div>
-          <div
-            className={`dashboard-summary-card ${
-              cloudConnected ? "summary-card-connected" : "summary-card-warning"
-            }`}
-          >
-            <dt>Cloud</dt>
-            <dd>{cloudMessage}</dd>
-          </div>
-          <div
-            className={`dashboard-summary-card ${
-              selectedProvider ? "summary-card-connected" : "summary-card-warning"
-            }`}
-          >
-            <dt>Provider</dt>
-            <dd>{selectedProvider?.label ?? "No installed provider"}</dd>
-          </div>
-          <div
-            className={`dashboard-summary-card ${
-              selectedModel ? "summary-card-connected" : "summary-card-warning"
-            }`}
-          >
-            <dt>Model</dt>
-            <dd>{selectedModel ?? "No model selected"}</dd>
+          <div className="dashboard-summary-status">
+            <div
+              className={`dashboard-summary-card ${
+                cloudConnected ? "summary-card-connected" : "summary-card-warning"
+              }`}
+            >
+              <dt>Cloud</dt>
+              <dd>{cloudMessage}</dd>
+            </div>
+            <div
+              className={`dashboard-summary-card ${
+                selectedProvider ? "summary-card-connected" : "summary-card-warning"
+              }`}
+            >
+              <dt>Provider</dt>
+              <dd>{selectedProvider?.label ?? "No installed provider"}</dd>
+            </div>
+            <div
+              className={`dashboard-summary-card ${
+                selectedModel ? "summary-card-connected" : "summary-card-warning"
+              }`}
+            >
+              <dt>Model</dt>
+              <dd>{selectedModel ?? "No model selected"}</dd>
+            </div>
           </div>
         </dl>
       </section>

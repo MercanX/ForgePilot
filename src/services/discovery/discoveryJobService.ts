@@ -5,7 +5,7 @@ import mammoth from "mammoth";
 import { PDFParse } from "pdf-parse";
 import { parse as parseToml } from "smol-toml";
 
-import { isDirectory, runGit, toPosixRelative } from "../shared/fsUtils";
+import { isDirectory, isFile, runGit, toPosixRelative } from "../shared/fsUtils";
 
 export type ScanProjectResult = {
   directory_count: number;
@@ -117,6 +117,110 @@ const ROOT_EXCLUDED_DIRECTORIES = new Set([
   "vendor"
 ]);
 const EXCLUDED_FILE_NAME = "RUN_ENV.json";
+const RUNS_DIR = ".ai-factory-runs";
+
+type ScopePolicy = {
+  exclude: string[];
+  include: string[];
+  source: string | null;
+};
+
+const normalizeScopePath = (value: string): string =>
+  value
+    .trim()
+    .replace(/^`|`$/g, "")
+    .replaceAll("\\", "/")
+    .replace(/^\.\//, "")
+    .replace(/^\/+|\/+$/g, "");
+
+const parseScopeList = (body: string, heading: "Include" | "Exclude"): string[] => {
+  const lines = body.split(/\r?\n/);
+  const headingIndex = lines.findIndex((line) => line.trim().toLowerCase() === `## ${heading.toLowerCase()}`);
+
+  if (headingIndex === -1) {
+    return [];
+  }
+
+  const values: string[] = [];
+
+  for (let index = headingIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index].trim();
+
+    if (line.startsWith("## ")) {
+      break;
+    }
+
+    const match = /^[-*+]\s+(.+)$/.exec(line);
+
+    if (!match) {
+      continue;
+    }
+
+    const value = normalizeScopePath(match[1]);
+
+    if (value && value !== "-") {
+      values.push(value);
+    }
+  }
+
+  return [...new Set(values)].sort();
+};
+
+const readScopePolicy = async (projectRootPath: string): Promise<ScopePolicy> => {
+  const candidatePaths: string[] = [];
+  const runsPath = path.join(projectRootPath, RUNS_DIR);
+
+  try {
+    const runEntries = await readdir(runsPath, { withFileTypes: true });
+    const runIds = runEntries
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort()
+      .reverse();
+
+    for (const runId of runIds) {
+      candidatePaths.push(path.join(runsPath, runId, "SCOPE.md"));
+    }
+  } catch {
+    // A project can be inspected before Startup has produced a run directory.
+  }
+
+  candidatePaths.push(path.join(projectRootPath, "SCOPE.md"));
+
+  for (const candidatePath of candidatePaths) {
+    if (!(await isFile(candidatePath))) {
+      continue;
+    }
+
+    const body = await readFile(candidatePath, "utf8");
+
+    return {
+      exclude: parseScopeList(body, "Exclude"),
+      include: parseScopeList(body, "Include"),
+      source: toPosixRelative(projectRootPath, candidatePath)
+    };
+  }
+
+  return { exclude: [], include: [], source: null };
+};
+
+const pathMatchesOrIsBelow = (relativePath: string, scopePath: string): boolean =>
+  relativePath === scopePath || relativePath.startsWith(`${scopePath}/`);
+
+const isExcludedByScope = (relativePath: string, policy: ScopePolicy): boolean =>
+  policy.exclude.some((scopePath) => pathMatchesOrIsBelow(relativePath, scopePath));
+
+const isIncludedFileByScope = (relativePath: string, policy: ScopePolicy): boolean =>
+  policy.include.length === 0 ||
+  policy.include.some((scopePath) => pathMatchesOrIsBelow(relativePath, scopePath));
+
+const shouldTraverseDirectoryByScope = (relativePath: string, policy: ScopePolicy): boolean =>
+  policy.include.length === 0 ||
+  policy.include.some(
+    (scopePath) =>
+      pathMatchesOrIsBelow(relativePath, scopePath) ||
+      pathMatchesOrIsBelow(scopePath, relativePath)
+  );
 
 const byPath = <T extends { path: string }>(left: T, right: T): number =>
   left.path < right.path ? -1 : left.path > right.path ? 1 : 0;
@@ -159,7 +263,8 @@ const scanTree = async (
   isRootLevel: boolean,
   files: InventoryFile[],
   directories: InventoryDirectory[],
-  vcsStatusFor: (relativePath: string) => VcsStatus
+  vcsStatusFor: (relativePath: string) => VcsStatus,
+  scopePolicy: ScopePolicy
 ): Promise<void> => {
   const entries = await readdir(currentPath, { withFileTypes: true });
 
@@ -175,13 +280,29 @@ const scanTree = async (
     const entryPath = path.join(currentPath, entry.name);
     const relativePath = toPosixRelative(rootPath, entryPath);
 
-    if (entry.isDirectory()) {
-      directories.push({ included: true, path: relativePath });
-      await scanTree(rootPath, entryPath, false, files, directories, vcsStatusFor);
+    if (isExcludedByScope(relativePath, scopePolicy)) {
       continue;
     }
 
-    if (!entry.isFile()) {
+    if (entry.isDirectory()) {
+      if (!shouldTraverseDirectoryByScope(relativePath, scopePolicy)) {
+        continue;
+      }
+
+      directories.push({ included: true, path: relativePath });
+      await scanTree(
+        rootPath,
+        entryPath,
+        false,
+        files,
+        directories,
+        vcsStatusFor,
+        scopePolicy
+      );
+      continue;
+    }
+
+    if (!entry.isFile() || !isIncludedFileByScope(relativePath, scopePolicy)) {
       continue;
     }
 
@@ -232,7 +353,16 @@ export const runScanProjectJob = async (projectRootPath: string): Promise<ScanPr
 
   const files: InventoryFile[] = [];
   const directories: InventoryDirectory[] = [];
-  await scanTree(projectRootPath, projectRootPath, true, files, directories, vcsStatusFor);
+  const scopePolicy = await readScopePolicy(projectRootPath);
+  await scanTree(
+    projectRootPath,
+    projectRootPath,
+    true,
+    files,
+    directories,
+    vcsStatusFor,
+    scopePolicy
+  );
 
   files.sort(byPath);
   directories.sort(byPath);
@@ -255,7 +385,10 @@ export const runScanProjectJob = async (projectRootPath: string): Promise<ScanPr
     exclusion_policy: {
       file_names: [EXCLUDED_FILE_NAME],
       follow_symlinks: false,
-      root_directories: [...ROOT_EXCLUDED_DIRECTORIES].sort()
+      root_directories: [...ROOT_EXCLUDED_DIRECTORIES].sort(),
+      scope_exclude: scopePolicy.exclude,
+      scope_include: scopePolicy.include,
+      scope_source: scopePolicy.source
     },
     files: files.map((file) => file.path),
     metadata: buildMetadata()

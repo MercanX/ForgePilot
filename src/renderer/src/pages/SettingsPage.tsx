@@ -1,5 +1,7 @@
 import { type ReactElement, useEffect } from "react";
 
+import { ProviderPanel } from "@renderer/components/ProviderPanel";
+import { useJobStore } from "@renderer/stores/jobStore";
 import { useProviderStore } from "@renderer/stores/providerStore";
 import { useSettingsStore } from "@renderer/stores/settingsStore";
 import { PROVIDER_IDS } from "@shared/constants/providerIds";
@@ -14,17 +16,26 @@ const PROVIDER_OPTIONS = [
 export const SettingsPage = (): ReactElement => {
   const providers = useProviderStore((state) => state.providers);
   const refreshProviders = useProviderStore((state) => state.refreshProviders);
+  const cloudMessage = useJobStore((state) => state.cloudMessage);
+  const checkCloud = useJobStore((state) => state.checkCloud);
   const errorMessage = useSettingsStore((state) => state.errorMessage);
   const isLoading = useSettingsStore((state) => state.isLoading);
   const loadSettings = useSettingsStore((state) => state.loadSettings);
   const saveSettings = useSettingsStore((state) => state.saveSettings);
   const settings = useSettingsStore((state) => state.settings);
   const activeProviderId = settings.activeProviderId ?? PROVIDER_IDS.claudeCode;
+  const activeProvider =
+    providers.find((provider) => provider.id === activeProviderId) ??
+    providers.find((provider) => provider.installed) ??
+    null;
+  const activeModel = activeProvider ? settings.providerModels[activeProvider.id] : null;
+  const cloudConnected = cloudMessage.toLowerCase().includes("connected");
 
   useEffect(() => {
     void loadSettings();
     void refreshProviders();
-  }, [loadSettings, refreshProviders]);
+    void checkCloud();
+  }, [checkCloud, loadSettings, refreshProviders]);
 
   const updateProvider = (providerId: ProviderId): void => {
     void saveSettings({
@@ -53,6 +64,24 @@ export const SettingsPage = (): ReactElement => {
       </header>
 
       {errorMessage ? <p className="error-message">{errorMessage}</p> : null}
+
+      <section className="settings-section" aria-labelledby="runtime-settings-title">
+        <h2 id="runtime-settings-title">Runtime status</h2>
+        <dl className="settings-status-grid">
+          <div className={cloudConnected ? "summary-card-connected" : "summary-card-warning"}>
+            <dt>Cloud</dt>
+            <dd>{cloudMessage}</dd>
+          </div>
+          <div className={activeProvider ? "summary-card-connected" : "summary-card-warning"}>
+            <dt>Provider</dt>
+            <dd>{activeProvider?.label ?? "Not selected"}</dd>
+          </div>
+          <div className={activeModel ? "summary-card-connected" : "summary-card-warning"}>
+            <dt>Model</dt>
+            <dd>{activeModel ?? "No model selected"}</dd>
+          </div>
+        </dl>
+      </section>
 
       <section className="settings-section" aria-labelledby="provider-settings-title">
         <h2 id="provider-settings-title">Provider</h2>
@@ -94,6 +123,8 @@ export const SettingsPage = (): ReactElement => {
           ))}
         </div>
       </section>
+
+      <ProviderPanel />
     </div>
   );
 };

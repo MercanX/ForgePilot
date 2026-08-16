@@ -1,6 +1,5 @@
 import { type ReactElement, useEffect, useMemo, useState } from "react";
 
-import { ProviderPanel } from "@renderer/components/ProviderPanel";
 import { useJobStore } from "@renderer/stores/jobStore";
 import { useProjectStore } from "@renderer/stores/projectStore";
 import { useProviderStore } from "@renderer/stores/providerStore";
@@ -59,6 +58,7 @@ export const DashboardPage = (): ReactElement => {
     [providers, settings.activeProviderId]
   );
   const selectedModel = selectedProvider ? settings.providerModels[selectedProvider.id] : null;
+  const cloudConnected = cloudMessage.toLowerCase().includes("connected");
   const stages = workflow?.stages ?? [];
   const runnableStage =
     stages.find((stage) => stage.status === "running") ??
@@ -151,7 +151,7 @@ export const DashboardPage = (): ReactElement => {
       (approved?.exclude ?? scope.proposal.exclude.map((item) => item.path)).join("\n")
     );
     setScopeExplicitFilesText((approved?.explicit_files ?? []).join("\n"));
-  }, [startupState?.scope?.approved_at, startupState?.scope?.proposal_created_at]);
+  }, [startupState?.scope]);
 
   const loadStartupState = async (): Promise<void> => {
     if (!activeProject) {
@@ -269,10 +269,37 @@ export const DashboardPage = (): ReactElement => {
         </div>
       </header>
 
-      <section className="dashboard-summary" aria-live="polite">
-        <span>Project: {activeProject.rootPath}</span>
-        <span>Cloud: {cloudMessage}</span>
-        <span>Provider: {selectedProvider?.label ?? "No installed provider"}</span>
+      <section className="dashboard-summary" aria-label="Runtime summary" aria-live="polite">
+        <dl className="dashboard-summary-grid">
+          <div className="dashboard-summary-card dashboard-summary-card-wide summary-card-project">
+            <dt>Project</dt>
+            <dd>{activeProject.rootPath}</dd>
+          </div>
+          <div
+            className={`dashboard-summary-card ${
+              cloudConnected ? "summary-card-connected" : "summary-card-warning"
+            }`}
+          >
+            <dt>Cloud</dt>
+            <dd>{cloudMessage}</dd>
+          </div>
+          <div
+            className={`dashboard-summary-card ${
+              selectedProvider ? "summary-card-connected" : "summary-card-warning"
+            }`}
+          >
+            <dt>Provider</dt>
+            <dd>{selectedProvider?.label ?? "No installed provider"}</dd>
+          </div>
+          <div
+            className={`dashboard-summary-card ${
+              selectedModel ? "summary-card-connected" : "summary-card-warning"
+            }`}
+          >
+            <dt>Model</dt>
+            <dd>{selectedModel ?? "No model selected"}</dd>
+          </div>
+        </dl>
       </section>
 
       {errorMessage ? <p className="error-message">{errorMessage}</p> : null}
@@ -580,8 +607,6 @@ export const DashboardPage = (): ReactElement => {
 
         </div>
       </section>
-
-      <ProviderPanel />
     </div>
   );
 };

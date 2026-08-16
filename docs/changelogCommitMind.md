@@ -7,6 +7,17 @@
 
 ## 2026-08-16
 
+- Reworked dashboard runtime summary into a card-based layout with Project, Cloud, Provider, and Model status indicators.
+- Added color-coded connection states to runtime cards, highlighting active and missing provider/model configurations.
+- Moved provider environment check from dashboard to Settings page and added a runtime status section there.
+- Simplified global status bar to show only bridge status, removing redundant cloud and provider information.
+- Improved ANSI stripping and JSON object extraction robustness in provider output parsing.
+
+- Dashboard runtime özeti kartlı hale getirildi; Project, Cloud, Provider ve Model bilgileri daha görünür biçimde gösteriliyor.
+- Bağlı/aktif Dashboard ve Settings runtime kartları koyu renkli durum yüzeyleriyle vurgulandı; eksik provider/model durumları uyarı rengiyle ayrıştırıldı.
+- Provider environment check alanı Dashboard altından Settings sayfasına taşındı ve Settings'e Cloud/Provider/Model runtime status bölümü eklendi.
+- Global üst durum barı tekrar eden Cloud/Provider bilgisinden arındırılıp bridge durumuna sadeleştirildi.
+
 - Claude Code provider adapter'ından resmi CLI'da bulunmayan `--json-schema` argümanı kaldırıldı; semantic çıktı sözleşmesi artık ForgePilot içinde lokal JSON Schema doğrulamasıyla kontrol ediliyor.
 - Provider process non-zero çıktığında stage hata mesajı genel contract fail yerine stderr/stdout özetini içererek gerçek sağlayıcı hatasını görünür kılıyor.
 - Provider contract doğrulaması, Claude adapter argümanları ve stderr taşıma davranışı için hedefli regresyon testleri eklendi.

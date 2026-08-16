@@ -18,6 +18,7 @@ import type { Job, ProviderOutputChunk, TaskResult } from "@shared/schemas/job";
 
 import { createHttpClient, type HttpClient } from "../api/httpClient";
 import { createTaskExecutionService, type TaskExecutionService } from "../tasks/taskExecutionService";
+
 import { createLocalOperationRegistry, type LocalOperationRegistry } from "./localOperationRegistry";
 import { createStageExecutionJournal, type StageExecutionJournal } from "./stageExecutionJournal";
 
@@ -67,8 +68,12 @@ const emit = (
  * CLI JSON envelope whose `result` field contains the model text. Recover the
  * last valid object without trusting prose around it.
  */
-const stripAnsi = (value: string): string =>
-  value.replace(/\u001B(?:\[[0-?]*[ -\/]*[@-~]|\][^\u0007]*(?:\u0007|\u001B\\))/g, "");
+const ANSI_PATTERN = new RegExp(
+  String.raw`\u001B(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007]*(?:\u0007|\u001B\\))`,
+  "g"
+);
+
+const stripAnsi = (value: string): string => value.replace(ANSI_PATTERN, "");
 
 const isJsonObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -191,7 +196,12 @@ const parseProviderText = (rawText: string): Record<string, unknown> | null => {
 
     const nestedObjects = extractJsonObjects(fenced);
     for (let nestedIndex = nestedObjects.length - 1; nestedIndex >= 0; nestedIndex -= 1) {
-      const parsed = parseJsonObjectText(nestedObjects[nestedIndex]);
+      const nestedObject = nestedObjects[nestedIndex];
+      if (!nestedObject) {
+        continue;
+      }
+
+      const parsed = parseJsonObjectText(nestedObject);
       if (parsed) {
         return unwrapProviderJsonEnvelope(parsed);
       }
@@ -201,7 +211,12 @@ const parseProviderText = (rawText: string): Record<string, unknown> | null => {
   // Finally recover the last complete JSON object from arbitrary prose.
   const objects = extractJsonObjects(text);
   for (let index = objects.length - 1; index >= 0; index -= 1) {
-    const parsed = parseJsonObjectText(objects[index]);
+    const object = objects[index];
+    if (!object) {
+      continue;
+    }
+
+    const parsed = parseJsonObjectText(object);
     if (parsed) {
       return unwrapProviderJsonEnvelope(parsed);
     }

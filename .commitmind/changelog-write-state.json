@@ -1,5 +1,5 @@
 {
-  "lastFingerprint": "033ff9af84e85a186822453aeea6c6b7991101f5",
+  "lastFingerprint": "9e7262481fbf7bd88f14160337695b826daa4614",
   "lastDate": "2026-08-16",
-  "lastContent": "- Added an interactive audit scope panel to the dashboard for reviewing and editing the AI-proposed project boundary before startup execution.\n- Introduced new IPC channels for retrieving startup state and approving scope, replacing the previous file-opening mechanism.\n- Enabled users to approve, modify, or reject include/exclude lists and explicit file overrides, ensuring final authority over AI access.\n- Updated the startup stage to block execution until scope approval is granted, preventing unintended file inspection.\n- Bumped the application version to 0.4.0 to reflect the new scope approval workflow."
+  "lastContent": "- Reworked dashboard runtime summary into a card-based layout with Project, Cloud, Provider, and Model status indicators.\n- Added color-coded connection states to runtime cards, highlighting active and missing provider/model configurations.\n- Moved provider environment check from dashboard to Settings page and added a runtime status section there.\n- Simplified global status bar to show only bridge status, removing redundant cloud and provider information.\n- Improved ANSI stripping and JSON object extraction robustness in provider output parsing."
 }

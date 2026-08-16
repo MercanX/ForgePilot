@@ -12,6 +12,7 @@ import type {
   WorkflowStage
 } from "@shared/schemas/run";
 
+import { runD05StatusJob } from "../discovery/discoverySubstageService";
 import { runScopeStatusJob } from "../startup/startupJobService";
 
 const STATE_RELATIVE_PATH = path.join(".forgepilot", "ai-factory-state.json");
@@ -257,6 +258,14 @@ export const createProjectWorkflowState = (projectRootPath: string): ProjectWork
       const document = await read();
       const startupStatus = await runScopeStatusJob(projectRootPath, false);
       const startupSealed = startupStatus.sealed;
+      let d05Completed = false;
+      if (startupSealed) {
+        try {
+          d05Completed = (await runD05StatusJob(projectRootPath, false)).state === "completed";
+        } catch {
+          d05Completed = false;
+        }
+      }
       const stages = workflow.stages.map((stage): WorkflowStage => {
         const local = document.stages[stage.id];
 
@@ -284,6 +293,19 @@ export const createProjectWorkflowState = (projectRootPath: string): ProjectWork
             currentOperation: startupSealed ? "Ready for manual start." : null,
             progress: 0,
             status: startupSealed ? "ready" : "waiting"
+          };
+        }
+
+        // D10 is a real executable Discovery sub-stage. It is never auto-run.
+        // Its only required prerequisite is a completed D05 snapshot for the
+        // same sealed workspace; local audit artifacts are the readiness truth.
+        if (stage.id === "020-d10-architecture" && !local) {
+          return {
+            ...stage,
+            currentAgent: d05Completed ? "D10 Architecture Agent" : null,
+            currentOperation: d05Completed ? "Ready for manual start." : "Run D05 Project Overview first.",
+            progress: 0,
+            status: d05Completed ? "ready" : "waiting"
           };
         }
 

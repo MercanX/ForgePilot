@@ -13,6 +13,9 @@ const startupContractPath = path.join(startupRuntimeRoot, "STARTUP_CONTRACT.json
 const d05RuntimeRoot = path.join(tempRoot, "discovery-runtime", "D05-Project-Overview");
 const d05PromptPath = path.join(d05RuntimeRoot, "prompt", "project-overview.compiled.prompt.md");
 const d05SchemaPath = path.join(d05RuntimeRoot, "contracts", "project-overview-output.schema.json");
+const d10RuntimeRoot = path.join(tempRoot, "discovery-runtime", "D10-Architecture");
+const d10PromptPath = path.join(d10RuntimeRoot, "prompt", "architecture.compiled.prompt.md");
+const d10SchemaPath = path.join(d10RuntimeRoot, "contracts", "architecture-output.schema.json");
 const port = 44317;
 const baseUrl = `http://127.0.0.1:${port}`;
 
@@ -20,6 +23,8 @@ mkdirSync(projectRoot, { recursive: true });
 mkdirSync(path.dirname(startupRulePath), { recursive: true });
 mkdirSync(path.dirname(d05PromptPath), { recursive: true });
 mkdirSync(path.dirname(d05SchemaPath), { recursive: true });
+mkdirSync(path.dirname(d10PromptPath), { recursive: true });
+mkdirSync(path.dirname(d10SchemaPath), { recursive: true });
 writeFileSync(startupRulePath, "# Startup scope fixture rule\n", "utf8");
 writeFileSync(
   startupContractPath,
@@ -80,6 +85,45 @@ writeFileSync(
   "utf8"
 );
 
+
+writeFileSync(
+  d10PromptPath,
+  [
+    "# D10 compiled fixture",
+    "PROJECT_ROOT={{PROJECT_ROOT}}",
+    "SCOPE={{STARTUP_SCOPE_JSON}}",
+    "SEAL={{STARTUP_SEAL_JSON}}",
+    "CONTEXT={{DISCOVERY_CONTEXT_JSON}}",
+    "LANG={{OUTPUT_LANGUAGE}}",
+    "D05 prior context",
+    "AR-001",
+    "AR-082"
+  ].join("\n"),
+  "utf8"
+);
+writeFileSync(
+  d10SchemaPath,
+  JSON.stringify({
+    type: "object",
+    properties: {
+      substage: { type: "string", enum: ["D10-Architecture"] },
+      result: { type: "string", enum: ["PASS", "PASS_WITH_FINDINGS", "PARTIAL", "BLOCKED"] },
+      summary: { type: "string" },
+      checklist: { type: "array" }
+    },
+    required: ["substage", "result", "summary", "checklist"],
+    additionalProperties: false,
+    $defs: {
+      checkDisposition: {
+        type: "object",
+        properties: { check_id: { type: "string", pattern: "^AR-\\d{3}$" } },
+        required: ["check_id", "status", "evidence", "finding_ids", "unknown_ids", "contradiction_ids", "strength_ids", "notes", "confidence"]
+      }
+    }
+  }),
+  "utf8"
+);
+
 const child = spawn(process.execPath, [path.join(__dirname, "mock-cloud", "mock-cloud.cjs")], {
   env: {
     ...process.env,
@@ -87,7 +131,9 @@ const child = spawn(process.execPath, [path.join(__dirname, "mock-cloud", "mock-
     FORGEPILOT_MOCK_CLOUD_STATE_FILE: statePath,
     FORGEPILOT_STARTUP_CONTRACT: startupContractPath,
     FORGEPILOT_DISCOVERY_D05_PROMPT: d05PromptPath,
-    FORGEPILOT_DISCOVERY_D05_SCHEMA: d05SchemaPath
+    FORGEPILOT_DISCOVERY_D05_SCHEMA: d05SchemaPath,
+    FORGEPILOT_DISCOVERY_D10_PROMPT: d10PromptPath,
+    FORGEPILOT_DISCOVERY_D10_SCHEMA: d10SchemaPath
   },
   stdio: ["ignore", "pipe", "pipe"]
 });
@@ -135,11 +181,14 @@ const LOCAL_OPERATIONS = [
   "startup.build-workspace-manifest",
   "startup.seal-workspace",
   "discovery.d05-status",
-  "discovery.save-d05-result"
+  "discovery.save-d05-result",
+  "discovery.d10-status",
+  "discovery.save-d10-result"
 ];
 
 let startupScopeApproved = false;
 let d05Completed = false;
+let d10Completed = false;
 
 const localOutputFor = (operation, inputs = {}) => {
   if (operation === "startup.scope-status") {
@@ -170,6 +219,24 @@ const localOutputFor = (operation, inputs = {}) => {
     d05Completed = true;
     return { audit_id: "AUD-001", result: "PASS", finding_count: 0, unknown_count: 0, checklist_count: 82, saved: true };
   }
+  if (operation === "discovery.d10-status") {
+    if (!d05Completed) throw new Error("D10 fixture requires D05 first.");
+    if (inputs.reset === true) d10Completed = false;
+    return {
+      audit_id: "AUD-001",
+      state: d10Completed ? "completed" : "ready",
+      prerequisite_d05: "completed",
+      scope_hash: "b".repeat(64),
+      workspace_hash: "c".repeat(64),
+      startup_scope: { approved: { include: ["src"], exclude: [], explicit_files: [] }, scope_hash: "b".repeat(64) },
+      startup_seal: { status: "READY_FOR_DISCOVERY", scope_hash: "b".repeat(64), workspace_hash: "c".repeat(64), manifest_hash: "a".repeat(64), file_count: 1 },
+      discovery_context: { audit_id: "AUD-001", completed_substages: ["D05-Project-Overview"], prior_d05: { summary: "fixture overview" } }
+    };
+  }
+  if (operation === "discovery.save-d10-result") {
+    d10Completed = true;
+    return { audit_id: "AUD-001", result: "PASS", finding_count: 0, unknown_count: 0, checklist_count: 82, saved: true };
+  }
   throw new Error(`No fixture output for local operation ${operation}`);
 };
 
@@ -190,6 +257,20 @@ const providerOutputFor = (directive) => {
       throw new Error("D05 compiled prompt was not loaded/substituted correctly.");
     }
     return { substage: "D05-Project-Overview", result: "PASS", summary: "fixture overview", checklist: [] };
+  }
+  if (task?.semantic_task_id === "D10_ARCHITECTURE") {
+    const prompt = directive.job.task.instructions.body;
+    if (
+      !prompt.includes("AR-001") ||
+      !prompt.includes("AR-082") ||
+      !prompt.includes("LANG=Turkish") ||
+      !prompt.includes("fixture overview") ||
+      prompt.includes("{{DISCOVERY_CONTEXT_JSON}}") ||
+      prompt.includes("{{OUTPUT_LANGUAGE}}")
+    ) {
+      throw new Error("D10 compiled prompt/context was not loaded/substituted correctly.");
+    }
+    return { substage: "D10-Architecture", result: "PASS", summary: "fixture architecture", checklist: [] };
   }
   throw new Error(`Unexpected provider task ${String(task?.semantic_task_id)}`);
 };
@@ -267,7 +348,7 @@ const runStage = async (stageId, expectedOutcome = "completed", newRun = false) 
   try {
     await waitForServer();
     const handshake = await requestJson("POST", "/session/handshake", {
-      desktopVersion: "0.5.0",
+      desktopVersion: "0.5.1",
       protocolVersion: "2",
       supportedCapabilities: ["stage-execution:directives-v1", "contract:010-startup@2.1.0", "contract:020-discovery@2.0.0"]
     });
@@ -280,6 +361,8 @@ const runStage = async (stageId, expectedOutcome = "completed", newRun = false) 
 
     const initialD05 = await workflowStage("020-d05-project-overview");
     if (initialD05.status !== "waiting") throw new Error("D05 must wait for 010-Startup.");
+    const initialD10 = await workflowStage("020-d10-architecture");
+    if (initialD10.status !== "waiting") throw new Error("D10 must wait for D05.");
 
     const startupProposal = await runStage("010-startup", "blocked");
     if (startupProposal.providerTasks[0] !== "SCOPE_PROPOSAL") throw new Error("Startup scope proposal task missing.");
@@ -301,10 +384,24 @@ const runStage = async (stageId, expectedOutcome = "completed", newRun = false) 
     const d05After = await workflowStage("020-d05-project-overview");
     if (d05After.status !== "completed") throw new Error("D05 completion was not persisted by Cloud.");
 
+    const d10Ready = await workflowStage("020-d10-architecture");
+    if (d10Ready.status !== "ready") throw new Error("D10 did not become ready after D05.");
+    const d10 = await runStage("020-d10-architecture");
+    if (JSON.stringify(d10.providerTasks) !== JSON.stringify(["D10_ARCHITECTURE"])) {
+      throw new Error(`D10 should use exactly one AI task, saw ${d10.providerTasks.join(", ")}.`);
+    }
+    for (const operation of ["discovery.d10-status", "discovery.save-d10-result"]) {
+      if (!d10.localOperations.includes(operation)) throw new Error(`D10 missed ${operation}.`);
+    }
+    const d10After = await workflowStage("020-d10-architecture");
+    if (d10After.status !== "completed") throw new Error("D10 completion was not persisted by Cloud.");
+    const d10Restart = await runStage("020-d10-architecture", "completed", true);
+    if (d10Restart.providerTasks[0] !== "D10_ARCHITECTURE") throw new Error("D10 Restart did not rerun only D10 AI task.");
+
     const d05Restart = await runStage("020-d05-project-overview", "completed", true);
     if (d05Restart.providerTasks[0] !== "D05_PROJECT_OVERVIEW") throw new Error("D05 Restart did not rerun only D05 AI task.");
 
-    console.log("Execution protocol verification passed (Startup -> manual D05 -> D05 restart; compiled prompt + schema loaded from AI Factory)." );
+    console.log("Execution protocol verification passed (Startup -> D05 -> manual D10 -> independent D10 restart -> D05 restart; compiled prompts + schemas loaded from AI Factory)." );
   } finally {
     child.kill("SIGTERM");
     rmSync(tempRoot, { recursive: true, force: true });

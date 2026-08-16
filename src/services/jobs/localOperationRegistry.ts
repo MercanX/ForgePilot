@@ -1,4 +1,9 @@
-import { runD05StatusJob, runSaveD05ResultJob } from "../discovery/discoverySubstageService";
+import {
+  runD05StatusJob,
+  runD10StatusJob,
+  runSaveD05ResultJob,
+  runSaveD10ResultJob
+} from "../discovery/discoverySubstageService";
 import {
   runBuildWorkspaceManifestJob,
   runSaveScopeProposalJob,
@@ -33,7 +38,12 @@ const handlers: Record<string, LocalOperationHandler> = {
   "discovery.d05-status": (projectRootPath, inputs) =>
     runD05StatusJob(projectRootPath, inputs.reset === true),
   "discovery.save-d05-result": (projectRootPath, inputs) =>
-    runSaveD05ResultJob(projectRootPath, inputs.result)
+    runSaveD05ResultJob(projectRootPath, inputs.result),
+
+  "discovery.d10-status": (projectRootPath, inputs) =>
+    runD10StatusJob(projectRootPath, inputs.reset === true),
+  "discovery.save-d10-result": (projectRootPath, inputs) =>
+    runSaveD10ResultJob(projectRootPath, inputs.result)
 };
 
 export const createLocalOperationRegistry = (

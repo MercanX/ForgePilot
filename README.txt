@@ -1,19 +1,27 @@
-ForgePilot local project state + stage tabs manual fix
+ForgePilot 0.5.1 — D10 Architecture stage
 
-Replace/add these files in your ForgePilot project, preserving the same paths:
-- src/shared/schemas/run.ts
-- src/services/jobs/projectWorkflowState.ts (NEW)
-- src/services/jobs/jobService.ts
-- src/services/jobs/stageExecutionService.ts
-- src/renderer/src/stores/jobStore.ts
-- src/renderer/src/pages/DashboardPage.tsx
-- src/renderer/src/styles.css
+This package extends the working 0.5.0 D05 runtime without changing the established Startup/D05 semantics.
 
-This package intentionally does NOT replace tools/mock-cloud/mock-cloud.cjs, so your prior Startup single-verification edits are preserved.
+Discovery execution stages now include:
+- 020-D05-Project-Overview
+- 020-D10-Architecture
 
-Project state is stored at:
-  <project>/.forgepilot/ai-factory-state.json
+Rules:
+- 020-Discovery is not an executable container stage.
+- D10 is started manually by the user.
+- D10 requires a completed D05 result for the same sealed Startup workspace.
+- ForgePilot never auto-runs D05 when D10 is requested.
+- Restarting D10 resets only D10 artifacts/state.
+- Restarting D05 resets only D05 artifacts/state; it does not automatically erase D10.
+- The project-local audit artifacts are the readiness source of truth, not mock-cloud process memory.
 
-The existence of <project>/.ai-factory is treated as the physical AI Factory marker. If .ai-factory is deleted, the saved state is ignored and the UI resets to 010-Startup Ready.
+D10 provider execution:
+- Uses the D10 compiled prompt and JSON schema from AI Factory.
+- Uses Settings -> AI Output Language for human-readable JSON values only.
+- Uses Settings -> Provider Stage Timeout (default 90 minutes).
+- Claude Code remains read-only with Read/Glob/Grep allowed and Edit/Write/Bash blocked.
 
-Restarting a completed stage resets that stage and every stage after it.
+D10 local persistence:
+  <project>/.ai-factory/020-Discovery/audits/<AUD-ID>/stages/D10-Architecture.json
+
+Shared audit state is updated in PROJECT_PROFILE.json, FINDINGS.json, AUDIT_COVERAGE.json and AUDIT_META.json.

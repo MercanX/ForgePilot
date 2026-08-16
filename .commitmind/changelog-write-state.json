@@ -1,5 +1,5 @@
 {
-  "lastFingerprint": "d2bb1c8b2493a14bec1cc6cd85a94648259b204a",
+  "lastFingerprint": "0ce19e4cfa56d7776734dee3ed0e096cd9595a01",
   "lastDate": "2026-08-16",
-  "lastContent": "- Added AI output language setting with Turkish default, supporting localized responses while preserving JSON keys and code symbols.\n- Introduced configurable provider stage timeout (5–180 minutes, default 90) replacing hardcoded timeout values.\n- Extended job execution protocol with output language and timeout parameters, propagated through cloud API and mock cloud.\n- Enhanced D05 evidence validation to accept runtime authority paths and enforce canonical ID references across all checklist dispositions.\n- Bumped application version to 0.5.0 with updated protocol compatibility checks."
+  "lastContent": "- Added D10 Architecture discovery stage with manual execution and D05 prerequisite enforcement\n- Implemented comprehensive validation for architecture findings, strengths, unknowns, and contradictions\n- Added D10 status and save operations to the local operation registry\n- Updated workflow state to reflect D10 readiness based on completed D05 results\n- Bumped application version to 0.5.1 with updated desktop version references"
 }

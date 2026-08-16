@@ -7,6 +7,12 @@
 
 ## 2026-08-16
 
+- Added D10 Architecture discovery stage with manual execution and D05 prerequisite enforcement
+- Implemented comprehensive validation for architecture findings, strengths, unknowns, and contradictions
+- Added D10 status and save operations to the local operation registry
+- Updated workflow state to reflect D10 readiness based on completed D05 results
+- Bumped application version to 0.5.1 with updated desktop version references
+
 - Added AI output language setting with Turkish default, supporting localized responses while preserving JSON keys and code symbols.
 - Introduced configurable provider stage timeout (5–180 minutes, default 90) replacing hardcoded timeout values.
 - Extended job execution protocol with output language and timeout parameters, propagated through cloud API and mock cloud.

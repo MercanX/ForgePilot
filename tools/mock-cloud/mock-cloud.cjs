@@ -8,6 +8,7 @@ const PORT = Number(process.env.FORGEPILOT_MOCK_CLOUD_PORT ?? 4317);
 const jobs = new Map();
 const STARTUP_STAGE_ID = "010-startup";
 const DISCOVERY_D05_STAGE_ID = "020-d05-project-overview";
+const DISCOVERY_D10_STAGE_ID = "020-d10-architecture";
 const executions = new Map();
 
 // Persisted to disk (not just in-memory) so that stage-completion status
@@ -91,6 +92,16 @@ const DISCOVERY_D05_SCHEMA_PATH =
 const loadDiscoveryD05Prompt = () => readFileSync(DISCOVERY_D05_PROMPT_PATH, "utf8");
 const loadDiscoveryD05Schema = () => JSON.parse(readFileSync(DISCOVERY_D05_SCHEMA_PATH, "utf8"));
 
+const DISCOVERY_D10_PROMPT_PATH =
+  process.env.FORGEPILOT_DISCOVERY_D10_PROMPT ??
+  "C:\\Github\\aiFactory\\.ai-factory\\020-Discovery\\D10-Architecture\\prompt\\architecture.compiled.prompt.md";
+const DISCOVERY_D10_SCHEMA_PATH =
+  process.env.FORGEPILOT_DISCOVERY_D10_SCHEMA ??
+  "C:\\Github\\aiFactory\\.ai-factory\\020-Discovery\\D10-Architecture\\contracts\\architecture-output.schema.json";
+
+const loadDiscoveryD10Prompt = () => readFileSync(DISCOVERY_D10_PROMPT_PATH, "utf8");
+const loadDiscoveryD10Schema = () => JSON.parse(readFileSync(DISCOVERY_D10_SCHEMA_PATH, "utf8"));
+
 
 const sendJson = (response, statusCode, payload) => {
   response.writeHead(statusCode, {
@@ -138,6 +149,7 @@ const buildStages = (projectId) => {
   const passed = getProjectStageSet(projectId);
   const startupCompleted = passed.has(STARTUP_STAGE_ID);
   const d05Completed = passed.has(DISCOVERY_D05_STAGE_ID);
+  const d10Completed = passed.has(DISCOVERY_D10_STAGE_ID);
 
   return [
     {
@@ -157,6 +169,18 @@ const buildStages = (projectId) => {
       currentOperation: d05Completed
         ? "Project Overview audit completed."
         : startupCompleted
+          ? "Ready for manual start."
+          : null
+    },
+    {
+      id: DISCOVERY_D10_STAGE_ID,
+      name: "020-D10-Architecture",
+      status: d10Completed ? "completed" : d05Completed ? "ready" : "waiting",
+      progress: d10Completed ? 100 : 0,
+      currentAgent: d05Completed ? "D10 Architecture Agent" : null,
+      currentOperation: d10Completed
+        ? "Architecture audit completed."
+        : d05Completed
           ? "Ready for manual start."
           : null
     },
@@ -282,6 +306,19 @@ const createDiscoveryD05Prompt = (requestBody) => {
     .replaceAll("{{DISCOVERY_CONTEXT_JSON}}", JSON.stringify(runtimeInputs.discovery_context ?? {}));
 };
 
+const createDiscoveryD10Prompt = (requestBody) => {
+  const task = requestBody.localExecution?.semantic_task ?? {};
+  const runtimeInputs = task.runtime_inputs ?? {};
+  const template = loadDiscoveryD10Prompt();
+
+  return template
+    .replaceAll("{{PROJECT_ROOT}}", requestBody.project.rootPath)
+    .replaceAll("{{OUTPUT_LANGUAGE}}", requestBody.outputLanguage ?? "Turkish")
+    .replaceAll("{{STARTUP_SCOPE_JSON}}", JSON.stringify(runtimeInputs.startup_scope ?? {}))
+    .replaceAll("{{STARTUP_SEAL_JSON}}", JSON.stringify(runtimeInputs.startup_seal ?? {}))
+    .replaceAll("{{DISCOVERY_CONTEXT_JSON}}", JSON.stringify(runtimeInputs.discovery_context ?? {}));
+};
+
 const createPrompt = (requestBody) => {
   const semanticTask = requestBody.localExecution?.semantic_task?.semantic_task_id;
 
@@ -291,6 +328,10 @@ const createPrompt = (requestBody) => {
 
   if (semanticTask === "D05_PROJECT_OVERVIEW") {
     return createDiscoveryD05Prompt(requestBody);
+  }
+
+  if (semanticTask === "D10_ARCHITECTURE") {
+    return createDiscoveryD10Prompt(requestBody);
   }
 
   if (typeof semanticTask === "string") {
@@ -307,6 +348,10 @@ const getStageId = (requestBody) => {
 
   if (semanticTask === "D05_PROJECT_OVERVIEW") {
     return DISCOVERY_D05_STAGE_ID;
+  }
+
+  if (semanticTask === "D10_ARCHITECTURE") {
+    return DISCOVERY_D10_STAGE_ID;
   }
 
   if (typeof semanticTask === "string") {
@@ -395,6 +440,9 @@ const semanticOutputSchema = (localExecution) => {
   }
   if (taskId === "D05_PROJECT_OVERVIEW") {
     return loadDiscoveryD05Schema();
+  }
+  if (taskId === "D10_ARCHITECTURE") {
+    return loadDiscoveryD10Schema();
   }
   return discoverySemanticOutputSchema(localExecution);
 };
@@ -764,6 +812,83 @@ const discoveryD05DirectiveFor = (session) => {
   );
 };
 
+const discoveryD10DirectiveFor = (session) => {
+  if (!hasOutput(session, "d10Status")) {
+    return localDirective(
+      "discovery.d10-status",
+      { reset: session.newRun === true },
+      "d10Status",
+      [
+        session.newRun ? "Resetting only D10 Architecture state." : "Checking D10 Architecture prerequisites.",
+        session.newRun ? "D10 Architecture state reset." : "D10 Architecture prerequisites verified."
+      ],
+      [12, 18]
+    );
+  }
+
+  const status = outputObject(session, "d10Status");
+  if (status.state === "completed") {
+    return terminalDirective(
+      "completed",
+      "D10 Architecture is already completed for this sealed workspace. Use Restart to run D10 again.",
+      100
+    );
+  }
+
+  if (!hasOutput(session, "d10Result")) {
+    return providerDirective(
+      session,
+      {
+        semantic_task: {
+          semantic_task_id: "D10_ARCHITECTURE",
+          runtime_inputs: {
+            audit_id: status.audit_id ?? null,
+            discovery_context: status.discovery_context ?? {},
+            startup_scope: status.startup_scope ?? {},
+            startup_seal: status.startup_seal ?? {}
+          }
+        }
+      },
+      "semantic",
+      false,
+      "d10Result",
+      [
+        "AI is reconstructing and auditing the implemented D10 Architecture using D05 context and repository evidence.",
+        "D10 Architecture AI audit completed."
+      ],
+      [20, 90]
+    );
+  }
+
+  if (!hasOutput(session, "d10Saved")) {
+    return localDirective(
+      "discovery.save-d10-result",
+      { result: session.context.d10Result },
+      "d10Saved",
+      [
+        "Validating D10 architecture evidence, checklist coverage, and canonical records.",
+        "D10 Architecture result saved to the active audit snapshot."
+      ],
+      [92, 99]
+    );
+  }
+
+  const saved = outputObject(session, "d10Saved");
+  if (saved.result === "BLOCKED") {
+    return terminalDirective(
+      "blocked",
+      "D10 Architecture returned BLOCKED. Review the recorded unknowns/limitations before retrying.",
+      99
+    );
+  }
+
+  return terminalDirective(
+    "completed",
+    `D10 Architecture completed (${String(saved.result ?? "UNKNOWN")}); ${String(saved.finding_count ?? 0)} findings, ${String(saved.unknown_count ?? 0)} unknowns, ${String(saved.checklist_count ?? 0)} checklist dispositions.`,
+    100
+  );
+};
+
 const nextDirectiveFor = (session) => {
   if (session.failure) {
     return terminalDirective("failed", session.failure, session.lastProgress ?? 0);
@@ -775,6 +900,10 @@ const nextDirectiveFor = (session) => {
 
   if (session.stageId === DISCOVERY_D05_STAGE_ID) {
     return discoveryD05DirectiveFor(session);
+  }
+
+  if (session.stageId === DISCOVERY_D10_STAGE_ID) {
+    return discoveryD10DirectiveFor(session);
   }
 
   return terminalDirective(
@@ -837,6 +966,9 @@ const createExecution = (body) => {
 const handleExecutionNext = (body) => {
   if (!body.executionId && body.newRun === true && body.stageId === DISCOVERY_D05_STAGE_ID) {
     unmarkStagePassed(body.project?.id, DISCOVERY_D05_STAGE_ID);
+  }
+  if (!body.executionId && body.newRun === true && body.stageId === DISCOVERY_D10_STAGE_ID) {
+    unmarkStagePassed(body.project?.id, DISCOVERY_D10_STAGE_ID);
   }
   const session = body.executionId ? executions.get(body.executionId) : createExecution(body);
 
@@ -914,18 +1046,35 @@ const server = http.createServer(async (request, response) => {
       } catch {
         d05RuntimeCompatible = false;
       }
+      let d10RuntimeCompatible = false;
+      try {
+        const d10Prompt = loadDiscoveryD10Prompt();
+        const d10Schema = loadDiscoveryD10Schema();
+        d10RuntimeCompatible =
+          d10Prompt.includes("AR-001") &&
+          d10Prompt.includes("AR-082") &&
+          d10Prompt.includes("{{OUTPUT_LANGUAGE}}") &&
+          d10Prompt.includes("D05") &&
+          d10Schema?.properties?.substage?.enum?.includes("D10-Architecture") &&
+          d10Schema?.$defs?.checkDisposition?.properties?.check_id?.pattern === "^AR-\\d{3}$" &&
+          Array.isArray(d10Schema?.$defs?.checkDisposition?.required) &&
+          d10Schema.$defs.checkDisposition.required.includes("unknown_ids");
+      } catch {
+        d10RuntimeCompatible = false;
+      }
       const compatible =
         protocolCompatible &&
         startupRuntimeCompatible &&
         startupContractCompatible &&
         discoveryContractCompatible &&
-        d05RuntimeCompatible;
+        d05RuntimeCompatible &&
+        d10RuntimeCompatible;
       sendJson(response, 200, {
         status: compatible ? "ok" : "update-required",
-        serverVersion: "mock-0.5.0-debug",
+        serverVersion: "mock-0.5.1-d10-debug",
         protocolVersion: "2",
         message: compatible
-          ? "Mock cloud connected (Startup 2.1.0, Discovery D05 trial)"
+          ? "Mock cloud connected (Startup 2.1.0, Discovery D05 + D10)"
           : !protocolCompatible
             ? "Desktop protocol v2 is required for server-driven execution directives."
             : !startupRuntimeCompatible
@@ -934,7 +1083,9 @@ const server = http.createServer(async (request, response) => {
                 ? "Desktop must support AI Factory Startup contract 2.1.0."
                 : !discoveryContractCompatible
                   ? "Desktop must support AI Factory Discovery contract 2.0.0."
-                  : "AI Factory D05 runtime files are missing or invalid. Expected the approved D05 compiled prompt and output schema."
+                  : !d05RuntimeCompatible
+                    ? "AI Factory D05 runtime files are missing or invalid. Expected the approved D05 compiled prompt and output schema."
+                    : "AI Factory D10 runtime files are missing or invalid. Expected the approved D10 compiled prompt and output schema."
       });
       return;
     }

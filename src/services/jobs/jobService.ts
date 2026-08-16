@@ -28,6 +28,7 @@ import {
 import type { TaskResult } from "@shared/schemas/job";
 
 import { createHttpClient, type HttpClient } from "../api/httpClient";
+import { createProjectWorkflowState } from "./projectWorkflowState";
 import {
   createStageExecutionService,
   type StageExecutionService
@@ -63,7 +64,7 @@ const createClientFactory =
 
 export const createJobService = (options: JobServiceOptions = {}): JobService => {
   const createClient = createClientFactory(options);
-  const desktopVersion = options.desktopVersion ?? "0.2.1";
+  const desktopVersion = options.desktopVersion ?? "0.3.0";
   const stageExecutionService =
     options.stageExecutionService ?? createStageExecutionService({ createClient });
 
@@ -113,18 +114,21 @@ export const createJobService = (options: JobServiceOptions = {}): JobService =>
     }
   };
 
-  // Cloud is the sole workflow-state authority. rootPath stays in this public
-  // signature for IPC compatibility, but desktop no longer overrides stages by
-  // inspecting Startup/Discovery artifacts on disk.
+  // Cloud owns the stage catalog and execution directives. The project-local
+  // JSON is the sole authority for stage completion/readiness. Deleting the
+  // project's .ai-factory folder therefore resets the visible workflow state.
   const getWorkflow = async (
     projectId: string,
-    _rootPath: string,
+    rootPath: string,
     serverUrl: string
-  ): Promise<WorkflowResponse> =>
-    createClient(serverUrl).get(
+  ): Promise<WorkflowResponse> => {
+    const cloudWorkflow = await createClient(serverUrl).get(
       `/workflows/current?projectId=${encodeURIComponent(projectId)}`,
       workflowResponseSchema
     );
+
+    return createProjectWorkflowState(rootPath).mergeWorkflow(cloudWorkflow);
+  };
 
   const requestJob = async (
     request: RequestJobRequest,
@@ -231,10 +235,33 @@ export const createJobService = (options: JobServiceOptions = {}): JobService =>
       throw new Error(`Stage is already completed: ${requestedStage.id}`);
     }
 
-    return stageExecutionService.run(
-      { ...request, stageId: requestedStage.id },
-      onProgress
-    );
+    const projectState = createProjectWorkflowState(request.project.rootPath);
+    await projectState.beginStage(workflow.stages, requestedStage.id, request.newRun);
+
+    let stateWrites = Promise.resolve();
+    const persistProgress: JobRunProgressListener = (event) => {
+      onProgress?.(event);
+      stateWrites = stateWrites
+        .then(() => projectState.recordProgress(event))
+        .catch(() => undefined);
+    };
+
+    try {
+      const response = await stageExecutionService.run(
+        { ...request, stageId: requestedStage.id },
+        persistProgress
+      );
+      await stateWrites;
+      await projectState.finishStage(response);
+      return response;
+    } catch (error) {
+      await stateWrites;
+      await projectState.failStage(
+        requestedStage.id,
+        error instanceof Error ? error.message : "Stage execution failed."
+      );
+      throw error;
+    }
   };
 
   return {

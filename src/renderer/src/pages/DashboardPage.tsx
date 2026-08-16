@@ -104,9 +104,12 @@ export const DashboardPage = (): ReactElement => {
   const lastRun = useJobStore((state) => state.lastRun);
   const loadWorkflow = useJobStore((state) => state.loadWorkflow);
   const runProgress = useJobStore((state) => state.runProgress);
+  const runningStageId = useJobStore((state) => state.runningStageId);
   const runCloudJob = useJobStore((state) => state.runCloudJob);
   const workflow = useJobStore((state) => state.workflow);
   const [inputFileMessage, setInputFileMessage] = useState<string | null>(null);
+  const [selectedStageId, setSelectedStageId] = useState<string | null>(null);
+  const [followRunnableStage, setFollowRunnableStage] = useState(true);
 
   const selectedProvider = useMemo(
     () =>
@@ -119,45 +122,40 @@ export const DashboardPage = (): ReactElement => {
   );
   const selectedModel = selectedProvider ? settings.providerModels[selectedProvider.id] : null;
   const stages = workflow?.stages ?? [];
-  const activeStage =
+  const runnableStage =
     stages.find((stage) => stage.status === "running") ??
-    stages.find((stage) => stage.status === "ready") ??
+    stages.find((stage) => stage.status === "ready" || stage.status === "failed") ??
     null;
-  const canStart = Boolean(activeProject && selectedProvider && activeStage && !isRunning);
-  const effectiveProgress = activeStage
-    ? isRunning
-      ? Math.max(stageProgress(activeStage), runProgress)
-      : Math.max(stageProgress(activeStage), runProgress)
+  const selectedStage =
+    stages.find((stage) => stage.id === selectedStageId) ?? runnableStage ?? stages[0] ?? null;
+  const selectedStageIsRunning = Boolean(
+    isRunning && selectedStage && runningStageId === selectedStage.id
+  );
+  const canRunSelectedStage = Boolean(
+    activeProject &&
+      selectedProvider &&
+      selectedStage &&
+      !isRunning &&
+      selectedStage.status !== "waiting"
+  );
+  const effectiveProgress = selectedStage
+    ? selectedStageIsRunning
+      ? Math.max(stageProgress(selectedStage), runProgress)
+      : stageProgress(selectedStage)
     : 0;
   const startupExecution = useMemo(() => {
     const metadata = lastRun?.job?.task?.instructions.metadata.localExecution;
 
     return isStartupExecutionMetadata(metadata) ? metadata : null;
   }, [lastRun]);
-  const visibleActivityEntries = useMemo(
-    () => activityEntries.slice(-5).reverse(),
-    [activityEntries]
-  );
-  const validationJson = useMemo(() => {
-    const text = lastRun?.result?.outputChunks.map((chunk) => chunk.text).join("") ?? "";
-    const lines = text
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean);
-    const jsonLine = [...lines]
-      .reverse()
-      .find((line) => line.startsWith("{") && line.endsWith("}"));
+  const visibleActivityEntries = useMemo(() => {
+    const entries = selectedStageIsRunning
+      ? activityEntries
+      : (selectedStage?.activity ?? []);
 
-    if (!jsonLine) {
-      return null;
-    }
-
-    try {
-      return JSON.parse(jsonLine) as unknown;
-    } catch {
-      return null;
-    }
-  }, [lastRun]);
+    return entries.slice(-5).reverse();
+  }, [activityEntries, selectedStage, selectedStageIsRunning]);
+  const showLastRunDetails = lastRun?.stageOutcome.stageId === selectedStage?.id;
 
   useEffect(() => {
     void checkCloud();
@@ -168,6 +166,25 @@ export const DashboardPage = (): ReactElement => {
       void loadWorkflow(activeProject.id, activeProject.rootPath);
     }
   }, [activeProject, loadWorkflow]);
+
+  useEffect(() => {
+    const currentStages = workflow?.stages ?? [];
+
+    if (currentStages.length === 0) {
+      setSelectedStageId(null);
+      return;
+    }
+
+    const selectionStillExists = currentStages.some((stage) => stage.id === selectedStageId);
+    const nextRunnable =
+      currentStages.find((stage) => stage.status === "running") ??
+      currentStages.find((stage) => stage.status === "ready" || stage.status === "failed") ??
+      null;
+
+    if (!selectionStillExists || followRunnableStage) {
+      setSelectedStageId(nextRunnable?.id ?? currentStages.at(-1)?.id ?? null);
+    }
+  }, [followRunnableStage, selectedStageId, workflow]);
 
   const openStartupInputFile = async (fileName: "SCOPE.md" | "BASELINE.md"): Promise<void> => {
     const runId = startupExecution?.place_inputs?.run_id;
@@ -218,23 +235,6 @@ export const DashboardPage = (): ReactElement => {
           <p className="eyebrow">AI Factory</p>
           <h1 id="workspace-title">{activeProject.name}</h1>
         </div>
-        <button
-          className="primary-action"
-          type="button"
-          disabled={!canStart}
-          onClick={() => {
-            if (activeProject && selectedProvider) {
-              void runCloudJob(
-                activeProject,
-                selectedProvider,
-                selectedModel,
-                activeStage?.id ?? null
-              );
-            }
-          }}
-        >
-          {isRunning ? "Running" : activeStage ? `Start ${activeStage.name}` : "Start"}
-        </button>
       </header>
 
       <section className="dashboard-summary" aria-live="polite">
@@ -258,19 +258,28 @@ export const DashboardPage = (): ReactElement => {
               {stages.map((stage, index) => (
                 <li
                   className={`stage-item stage-item-${stage.status}${
-                    activeStage?.id === stage.id ? " is-current" : ""
+                    selectedStage?.id === stage.id ? " is-current" : ""
                   }`}
                   key={stage.id}
                 >
-                  <span className="stage-index">{String(index + 1).padStart(2, "0")}</span>
-                  <div>
-                    <strong>{stage.name}</strong>
-                    <span>
-                      {isRunning && activeStage?.id === stage.id
-                        ? "Running"
-                        : statusText[stage.status]}
+                  <button
+                    className="stage-tab"
+                    type="button"
+                    onClick={() => {
+                      setFollowRunnableStage(false);
+                      setSelectedStageId(stage.id);
+                    }}
+                  >
+                    <span className="stage-index">{String(index + 1).padStart(2, "0")}</span>
+                    <span className="stage-tab-copy">
+                      <strong>{stage.name}</strong>
+                      <span>
+                        {isRunning && runningStageId === stage.id
+                          ? "Running"
+                          : statusText[stage.status]}
+                      </span>
                     </span>
-                  </div>
+                  </button>
                 </li>
               ))}
             </ol>
@@ -278,22 +287,60 @@ export const DashboardPage = (): ReactElement => {
         </div>
 
         <div className="current-stage-panel">
-          <div className="section-title">
-            <p className="eyebrow">Current stage</p>
-            <h2>{activeStage?.name ?? "Waiting for workflow"}</h2>
+          <div className="stage-panel-heading">
+            <div className="section-title">
+              <p className="eyebrow">Stage</p>
+              <h2>{selectedStage?.name ?? "Waiting for workflow"}</h2>
+            </div>
+            {selectedStage ? (
+              <button
+                className="primary-action"
+                type="button"
+                disabled={!canRunSelectedStage}
+                onClick={() => {
+                  if (!activeProject || !selectedProvider || !selectedStage) {
+                    return;
+                  }
+
+                  const restart =
+                    selectedStage.status === "completed" || selectedStage.status === "failed";
+                  setFollowRunnableStage(true);
+                  void runCloudJob(
+                    activeProject,
+                    selectedProvider,
+                    selectedModel,
+                    selectedStage.id,
+                    restart
+                  );
+                }}
+              >
+                {selectedStageIsRunning
+                  ? "Running"
+                  : selectedStage.status === "completed"
+                    ? "Restart stage"
+                    : selectedStage.status === "failed"
+                      ? "Restart stage"
+                      : selectedStage.status === "waiting"
+                        ? "Waiting"
+                        : "Start stage"}
+              </button>
+            ) : null}
           </div>
           <div
-            className={`progress-track${isRunning ? " is-running" : ""}`}
+            className={`progress-track${selectedStageIsRunning ? " is-running" : ""}`}
             aria-label="Stage progress"
           >
             <span style={{ width: `${effectiveProgress}%` }} />
           </div>
           <div className="stage-detail-grid">
             <span>Agent</span>
-            <strong>{activeStage?.currentAgent ?? "Not assigned"}</strong>
+            <strong>{selectedStage?.currentAgent ?? "Not assigned"}</strong>
             <span>Operation</span>
             <strong>
-              {isRunning ? currentOperation : (activeStage?.currentOperation ?? "Ready to start")}
+              {selectedStageIsRunning
+                ? currentOperation
+                : (selectedStage?.currentOperation ??
+                  (selectedStage?.status === "waiting" ? "Waiting for previous stage" : "Ready to start"))}
             </strong>
             <span>Model</span>
             <strong>{selectedModel ?? "No model selected"}</strong>
@@ -319,7 +366,27 @@ export const DashboardPage = (): ReactElement => {
             )}
           </section>
 
-          {startupExecution?.check_factory || startupExecution?.read_config ? (
+          {selectedStage?.report ? (
+            <section className="stage-report" aria-label="Stage final report">
+              <h3>Final report</h3>
+              <dl>
+                <div>
+                  <dt>Status</dt>
+                  <dd>{selectedStage.report.outcome}</dd>
+                </div>
+                <div>
+                  <dt>Result</dt>
+                  <dd>{selectedStage.report.message}</dd>
+                </div>
+                <div>
+                  <dt>Completed</dt>
+                  <dd>{new Date(selectedStage.report.completedAt).toLocaleString()}</dd>
+                </div>
+              </dl>
+            </section>
+          ) : null}
+
+          {showLastRunDetails && (startupExecution?.check_factory || startupExecution?.read_config) ? (
             <section className="startup-result" aria-label="Startup execution result">
               <h3>Exe Result</h3>
               <dl>
@@ -342,7 +409,7 @@ export const DashboardPage = (): ReactElement => {
             </section>
           ) : null}
 
-          {startupExecution?.select_run ? (
+          {showLastRunDetails && startupExecution?.select_run ? (
             <section className="startup-result" aria-label="Run selection result">
               <h3>Run Selection</h3>
               <dl>
@@ -358,7 +425,7 @@ export const DashboardPage = (): ReactElement => {
             </section>
           ) : null}
 
-          {startupExecution?.place_inputs ? (
+          {showLastRunDetails && startupExecution?.place_inputs ? (
             <section className="startup-result" aria-label="Place inputs result">
               <h3>Place Inputs</h3>
               <dl>
@@ -408,7 +475,7 @@ export const DashboardPage = (): ReactElement => {
             </section>
           ) : null}
 
-          {startupExecution?.capture_git_state ? (
+          {showLastRunDetails && startupExecution?.capture_git_state ? (
             <section className="startup-result" aria-label="Capture git state result">
               <h3>Git State</h3>
               <dl>
@@ -430,7 +497,7 @@ export const DashboardPage = (): ReactElement => {
             </section>
           ) : null}
 
-          {startupExecution?.build_source_manifest ? (
+          {showLastRunDetails && startupExecution?.build_source_manifest ? (
             <section className="startup-result" aria-label="Source manifest result">
               <h3>Source Manifest</h3>
               <dl>
@@ -450,7 +517,7 @@ export const DashboardPage = (): ReactElement => {
             </section>
           ) : null}
 
-          {startupExecution?.build_factory_manifest ? (
+          {showLastRunDetails && startupExecution?.build_factory_manifest ? (
             <section className="startup-result" aria-label="Factory manifest result">
               <h3>Factory Manifest</h3>
               <dl>
@@ -470,7 +537,7 @@ export const DashboardPage = (): ReactElement => {
             </section>
           ) : null}
 
-          {startupExecution?.seal_run ? (
+          {showLastRunDetails && startupExecution?.seal_run ? (
             <section className="startup-result" aria-label="Run seal result">
               <h3>Run Seal</h3>
               <dl>
@@ -498,7 +565,7 @@ export const DashboardPage = (): ReactElement => {
             </section>
           ) : null}
 
-          {startupExecution?.scan_project ? (
+          {showLastRunDetails && startupExecution?.scan_project ? (
             <section className="startup-result" aria-label="Scan project result">
               <h3>Project Scan</h3>
               <dl>
@@ -518,7 +585,7 @@ export const DashboardPage = (): ReactElement => {
             </section>
           ) : null}
 
-          {startupExecution?.classify_files ? (
+          {showLastRunDetails && startupExecution?.classify_files ? (
             <section className="startup-result" aria-label="Classify files result">
               <h3>File Classification</h3>
               <dl>
@@ -538,7 +605,7 @@ export const DashboardPage = (): ReactElement => {
             </section>
           ) : null}
 
-          {startupExecution?.index_documents ? (
+          {showLastRunDetails && startupExecution?.index_documents ? (
             <section className="startup-result" aria-label="Document index result">
               <h3>Document Index</h3>
               <dl>
@@ -569,7 +636,7 @@ export const DashboardPage = (): ReactElement => {
             </section>
           ) : null}
 
-          {startupExecution?.map_dependencies ? (
+          {showLastRunDetails && startupExecution?.map_dependencies ? (
             <section className="startup-result" aria-label="Dependency map result">
               <h3>Dependency Map</h3>
               <dl>
@@ -589,7 +656,7 @@ export const DashboardPage = (): ReactElement => {
             </section>
           ) : null}
 
-          {startupExecution?.build_context ? (
+          {showLastRunDetails && startupExecution?.build_context ? (
             <section className="startup-result" aria-label="Project context result">
               <h3>Project Context</h3>
               <dl>
@@ -617,21 +684,7 @@ export const DashboardPage = (): ReactElement => {
             </section>
           ) : null}
 
-          <pre className="task-output" aria-live="polite">
-            {validationJson
-              ? JSON.stringify(validationJson, null, 2)
-              : lastRun
-                ? [
-                    `Job: ${lastRun.job?.id ?? "n/a"}\n`,
-                    `Stage: ${lastRun.stageOutcome.stageId}\n`,
-                    `Status: ${lastRun.result?.status ?? lastRun.stageOutcome.status}\n`,
-                    `Exit code: ${lastRun.result?.exitCode ?? "n/a"}\n`,
-                    (lastRun.result?.outputChunks ?? [])
-                      .map((chunk) => `[${chunk.stream}] ${chunk.text}`)
-                      .join("")
-                  ].join("")
-                : "The first stage will request a cloud job and open the selected LLM provider process."}
-          </pre>
+
         </div>
       </section>
 

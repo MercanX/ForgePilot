@@ -1,15 +1,31 @@
 import {
-  finalizeBuildContextJob,
-  finalizeIndexDocumentsJob,
+  type DiscoveryChecklistPolicy,
+  type DiscoverySeverityPolicy,
+  type D05SemanticCandidate,
+  finalizeDetectGapsV2Job,
+  prepareDetectGapsV2Job
+} from "../discovery/discoveryValidationService";
+import {
   type GlossaryCandidateInput,
-  type IndexDocumentsPreparation,
-  type BuildContextPreparation,
-  prepareBuildContextJob,
-  prepareIndexDocumentsJob,
   runClassifyFilesJob,
   runMapDependenciesJob,
   runScanProjectJob
 } from "../discovery/discoveryJobService";
+import { runMapModuleDependenciesJob } from "../discovery/discoveryModuleDependencyService";
+import {
+  finalizeGenerateReportV2Job,
+  prepareGenerateReportV2Job
+} from "../discovery/discoveryReportService";
+import {
+  type DiscoveryScorePolicy,
+  runScoreAndGateV2Job
+} from "../discovery/discoveryScoreGateService";
+import {
+  finalizeBuildContextV2Job,
+  finalizeIndexDocumentsV2Job,
+  prepareBuildContextV2Job,
+  prepareIndexDocumentsV2Job
+} from "../discovery/discoverySemanticPreparation";
 import {
   runBuildFactoryManifestJob,
   runBuildSourceManifestJob,
@@ -45,7 +61,17 @@ const requireString = (inputs: Record<string, unknown>, key: string): string => 
   return value;
 };
 
-const asPreparation = <T>(inputs: Record<string, unknown>, key: string): T => {
+const requireNumber = (inputs: Record<string, unknown>, key: string): number => {
+  const value = inputs[key];
+
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`Local operation input \"${key}\" must be a finite number.`);
+  }
+
+  return value;
+};
+
+const requireObject = <T>(inputs: Record<string, unknown>, key: string): T => {
   const value = inputs[key];
 
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -69,30 +95,54 @@ const handlers: Record<string, LocalOperationHandler> = {
     runBuildFactoryManifestJob(projectRootPath, requireString(inputs, "runId")),
   "startup.seal-run": (projectRootPath, inputs) =>
     runSealRunJob(projectRootPath, requireString(inputs, "runId")),
+
+  // Discovery v2: full canonical data stays local. Only bounded semantic views
+  // produced by the prepare operations are returned to Cloud/LLM.
   "discovery.scan-project": (projectRootPath) => runScanProjectJob(projectRootPath),
   "discovery.classify-files": (projectRootPath) => runClassifyFilesJob(projectRootPath),
-  "discovery.prepare-index-and-map": async (projectRootPath) => {
-    const [preparation, mapDependencies] = await Promise.all([
-      prepareIndexDocumentsJob(projectRootPath),
-      runMapDependenciesJob(projectRootPath)
-    ]);
-
-    return { mapDependencies, preparation };
-  },
-  "discovery.finalize-index-documents": (projectRootPath, inputs) => {
-    const preparation = asPreparation<IndexDocumentsPreparation>(inputs, "preparation");
-    const candidates = Array.isArray(inputs.candidates)
-      ? (inputs.candidates as GlossaryCandidateInput[])
-      : [];
-
-    return finalizeIndexDocumentsJob(projectRootPath, preparation, candidates);
-  },
-  "discovery.prepare-context": (projectRootPath) => prepareBuildContextJob(projectRootPath),
-  "discovery.finalize-context": (projectRootPath, inputs) => {
-    const preparation = asPreparation<BuildContextPreparation>(inputs, "preparation");
-
-    return finalizeBuildContextJob(projectRootPath, preparation, inputs.patch);
-  }
+  "discovery.prepare-index-documents-v2": (projectRootPath) =>
+    prepareIndexDocumentsV2Job(projectRootPath),
+  "discovery.finalize-index-documents-v2": (projectRootPath, inputs) =>
+    finalizeIndexDocumentsV2Job(
+      projectRootPath,
+      requireString(inputs, "preparationId"),
+      Array.isArray(inputs.candidates) ? (inputs.candidates as GlossaryCandidateInput[]) : []
+    ),
+  "discovery.map-dependencies": (projectRootPath) => runMapDependenciesJob(projectRootPath),
+  "discovery.prepare-context-v2": (projectRootPath) => prepareBuildContextV2Job(projectRootPath),
+  "discovery.finalize-context-v2": (projectRootPath, inputs) =>
+    finalizeBuildContextV2Job(
+      projectRootPath,
+      requireString(inputs, "preparationId"),
+      inputs.patch ?? {}
+    ),
+  "discovery.map-module-dependencies-v2": (projectRootPath) =>
+    runMapModuleDependenciesJob(projectRootPath),
+  "discovery.prepare-detect-gaps-v2": (projectRootPath, inputs) =>
+    prepareDetectGapsV2Job(
+      projectRootPath,
+      requireObject<DiscoverySeverityPolicy>(inputs, "severityPolicy"),
+      requireObject<DiscoveryChecklistPolicy>(inputs, "checklist")
+    ),
+  "discovery.finalize-detect-gaps-v2": (projectRootPath, inputs) =>
+    finalizeDetectGapsV2Job(
+      projectRootPath,
+      requireString(inputs, "preparationId"),
+      Array.isArray(inputs.candidates) ? (inputs.candidates as D05SemanticCandidate[]) : []
+    ),
+  "discovery.score-and-gate-v2": (projectRootPath, inputs) =>
+    runScoreAndGateV2Job(
+      projectRootPath,
+      requireObject<DiscoveryScorePolicy>(inputs, "scorePolicy"),
+      requireNumber(inputs, "minimumScore")
+    ),
+  "discovery.prepare-report-v2": (projectRootPath) => prepareGenerateReportV2Job(projectRootPath),
+  "discovery.finalize-report-v2": (projectRootPath, inputs) =>
+    finalizeGenerateReportV2Job(
+      projectRootPath,
+      requireString(inputs, "preparationId"),
+      inputs.patch ?? null
+    )
 };
 
 export const createLocalOperationRegistry = (

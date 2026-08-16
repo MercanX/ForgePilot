@@ -6,5 +6,6 @@ export const SUPPORTED_CAPABILITIES = [
   "job:heartbeat",
   "job:fail",
   "language-pack:local",
-  "stage-execution:directives-v1"
+  "stage-execution:directives-v1",
+  "contract:020-discovery@2.0.0"
 ] as const;

@@ -83,21 +83,7 @@ const BUILD_FACTORY_MANIFEST_RULE_PATH =
 const SEAL_RUN_RULE_PATH =
   process.env.FORGEPILOT_STARTUP_SEAL_RUN_RULE ??
   "C:\\Github\\aiFactory\\.ai-factory\\010-Startup\\rules\\080-seal_run.rules.md";
-const SCAN_PROJECT_RULE_PATH =
-  process.env.FORGEPILOT_DISCOVERY_SCAN_PROJECT_RULE ??
-  "C:\\Github\\aiFactory\\.ai-factory\\020-Discovery\\rules\\005-scan_project.rules.md";
-const CLASSIFY_FILES_RULE_PATH =
-  process.env.FORGEPILOT_DISCOVERY_CLASSIFY_FILES_RULE ??
-  "C:\\Github\\aiFactory\\.ai-factory\\020-Discovery\\rules\\010-classify_files.rules.md";
-const INDEX_DOCUMENTS_RULE_PATH =
-  process.env.FORGEPILOT_DISCOVERY_INDEX_DOCUMENTS_RULE ??
-  "C:\\Github\\aiFactory\\.ai-factory\\020-Discovery\\rules\\015-index_documents.rules.md";
-const MAP_DEPENDENCIES_RULE_PATH =
-  process.env.FORGEPILOT_DISCOVERY_MAP_DEPENDENCIES_RULE ??
-  "C:\\Github\\aiFactory\\.ai-factory\\020-Discovery\\rules\\017-map_dependencies.rules.md";
-const BUILD_CONTEXT_RULE_PATH =
-  process.env.FORGEPILOT_DISCOVERY_BUILD_CONTEXT_RULE ??
-  "C:\\Github\\aiFactory\\.ai-factory\\020-Discovery\\rules\\020-build_context.rules.md";
+
 
 const sendJson = (response, statusCode, payload) => {
   response.writeHead(statusCode, {
@@ -360,213 +346,72 @@ const createSealRunPrompt = (requestBody) => {
   ].join("\n");
 };
 
-const createScanProjectPrompt = (requestBody) => {
-  const rule = readRule(SCAN_PROJECT_RULE_PATH);
+const createDiscoverySemanticPrompt = (requestBody) => {
+  const payload = requestBody.localExecution?.semantic_task ?? {};
+  const taskId = payload.semantic_task_id;
 
-  return [
-    `Proje koku: ${requestBody.project.rootPath}`,
-    "",
-    `exe_result: ${JSON.stringify(requestBody.localExecution?.scan_project ?? null)}`,
-    "",
-    "--- kural (RULE-D01, 005-scan_project.rules.md) ---",
-    rule,
-    "--- kural sonu ---",
-    "",
-    "EXE RULE-D01 islemini tamamladigini iddia ediyor.",
-    "",
-    "Sen uretim yapmiyorsun. Dosya yazma/degistirme.",
-    "RULE-D01 Verification bolumunu ve invariant'larini bagimsiz dogrula.",
-    "",
-    "Ozellikle gercek traversal kapsamini, exclusion, path canonicalization,",
-    "FILE_INVENTORY/FOLDER_STRUCTURE exact iliskisini ve Git status davranisini kontrol et.",
-    "",
-    "Son satira yalniz:",
-    '{"ok":true,"job":"scan_project","verified_rules":["RULE-D01"]}',
-    "veya",
-    '{"ok":false,"job":"scan_project","failed_at":"RULE-D01","violation":"...","detail":"..."}',
-    "yaz."
-  ].join("\n");
-};
+  if (taskId === "D03_DOMAIN_GLOSSARY") {
+    return [
+      "Discovery contract 2.0.0 semantic task: D03_DOMAIN_GLOSSARY.",
+      "The payload is already bounded by ForgePilot. Do not read project files and do not write files.",
+      "Use only the supplied document lines. Each line object has its canonical source line number.",
+      "Return only glossary candidates supported literally by a supplied line.",
+      "Allowed categories: business_term, module_name, entity_name, role, service_name, api_name.",
+      "Do not return excerpts, severity, ids, or any other fields.",
+      `payload: ${JSON.stringify(payload)}`,
+      "Return one raw JSON object only. Do not use Markdown/code fences or prose.",
+      '{"candidates":[{"term":"...","category":"business_term","evidence":{"source":"README.md","line":1}}]}'
+    ].join("\n");
+  }
 
-const createClassifyFilesPrompt = (requestBody) => {
-  const rule = readRule(CLASSIFY_FILES_RULE_PATH);
+  if (taskId === "D04_CONTEXT_FIELDS") {
+    return [
+      "Discovery contract 2.0.0 semantic task: D04_CONTEXT_FIELDS.",
+      "The payload is bounded. Do not read project files and do not write files.",
+      "Only resolve: project.type, project.purpose, business_domain.name, assumptions[], modules[].description.",
+      "Allowed project.type values: application, service, library, cli, monorepo, infrastructure, UNKNOWN.",
+      "Every non-UNKNOWN semantic value must cite a supplied document line or manifest description field.",
+      "If evidence is insufficient, use UNKNOWN or an empty assumptions array. Never guess.",
+      `payload: ${JSON.stringify(payload)}`,
+      "Return one raw JSON object only. Do not use Markdown/code fences or prose.",
+      '{"project":{"type":"UNKNOWN","purpose":"UNKNOWN","evidence":{"type":null,"purpose":null}},"business_domain":{"name":"UNKNOWN","name_evidence":null},"assumptions":[],"modules":[{"id":"...","description":"UNKNOWN","description_evidence":null}]}'
+    ].join("\n");
+  }
 
-  return [
-    `Proje koku: ${requestBody.project.rootPath}`,
-    "",
-    `exe_result: ${JSON.stringify(requestBody.localExecution?.classify_files ?? null)}`,
-    "",
-    "--- kural (RULE-D02, 010-classify_files.rules.md) ---",
-    rule,
-    "--- kural sonu ---",
-    "",
-    "EXE RULE-D02 islemini tamamladigini iddia ediyor.",
-    "Uretim yapma; yalniz RULE-D02 Verification listesini bagimsiz uygula.",
-    "",
-    "Inventory/classified path exact esitligini, kapali kind/format/signals",
-    "sozluklerini, manifest precedence'i, signal tokenizer fixture'larini ve",
-    "UNKNOWN_FILES esitligini kontrol et.",
-    "",
-    "Son satira yalniz:",
-    '{"ok":true,"job":"classify_files","verified_rules":["RULE-D02"]}',
-    "veya",
-    '{"ok":false,"job":"classify_files","failed_at":"RULE-D02","violation":"...","detail":"..."}',
-    "yaz."
-  ].join("\n");
-};
+  if (taskId === "D05_SEMANTIC_GAPS") {
+    return [
+      "Discovery contract 2.0.0 semantic task: D05_SEMANTIC_GAPS.",
+      "Do not read project files and do not write files. Use only this bounded candidate view.",
+      "You may return only these kinds: duplicate_finding, absence_judged, absence_scope_undeclared, unknown_not_marked.",
+      "Do not set severity, evidence excerpts, or final ids.",
+      "duplicate_finding must reference at least two supplied preliminary candidate_key values and only when they represent the same underlying defect.",
+      "The other three kinds must use an exact semantic_targets target and its exact locator.",
+      "Return no candidate when the predicate is not clearly supported.",
+      `payload: ${JSON.stringify(payload)}`,
+      "Return one raw JSON object only. Do not use Markdown/code fences or prose.",
+      '{"candidates":[{"kind":"unknown_not_marked","target":"PROJECT_CONTEXT.json#/project/purpose","locator":{"source":"README.md","line":1},"reason":"..."}]}'
+    ].join("\n");
+  }
 
-const createIndexDocumentsCandidatesPrompt = (requestBody) => {
-  const rule = readRule(INDEX_DOCUMENTS_RULE_PATH);
-  const candidateDocuments = requestBody.localExecution?.index_documents_candidates ?? [];
-  const canonicalView = candidateDocuments
-    .map((doc) => {
-      const numberedLines = (doc.lines ?? [])
-        .map((line, index) => `${index + 1}: ${line}`)
-        .join("\n");
-      return `--- document (${doc.source}) ---\n${numberedLines}\n--- document sonu ---`;
-    })
-    .join("\n\n");
+  if (taskId === "D07_REPORT_PROSE") {
+    return [
+      "Discovery contract 2.0.0 semantic task: D07_REPORT_PROSE.",
+      "Do not read project files and do not write files. The input is a report-safe aggregate view.",
+      "Produce only executive_summary_body and recommended_actions.",
+      "Do not change or invent gate decisions, scores, finding ids, severities, counts, project facts, or pipeline commands.",
+      "Every active issue/warning id must receive exactly one recommended action. If there are no findings, recommended_actions must be empty.",
+      `payload: ${JSON.stringify(payload)}`,
+      "Return one raw JSON object only. Do not use Markdown/code fences or prose.",
+      '{"executive_summary_body":"...","recommended_actions":[{"finding_id":"DISC-WARN-001","action":"..."}]}'
+    ].join("\n");
+  }
 
-  return [
-    "--- kural (RULE-D03, 015-index_documents.rules.md) ---",
-    rule,
-    "--- kural sonu ---",
-    "",
-    "Asagidaki canonical document view uzerinden yalniz DOMAIN_GLOSSARY candidate'lari uret.",
-    "",
-    canonicalView,
-    "",
-    "Filesystem'e yazma.",
-    "Excerpt uretme.",
-    "Yalniz su kapali category degerlerini kullan:",
-    "business_term, module_name, entity_name, role, service_name, api_name.",
-    "",
-    "Yalniz JSON dondur:",
-    '{"candidates":[{"term":"...","category":"...","evidence":{"source":"...","line":1}}]}'
-  ].join("\n");
-};
-
-const createIndexDocumentsAndMapDependenciesVerificationPrompt = (requestBody) => {
-  const d03Rule = readRule(INDEX_DOCUMENTS_RULE_PATH);
-  const d09Rule = readRule(MAP_DEPENDENCIES_RULE_PATH);
-
-  return [
-    "--- kural (RULE-D03, 015-index_documents.rules.md) ---",
-    d03Rule,
-    "--- kural sonu ---",
-    "",
-    "--- kural (RULE-D09, 017-map_dependencies.rules.md) ---",
-    d09Rule,
-    "--- kural sonu ---",
-    "",
-    `exe_result (index_documents): ${JSON.stringify(requestBody.localExecution?.index_documents ?? null)}`,
-    `exe_result (map_dependencies): ${JSON.stringify(requestBody.localExecution?.map_dependencies ?? null)}`,
-    "",
-    "EXE iki branch'in final output'larini tamamladigini iddia ediyor.",
-    "Uretim yapma, dosya degistirme.",
-    "",
-    "Once RULE-D03 Verification listesini uygula.",
-    "FAIL ise hemen dur.",
-    "Gecerse RULE-D09 Verification listesini uygula.",
-    "",
-    "Ikisi de gecerse son satira yalniz:",
-    '{"ok":true,"job":"index_documents_and_map_dependencies","verified_rules":["RULE-D03","RULE-D09"]}',
-    "Biri gecmezse:",
-    '{"ok":false,"job":"index_documents_and_map_dependencies","failed_at":"RULE-D03|RULE-D09","violation":"...","detail":"..."}',
-    "yaz."
-  ].join("\n");
-};
-
-const createBuildContextEvidencePrompt = (requestBody) => {
-  const rule = readRule(BUILD_CONTEXT_RULE_PATH);
-  const evidence = requestBody.localExecution?.build_context_evidence ?? {};
-  const documents = evidence.documents ?? [];
-  const canonicalView = documents
-    .map((doc) => {
-      const numberedLines = (doc.lines ?? [])
-        .map((line, index) => `${index + 1}: ${line}`)
-        .join("\n");
-      return `--- document (${doc.source}) ---\n${numberedLines}\n--- document sonu ---`;
-    })
-    .join("\n\n");
-
-  return [
-    "--- kural (RULE-D04, 020-build_context.rules.md) ---",
-    rule,
-    "--- kural sonu ---",
-    "",
-    "Asagidaki bounded semantic evidence view uzerinden yalniz RULE-D04'un izin",
-    "verdigi semantic alanlar icin structured JSON patch uret:",
-    "project.type, project.purpose, business_domain.name, assumptions[], modules[].description.",
-    "",
-    `modules: ${JSON.stringify(evidence.modules ?? [])}`,
-    `manifest_descriptions: ${JSON.stringify(evidence.manifestDescriptionCandidates ?? [])}`,
-    `glossary_business_terms: ${JSON.stringify(evidence.businessTerms ?? [])}`,
-    "",
-    canonicalView,
-    "",
-    "Deterministik alanlari degistirme.",
-    "Kanitsiz deger uretme; kanit yoksa RULE-D04'te tanimlandigi gibi UNKNOWN/[] kullan.",
-    "Filesystem'e yazma.",
-    "Baska top-level/semantic alan uretme.",
-    "",
-    "Yalniz JSON dondur:",
-    '{"project":{"type":"...","purpose":"...","evidence":{"type":{...},"purpose":{...}}},' +
-      '"business_domain":{"name":"...","name_evidence":{...}},' +
-      '"assumptions":[{"statement":"...","evidence":{...}}],' +
-      '"modules":[{"id":"...","description":"...","description_evidence":{...}}]}'
-  ].join("\n");
-};
-
-const createBuildContextVerificationPrompt = (requestBody) => {
-  const rule = readRule(BUILD_CONTEXT_RULE_PATH);
-
-  return [
-    "--- kural (RULE-D04, 020-build_context.rules.md) ---",
-    rule,
-    "--- kural sonu ---",
-    "",
-    `exe_result (build_context): ${JSON.stringify(requestBody.localExecution?.build_context ?? null)}`,
-    "",
-    "EXE PROJECT_CONTEXT.json ve MODULE_MAP_BASE.json final output'larini yazdigini iddia ediyor.",
-    "Uretim yapma, dosya degistirme.",
-    "RULE-D04 Verification listesini bagimsiz uygula.",
-    "",
-    "Ozellikle canonical module ownership, root/fallback/catch-all davranisi,",
-    "PROJECT_CONTEXT <-> MODULE_MAP_BASE id esitligi, technology exact copy ve",
-    "semantic evidence/UNKNOWN invariant'larini dogrula.",
-    "",
-    "Son satira:",
-    '{"ok":true,"job":"build_context","verified_rules":["RULE-D04"]}',
-    "veya",
-    '{"ok":false,"job":"build_context","failed_at":"RULE-D04","violation":"...","detail":"..."}',
-    "yaz."
-  ].join("\n");
+  throw new Error(`Unsupported Discovery semantic task: ${String(taskId)}`);
 };
 
 const createPrompt = (requestBody) => {
-  if (requestBody.localExecution?.build_context_evidence) {
-    return createBuildContextEvidencePrompt(requestBody);
-  }
-
-  if (requestBody.localExecution?.build_context) {
-    return createBuildContextVerificationPrompt(requestBody);
-  }
-
-  if (requestBody.localExecution?.index_documents_candidates) {
-    return createIndexDocumentsCandidatesPrompt(requestBody);
-  }
-
-  if (requestBody.localExecution?.index_documents || requestBody.localExecution?.map_dependencies) {
-    return createIndexDocumentsAndMapDependenciesVerificationPrompt(requestBody);
-  }
-
-  if (requestBody.localExecution?.classify_files) {
-    return createClassifyFilesPrompt(requestBody);
-  }
-
-  if (requestBody.localExecution?.scan_project) {
-    return createScanProjectPrompt(requestBody);
+  if (requestBody.localExecution?.semantic_task) {
+    return createDiscoverySemanticPrompt(requestBody);
   }
 
   if (requestBody.localExecution?.seal_run) {
@@ -597,28 +442,9 @@ const createPrompt = (requestBody) => {
 };
 
 const getStageId = (requestBody) => {
-  if (requestBody.localExecution?.build_context_evidence) {
-    return "020-discovery:build-context-evidence";
-  }
-
-  if (requestBody.localExecution?.build_context) {
-    return "020-discovery:build-context";
-  }
-
-  if (requestBody.localExecution?.index_documents_candidates) {
-    return "020-discovery:index-documents-candidates";
-  }
-
-  if (requestBody.localExecution?.index_documents || requestBody.localExecution?.map_dependencies) {
-    return "020-discovery:index-documents-and-map-dependencies";
-  }
-
-  if (requestBody.localExecution?.classify_files) {
-    return "020-discovery:classify-files";
-  }
-
-  if (requestBody.localExecution?.scan_project) {
-    return "020-discovery:scan-project";
+  const semanticTask = requestBody.localExecution?.semantic_task?.semantic_task_id;
+  if (typeof semanticTask === "string") {
+    return `020-discovery:${semanticTask.toLowerCase().replaceAll("_", "-")}`;
   }
 
   if (requestBody.localExecution?.seal_run) {
@@ -860,152 +686,293 @@ const startupDirectiveFor = (session) => {
   }
 };
 
-const discoveryDirectiveFor = (session) => {
-  const prepared = outputObject(session, "indexAndMapPreparation");
-  const glossaryPatch = outputObject(session, "glossaryPatch");
-  const contextPreparation = outputObject(session, "contextPreparation");
-  const contextPatch = outputObject(session, "contextPatch");
-
-  switch (session.step) {
-    case 0:
-      return localDirective(
-        "discovery.scan-project",
-        {},
-        "scanProject",
-        ["Scanning the project tree.", "Project scan completed."],
-        [20, 30]
-      );
-    case 1:
-      return providerDirective(
-        session,
-        { scan_project: session.context.scanProject },
-        "verification",
-        true,
-        null,
-        ["Verifying project scan.", "Project-scan verification completed."],
-        [32, 45]
-      );
-    case 2:
-      return localDirective(
-        "discovery.classify-files",
-        {},
-        "classifyFiles",
-        ["Classifying inventoried files.", "File classification completed."],
-        [47, 60]
-      );
-    case 3:
-      return providerDirective(
-        session,
-        { classify_files: session.context.classifyFiles },
-        "verification",
-        true,
-        null,
-        ["Verifying file classification.", "File-classification verification completed."],
-        [62, 72]
-      );
-    case 4:
-      return localDirective(
-        "discovery.prepare-index-and-map",
-        {},
-        "indexAndMapPreparation",
-        [
-          "Preparing document index and dependency map.",
-          "Document/dependency preparation completed."
-        ],
-        [74, 79]
-      );
-    case 5:
-      return providerDirective(
-        session,
-        { index_documents_candidates: prepared.preparation?.candidateDocuments ?? [] },
-        "semantic",
-        false,
-        "glossaryPatch",
-        [
-          "Resolving domain glossary candidates.",
-          "Domain glossary candidate generation completed."
-        ],
-        [80, 83]
-      );
-    case 6:
-      return localDirective(
-        "discovery.finalize-index-documents",
-        {
-          candidates: Array.isArray(glossaryPatch.candidates) ? glossaryPatch.candidates : [],
-          preparation: prepared.preparation
-        },
-        "indexDocuments",
-        ["Finalizing document index.", "Document index finalized."],
-        [84, 86]
-      );
-    case 7:
-      return providerDirective(
-        session,
-        {
-          index_documents: session.context.indexDocuments,
-          map_dependencies: prepared.mapDependencies
-        },
-        "verification",
-        true,
-        null,
-        [
-          "Verifying document index and dependency map.",
-          "Document/dependency verification completed."
-        ],
-        [87, 90]
-      );
-    case 8:
-      return localDirective(
-        "discovery.prepare-context",
-        {},
-        "contextPreparation",
-        ["Preparing project-context evidence.", "Project-context evidence prepared."],
-        [91, 93]
-      );
-    case 9:
-      return providerDirective(
-        session,
-        {
-          build_context_evidence: {
-            businessTerms: contextPreparation.businessTerms ?? [],
-            documents: contextPreparation.documents ?? [],
-            manifestDescriptionCandidates: contextPreparation.manifestDescriptionCandidates ?? [],
-            modules: Array.isArray(contextPreparation.modules)
-              ? contextPreparation.modules.map((module) => ({
-                  id: module.id,
-                  name: module.name,
-                  root: module.root
-                }))
-              : []
-          }
-        },
-        "semantic",
-        false,
-        "contextPatch",
-        ["Resolving semantic project context.", "Semantic project-context resolution completed."],
-        [94, 96]
-      );
-    case 10:
-      return localDirective(
-        "discovery.finalize-context",
-        { patch: contextPatch, preparation: contextPreparation },
-        "buildContext",
-        ["Finalizing PROJECT_CONTEXT.json.", "Project context finalized."],
-        [96, 98]
-      );
-    case 11:
-      return providerDirective(
-        session,
-        { build_context: session.context.buildContext },
-        "verification",
-        true,
-        null,
-        ["Verifying final project context.", "Project-context verification completed."],
-        [98, 100]
-      );
-    default:
-      return terminalDirective("completed", "Discovery completed successfully.", 100);
+const MOCK_DISCOVERY_SEVERITY_POLICY = {
+  base: {
+    mandatory_output_missing: "HIGH",
+    output_schema_invalid: "CRITICAL",
+    inventory_inconsistent: "MEDIUM",
+    document_index_inconsistent: "MEDIUM",
+    dependency_map_inconsistent: "HIGH",
+    evidence_missing: "HIGH",
+    evidence_excerpt_is_note: "MEDIUM",
+    evidence_line_mismatch: "MEDIUM",
+    secret_unmasked: "CRITICAL",
+    vcs_status_inferred: "CRITICAL",
+    duplicate_finding: "LOW",
+    absence_judged: "MEDIUM",
+    absence_scope_undeclared: "LOW",
+    unknown_not_marked: "HIGH"
   }
+};
+
+// The real Cloud resolves these policies from AI Factory. The local mock sends
+// concrete policy objects so ForgePilot never invents severity/scoring policy.
+const MOCK_DISCOVERY_CHECKLIST = {
+  items: [
+    { id: "CHECK-PRESENCE", obligation: "mandatory", predicate: "check:CHK-PRE-GATE-PRESENCE" },
+    { id: "CHECK-SCHEMA", obligation: "mandatory", predicate: "check:CHK-PRE-GATE-SCHEMA" },
+    { id: "CHECK-INVENTORY", obligation: "mandatory", predicate: "check:CHK-INVENTORY-CONSISTENCY" },
+    { id: "CHECK-DOCUMENTS", obligation: "mandatory", predicate: "check:CHK-DOCUMENT-CONSISTENCY" },
+    { id: "CHECK-DEPENDENCIES", obligation: "mandatory", predicate: "check:CHK-DEPENDENCY-CONSISTENCY" },
+    { id: "CHECK-MODULES", obligation: "mandatory", predicate: "check:CHK-MODULE-MAP-CONSISTENCY" },
+    { id: "CHECK-EVIDENCE", obligation: "reporting", predicate: "check:CHK-EVIDENCE-INTEGRITY" },
+    { id: "CHECK-SECRETS", obligation: "reporting", predicate: "check:CHK-SECRET-REDACTION" },
+    { id: "CHECK-VCS", obligation: "reporting", predicate: "check:CHK-VCS-ASSERTIONS" },
+    { id: "POST-GATE-REPORT", obligation: "post_gate", predicate: "post_gate:DISCOVERY_REPORT.md" },
+    { id: "POST-GATE-SUMMARY", obligation: "post_gate", predicate: "post_gate:DISCOVERY_EXECUTIVE_SUMMARY.md" },
+    { id: "POST-GATE-RESULT", obligation: "post_gate", predicate: "post_gate:DISCOVERY_RESULT.json" },
+    { id: "POST-GATE-METRICS", obligation: "post_gate", predicate: "post_gate:DISCOVERY_METRICS.json" }
+  ]
+};
+
+const MOCK_DISCOVERY_SCORE_POLICY = {
+  components: [
+    { name: "Presence", weight: 15, gap_kinds: ["mandatory_output_missing"] },
+    { name: "Schema", weight: 20, gap_kinds: ["output_schema_invalid"] },
+    {
+      name: "Consistency",
+      weight: 25,
+      gap_kinds: [
+        "inventory_inconsistent",
+        "document_index_inconsistent",
+        "dependency_map_inconsistent",
+        "duplicate_finding",
+        "unknown_not_marked"
+      ]
+    },
+    {
+      name: "Evidence",
+      weight: 25,
+      gap_kinds: [
+        "evidence_missing",
+        "evidence_excerpt_is_note",
+        "evidence_line_mismatch",
+        "vcs_status_inferred",
+        "absence_judged",
+        "absence_scope_undeclared"
+      ]
+    },
+    { name: "Security", weight: 15, gap_kinds: ["secret_unmasked"] }
+  ]
+};
+
+const MOCK_DISCOVERY_MINIMUM_SCORE = Number(process.env.FORGEPILOT_DISCOVERY_MINIMUM_SCORE ?? 90);
+
+const hasOutput = (session, key) => Object.prototype.hasOwnProperty.call(session.context, key);
+
+const discoveryDirectiveFor = (session) => {
+  if (!hasOutput(session, "scanProject")) {
+    return localDirective(
+      "discovery.scan-project",
+      {},
+      "scanProject",
+      ["Scanning the project tree.", "Project scan completed and validated locally."],
+      [20, 28]
+    );
+  }
+
+  if (!hasOutput(session, "classifyFiles")) {
+    return localDirective(
+      "discovery.classify-files",
+      {},
+      "classifyFiles",
+      ["Classifying inventoried files.", "File classification completed and validated locally."],
+      [30, 38]
+    );
+  }
+
+  if (!hasOutput(session, "indexPreparation")) {
+    return localDirective(
+      "discovery.prepare-index-documents-v2",
+      {},
+      "indexPreparation",
+      ["Indexing project documents.", "Document index preparation completed."],
+      [40, 43]
+    );
+  }
+
+  const indexPreparation = outputObject(session, "indexPreparation");
+  if (indexPreparation.semanticNeeded === true && !hasOutput(session, "glossaryPatch")) {
+    return providerDirective(
+      session,
+      { semantic_task: indexPreparation.semanticPayload },
+      "semantic",
+      false,
+      "glossaryPatch",
+      ["Resolving bounded domain glossary semantics.", "Domain glossary semantic pass completed."],
+      [44, 48]
+    );
+  }
+
+  if (!hasOutput(session, "indexDocuments")) {
+    const glossaryPatch = outputObject(session, "glossaryPatch");
+    return localDirective(
+      "discovery.finalize-index-documents-v2",
+      {
+        preparationId: indexPreparation.preparationId,
+        candidates: Array.isArray(glossaryPatch.candidates) ? glossaryPatch.candidates : []
+      },
+      "indexDocuments",
+      ["Finalizing document artifacts.", "Document artifacts finalized and validated locally."],
+      [49, 53]
+    );
+  }
+
+  if (!hasOutput(session, "mapDependencies")) {
+    return localDirective(
+      "discovery.map-dependencies",
+      {},
+      "mapDependencies",
+      ["Mapping manifest dependencies.", "Manifest dependency map completed and validated locally."],
+      [54, 60]
+    );
+  }
+
+  if (!hasOutput(session, "contextPreparation")) {
+    return localDirective(
+      "discovery.prepare-context-v2",
+      {},
+      "contextPreparation",
+      ["Preparing bounded project-context evidence.", "Project-context evidence prepared."],
+      [62, 65]
+    );
+  }
+
+  const contextPreparation = outputObject(session, "contextPreparation");
+  if (contextPreparation.semanticNeeded === true && !hasOutput(session, "contextPatch")) {
+    return providerDirective(
+      session,
+      { semantic_task: contextPreparation.semanticPayload },
+      "semantic",
+      false,
+      "contextPatch",
+      ["Resolving bounded semantic project context.", "Semantic project-context pass completed."],
+      [66, 72]
+    );
+  }
+
+  if (!hasOutput(session, "buildContext")) {
+    return localDirective(
+      "discovery.finalize-context-v2",
+      {
+        preparationId: contextPreparation.preparationId,
+        patch: hasOutput(session, "contextPatch") ? session.context.contextPatch : {}
+      },
+      "buildContext",
+      ["Finalizing project context.", "Project context finalized and validated locally."],
+      [73, 76]
+    );
+  }
+
+  if (!hasOutput(session, "moduleDependencies")) {
+    return localDirective(
+      "discovery.map-module-dependencies-v2",
+      {},
+      "moduleDependencies",
+      ["Mapping module dependencies.", "Module dependency map completed and validated locally."],
+      [78, 83]
+    );
+  }
+
+  if (!hasOutput(session, "gapPreparation")) {
+    return localDirective(
+      "discovery.prepare-detect-gaps-v2",
+      {
+        severityPolicy: MOCK_DISCOVERY_SEVERITY_POLICY,
+        checklist: MOCK_DISCOVERY_CHECKLIST
+      },
+      "gapPreparation",
+      ["Running deterministic Discovery validation.", "Deterministic Discovery validation completed."],
+      [85, 88]
+    );
+  }
+
+  const gapPreparation = outputObject(session, "gapPreparation");
+  if (gapPreparation.semanticNeeded === true && !hasOutput(session, "gapPatch")) {
+    return providerDirective(
+      session,
+      { semantic_task: gapPreparation.semanticPayload },
+      "semantic",
+      false,
+      "gapPatch",
+      ["Checking bounded semantic gap candidates.", "Semantic gap candidate pass completed."],
+      [89, 92]
+    );
+  }
+
+  if (!hasOutput(session, "detectGaps")) {
+    const gapPatch = outputObject(session, "gapPatch");
+    return localDirective(
+      "discovery.finalize-detect-gaps-v2",
+      {
+        preparationId: gapPreparation.preparationId,
+        candidates: Array.isArray(gapPatch.candidates) ? gapPatch.candidates : []
+      },
+      "detectGaps",
+      ["Finalizing Discovery findings.", "Discovery findings finalized and validated locally."],
+      [92, 94]
+    );
+  }
+
+  if (!hasOutput(session, "scoreGate")) {
+    return localDirective(
+      "discovery.score-and-gate-v2",
+      {
+        scorePolicy: MOCK_DISCOVERY_SCORE_POLICY,
+        minimumScore: MOCK_DISCOVERY_MINIMUM_SCORE
+      },
+      "scoreGate",
+      ["Calculating Discovery score and gate.", "Discovery score and gate calculated locally."],
+      [94, 96]
+    );
+  }
+
+  const scoreGate = outputObject(session, "scoreGate");
+  if (scoreGate.decision !== "PASS" && scoreGate.decision !== "PASS_WITH_WARNINGS") {
+    return terminalDirective(
+      "blocked",
+      `Discovery gate requires revision: ${String(scoreGate.decision ?? "UNKNOWN")} (${String(scoreGate.matched_rule ?? "no-rule")}).`,
+      96
+    );
+  }
+
+  if (!hasOutput(session, "reportPreparation")) {
+    return localDirective(
+      "discovery.prepare-report-v2",
+      {},
+      "reportPreparation",
+      ["Preparing final Discovery report model.", "Final Discovery report model prepared."],
+      [97, 97]
+    );
+  }
+
+  const reportPreparation = outputObject(session, "reportPreparation");
+  if (reportPreparation.semanticNeeded === true && !hasOutput(session, "reportPatch")) {
+    return providerDirective(
+      session,
+      { semantic_task: reportPreparation.semanticPayload },
+      "semantic",
+      false,
+      "reportPatch",
+      ["Writing bounded executive-summary prose.", "Executive-summary prose completed."],
+      [98, 99]
+    );
+  }
+
+  if (!hasOutput(session, "generateReport")) {
+    return localDirective(
+      "discovery.finalize-report-v2",
+      {
+        preparationId: reportPreparation.preparationId,
+        patch: hasOutput(session, "reportPatch") ? session.context.reportPatch : null
+      },
+      "generateReport",
+      ["Committing final Discovery reports.", "Final Discovery reports committed and validated locally."],
+      [99, 100]
+    );
+  }
+
+  return terminalDirective("completed", "Discovery v2 completed successfully.", 100);
 };
 
 const nextDirectiveFor = (session) => {
@@ -1134,14 +1101,19 @@ const server = http.createServer(async (request, response) => {
   try {
     if (request.method === "POST" && url.pathname === "/session/handshake") {
       const body = await readJson(request);
-      const compatible = body.protocolVersion === "2";
+      const capabilities = Array.isArray(body.supportedCapabilities) ? body.supportedCapabilities : [];
+      const protocolCompatible = body.protocolVersion === "2";
+      const discoveryContractCompatible = capabilities.includes("contract:020-discovery@2.0.0");
+      const compatible = protocolCompatible && discoveryContractCompatible;
       sendJson(response, 200, {
         status: compatible ? "ok" : "update-required",
-        serverVersion: "mock-0.2.1",
+        serverVersion: "mock-0.3.0",
         protocolVersion: "2",
         message: compatible
-          ? "Mock cloud connected"
-          : "Desktop protocol v2 is required for server-driven execution directives."
+          ? "Mock cloud connected (Discovery contract 2.0.0)"
+          : !protocolCompatible
+            ? "Desktop protocol v2 is required for server-driven execution directives."
+            : "Desktop must support AI Factory Discovery contract 2.0.0."
       });
       return;
     }

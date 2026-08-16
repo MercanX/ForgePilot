@@ -1,6 +1,6 @@
 {
   "name": "forgepilot",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Open-source desktop execution client for AI Factory.",
   "private": true,
   "type": "module",
@@ -40,6 +40,7 @@
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "smol-toml": "^1.8.0",
+    "typescript": "^5.9.3",
     "zod": "^4.4.3",
     "zustand": "^5.0.15"
   },
@@ -59,7 +60,6 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "^17.11.0",
     "prettier": "^3.9.6",
-    "typescript": "^5.9.3",
     "typescript-eslint": "^8.67.0",
     "vite": "^6.3.5",
     "vitest": "^4.1.10"

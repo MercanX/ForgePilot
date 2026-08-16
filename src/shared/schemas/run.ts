@@ -25,6 +25,25 @@ export const stageStatusSchema = z.enum([
   "skipped"
 ]);
 
+export const stageActivityEntrySchema = z
+  .object({
+    message: z.string().min(1),
+    status: z.enum(["started", "completed", "blocked", "failed", "skipped"]),
+    stepId: z.string().min(1),
+    updatedAt: z.string().datetime()
+  })
+  .strict();
+
+export const stageReportSchema = z
+  .object({
+    completedAt: z.string().datetime(),
+    executionId: z.string().min(1).nullable(),
+    message: z.string().min(1),
+    outcome: z.enum(["completed", "blocked", "failed"]),
+    progress: z.number().min(0).max(100)
+  })
+  .strict();
+
 export const workflowStageSchema = z
   .object({
     id: z.string().min(1),
@@ -32,7 +51,9 @@ export const workflowStageSchema = z
     status: stageStatusSchema,
     progress: z.number().min(0).max(100).nullable(),
     currentAgent: z.string().min(1).nullable(),
-    currentOperation: z.string().min(1).nullable()
+    currentOperation: z.string().min(1).nullable(),
+    activity: z.array(stageActivityEntrySchema).default([]),
+    report: stageReportSchema.nullable().default(null)
   })
   .strict();
 
@@ -63,6 +84,8 @@ export const runSchema = z
 
 export type RunStatus = z.infer<typeof runStatusSchema>;
 export type StageStatus = z.infer<typeof stageStatusSchema>;
+export type StageActivityEntry = z.infer<typeof stageActivityEntrySchema>;
+export type StageReport = z.infer<typeof stageReportSchema>;
 export type WorkflowStage = z.infer<typeof workflowStageSchema>;
 export type RunCheckpoint = z.infer<typeof runCheckpointSchema>;
 export type Run = z.infer<typeof runSchema>;

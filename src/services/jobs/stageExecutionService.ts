@@ -61,41 +61,142 @@ const emit = (
 };
 
 /**
- * Provider output may contain prose or pretty-printed JSON. Walk backwards and
- * try every object start so the final valid JSON object can be recovered without
- * requiring the provider to emit it on one physical line.
+ * Provider output is not guaranteed to be raw JSON. Claude/Codex may wrap the
+ * final object in a Markdown fence, prepend a short explanation, or return a
+ * CLI JSON envelope whose `result` field contains the model text. Recover the
+ * last valid object without trusting prose around it.
  */
-export const parseLastJsonObject = (
-  chunks: ProviderOutputChunk[]
-): Record<string, unknown> | null => {
-  const text = chunks.map((chunk) => chunk.text).join("").trim();
+const stripAnsi = (value: string): string =>
+  value.replace(/\u001B(?:\[[0-?]*[ -\/]*[@-~]|\][^\u0007]*(?:\u0007|\u001B\\))/g, "");
 
+const isJsonObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const parseJsonObjectText = (value: string): Record<string, unknown> | null => {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return isJsonObject(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Extract complete JSON objects while respecting quoted strings and escapes.
+ * This lets us recover `{...}` even when text follows it (for example ```).
+ */
+const extractJsonObjects = (text: string): string[] => {
+  const objects: string[] = [];
+  let depth = 0;
+  let start = -1;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (char === "{") {
+      if (depth === 0) {
+        start = index;
+      }
+      depth += 1;
+      continue;
+    }
+
+    if (char === "}" && depth > 0) {
+      depth -= 1;
+      if (depth === 0 && start >= 0) {
+        objects.push(text.slice(start, index + 1));
+        start = -1;
+      }
+    }
+  }
+
+  return objects;
+};
+
+const unwrapProviderJsonEnvelope = (
+  parsed: Record<string, unknown>
+): Record<string, unknown> | null => {
+  // Claude Code `--output-format json` returns a result envelope. Supporting
+  // it here also makes the parser forward-compatible if the adapter switches
+  // to structured CLI output later.
+  if (typeof parsed.result === "string") {
+    const nested = parseProviderText(parsed.result);
+    if (nested) {
+      return nested;
+    }
+  }
+
+  return parsed;
+};
+
+const parseProviderText = (rawText: string): Record<string, unknown> | null => {
+  const text = stripAnsi(rawText).trim();
   if (!text) {
     return null;
   }
 
-  try {
-    const whole = JSON.parse(text) as unknown;
-    if (typeof whole === "object" && whole !== null && !Array.isArray(whole)) {
-      return whole as Record<string, unknown>;
-    }
-  } catch {
-    // The provider is allowed to print progress before the final JSON object.
+  const whole = parseJsonObjectText(text);
+  if (whole) {
+    return unwrapProviderJsonEnvelope(whole);
   }
 
-  for (let index = text.lastIndexOf("{"); index >= 0; index = text.lastIndexOf("{", index - 1)) {
-    try {
-      const candidate = JSON.parse(text.slice(index)) as unknown;
-      if (typeof candidate === "object" && candidate !== null && !Array.isArray(candidate)) {
-        return candidate as Record<string, unknown>;
+  // Prefer explicit fenced blocks first. A model often returns exactly this:
+  // ```json\n{...}\n```
+  const fencedPattern = /```(?:json)?\s*([\s\S]*?)```/gi;
+  const fencedMatches = [...text.matchAll(fencedPattern)];
+  for (let index = fencedMatches.length - 1; index >= 0; index -= 1) {
+    const fenced = fencedMatches[index]?.[1]?.trim();
+    if (!fenced) {
+      continue;
+    }
+
+    const direct = parseJsonObjectText(fenced);
+    if (direct) {
+      return unwrapProviderJsonEnvelope(direct);
+    }
+
+    const nestedObjects = extractJsonObjects(fenced);
+    for (let nestedIndex = nestedObjects.length - 1; nestedIndex >= 0; nestedIndex -= 1) {
+      const parsed = parseJsonObjectText(nestedObjects[nestedIndex]);
+      if (parsed) {
+        return unwrapProviderJsonEnvelope(parsed);
       }
-    } catch {
-      // Keep searching for an earlier object boundary.
+    }
+  }
+
+  // Finally recover the last complete JSON object from arbitrary prose.
+  const objects = extractJsonObjects(text);
+  for (let index = objects.length - 1; index >= 0; index -= 1) {
+    const parsed = parseJsonObjectText(objects[index]);
+    if (parsed) {
+      return unwrapProviderJsonEnvelope(parsed);
     }
   }
 
   return null;
 };
+
+export const parseLastJsonObject = (
+  chunks: ProviderOutputChunk[]
+): Record<string, unknown> | null => parseProviderText(chunks.map((chunk) => chunk.text).join(""));
 
 export const createStageExecutionService = (
   options: StageExecutionServiceOptions = {}
@@ -249,7 +350,12 @@ export const createStageExecutionService = (
   ): Promise<JobRunResponse> => {
     const client = createClient(request.serverUrl);
     const journal = createJournal(request.project.rootPath);
-    let executionId = await journal.getExecutionId(request.stageId);
+
+    if (request.newRun) {
+      await journal.clearStage(request.stageId);
+    }
+
+    let executionId = request.newRun ? null : await journal.getExecutionId(request.stageId);
     let previous: ExecutionPreviousResult | null = null;
     let lastJob: Job | null = null;
     let lastResult: TaskResult | null = null;

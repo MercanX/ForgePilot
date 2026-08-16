@@ -387,19 +387,38 @@ h1 {
 }
 
 .stage-item {
-  display: grid;
-  grid-template-columns: 38px minmax(0, 1fr);
-  align-items: center;
-  gap: 10px;
   border: 1px solid #2a2d33;
   border-radius: 6px;
   min-height: 58px;
-  padding: 8px 10px;
+  overflow: hidden;
 }
 
 .stage-item.is-current {
   border-color: #38bdf8;
   background: #10232c;
+}
+
+.stage-tab {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 58px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.stage-tab:hover {
+  background: rgb(56 189 248 / 0.06);
+}
+
+.stage-tab-copy {
+  min-width: 0;
 }
 
 .stage-index {
@@ -415,7 +434,7 @@ h1 {
 }
 
 .stage-item strong,
-.stage-item span {
+.stage-tab-copy > span {
   display: block;
 }
 
@@ -426,7 +445,7 @@ h1 {
   margin-bottom: 3px;
 }
 
-.stage-item div span {
+.stage-tab-copy > span {
   color: #a8adb7;
   font-size: 12px;
 }
@@ -439,6 +458,17 @@ h1 {
 .stage-item-failed .stage-index {
   border-color: #7f1d1d;
   color: #fecaca;
+}
+
+.stage-panel-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.stage-panel-heading .section-title {
+  margin-bottom: 16px;
 }
 
 .progress-track {
@@ -511,6 +541,7 @@ h1 {
 }
 
 .activity-panel,
+.stage-report,
 .startup-result {
   border-top: 1px solid #26282c;
   margin-bottom: 16px;
@@ -518,6 +549,7 @@ h1 {
 }
 
 .activity-panel h3,
+.stage-report h3,
 .startup-result h3 {
   color: #ffffff;
   font-size: 15px;
@@ -533,10 +565,10 @@ h1 {
 .activity-panel ul {
   display: grid;
   gap: 7px;
-  list-style-type: disc;
   margin: 0;
   padding-bottom: 2px;
   padding-left: 18px;
+  list-style-type: disc;
 }
 
 .activity-panel li {
@@ -587,23 +619,27 @@ h1 {
   }
 }
 
+.stage-report dl,
 .startup-result dl {
   display: grid;
   gap: 10px;
   margin: 0;
 }
 
+.stage-report dl > div,
 .startup-result div {
   display: grid;
   grid-template-columns: 100px minmax(0, 1fr);
   gap: 10px;
 }
 
+.stage-report dt,
 .startup-result dt {
   color: #7f8794;
   font-size: 12px;
 }
 
+.stage-report dd,
 .startup-result dd {
   overflow-wrap: anywhere;
   color: #d5d9e2;
@@ -681,20 +717,6 @@ h1 {
   resize: vertical;
 }
 
-.task-output {
-  overflow: auto;
-  min-height: 140px;
-  max-height: 260px;
-  border: 1px solid #2a2d33;
-  border-radius: 8px;
-  background: #08090b;
-  color: #d5d9e2;
-  font-size: 12px;
-  line-height: 1.5;
-  margin: 18px 0 0;
-  padding: 12px;
-  white-space: pre-wrap;
-}
 
 .settings-section {
   border-top: 1px solid #26282c;

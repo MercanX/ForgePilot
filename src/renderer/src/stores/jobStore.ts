@@ -23,6 +23,7 @@ type JobStoreState = {
   isRunning: boolean;
   lastRun: JobRunResponse | null;
   runProgress: number;
+  runningStageId: string | null;
   workflow: WorkflowResponse | null;
   checkCloud: (serverUrl?: string) => Promise<void>;
   loadWorkflow: (projectId: string, rootPath: string) => Promise<void>;
@@ -31,6 +32,7 @@ type JobStoreState = {
     provider: ProviderDetectionResult,
     model: string | null,
     stageId: string | null,
+    newRun?: boolean,
     serverUrl?: string
   ) => Promise<void>;
 };
@@ -81,6 +83,7 @@ export const useJobStore = create<JobStoreState>((set) => ({
   isRunning: false,
   lastRun: null,
   runProgress: 0,
+  runningStageId: null,
   workflow: null,
 
   checkCloud: async (serverUrl = DEFAULT_SERVER_URL) => {
@@ -114,14 +117,59 @@ export const useJobStore = create<JobStoreState>((set) => ({
     }
   },
 
-  runCloudJob: async (project, provider, model, stageId, serverUrl = DEFAULT_SERVER_URL) => {
-    set({
-      activityEntries: [],
-      currentOperation: "Stage run requested.",
-      errorMessage: null,
-      isRunning: true,
-      lastRun: null,
-      runProgress: 2
+  runCloudJob: async (
+    project,
+    provider,
+    model,
+    stageId,
+    newRun = false,
+    serverUrl = DEFAULT_SERVER_URL
+  ) => {
+    set((state) => {
+      const stageIndex = state.workflow?.stages.findIndex((stage) => stage.id === stageId) ?? -1;
+      const workflow =
+        state.workflow && stageIndex >= 0
+          ? {
+              ...state.workflow,
+              stages: state.workflow.stages.map((stage, index) => {
+                if (index === stageIndex) {
+                  return {
+                    ...stage,
+                    activity: newRun ? [] : stage.activity,
+                    currentOperation: "Stage run requested.",
+                    progress: 2,
+                    report: newRun ? null : stage.report,
+                    status: "running" as const
+                  };
+                }
+
+                if (newRun && index > stageIndex) {
+                  return {
+                    ...stage,
+                    activity: [],
+                    currentAgent: null,
+                    currentOperation: null,
+                    progress: 0,
+                    report: null,
+                    status: "waiting" as const
+                  };
+                }
+
+                return stage;
+              })
+            }
+          : state.workflow;
+
+      return {
+        activityEntries: [],
+        currentOperation: "Stage run requested.",
+        errorMessage: null,
+        isRunning: true,
+        lastRun: null,
+        runProgress: 2,
+        runningStageId: stageId,
+        workflow
+      };
     });
 
     const removeProgressListener = window.forgepilot.jobs.onProgress(
@@ -144,7 +192,7 @@ export const useJobStore = create<JobStoreState>((set) => ({
     try {
       const lastRun = await window.forgepilot.jobs.runOnce({
         model,
-        newRun: false,
+        newRun,
         project,
         providerId: provider.id,
         serverUrl,
@@ -167,7 +215,8 @@ export const useJobStore = create<JobStoreState>((set) => ({
         currentOperation: finalOperation.message,
         isRunning: false,
         lastRun,
-        runProgress: finalOperation.progress
+        runProgress: finalOperation.progress,
+        runningStageId: null
       });
       await useJobStore.getState().loadWorkflow(project.id, project.rootPath);
     } catch (error) {
@@ -180,7 +229,8 @@ export const useJobStore = create<JobStoreState>((set) => ({
         currentOperation: "Stage failed",
         errorMessage: getErrorMessage(error),
         isRunning: false,
-        runProgress: 0
+        runProgress: 0,
+        runningStageId: null
       });
     } finally {
       removeProgressListener();

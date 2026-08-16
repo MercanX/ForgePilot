@@ -125,7 +125,7 @@ const buildMetadata = (): Record<string, unknown> => ({
   generated_at: new Date().toISOString(),
   generated_by: "ForgePilot",
   stage: "Discovery",
-  version: "1.0.0"
+  version: "2.0.0"
 });
 
 const writeJson = async (filePath: string, value: unknown): Promise<void> => {
@@ -1136,7 +1136,7 @@ const PARAGRAPH_ANCHOR_PATTERN = /[^\w\s-]/g;
 
 const normalizeCanonicalText = (raw: string): string => raw.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
 
-const extractCanonicalText = async (absolutePath: string, format: FileFormat): Promise<string> => {
+export const extractCanonicalText = async (absolutePath: string, format: FileFormat): Promise<string> => {
   if (format === "pdf") {
     const buffer = await readFile(absolutePath);
     const parser = new PDFParse({ data: buffer });

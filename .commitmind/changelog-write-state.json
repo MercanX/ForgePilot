@@ -1,5 +1,5 @@
 {
-  "lastFingerprint": "2efc15ae0a1bdd24e32995f5d9f157712433e0ed",
+  "lastFingerprint": "f5ba115596b8cfaaab3048a1dfd27fda64d6fcee",
   "lastDate": "2026-08-16",
-  "lastContent": "- Added Provider Console page under Super Admin navigation for live provider process monitoring\n- Implemented debug event streaming from main process to renderer via new IPC channel\n- Added provider start, exit, stdout/stderr, and parser debug event types with schema validation\n- Integrated debug event collection into job store with 5000 event ring buffer\n- Added responsive console UI with live and raw output views, summary stats, and clear functionality"
+  "lastContent": "- Switched Claude Code provider to stream-json output with default permission mode for structured event parsing.\n- Added JSONL event parsing in stage execution to extract only the final visible model response.\n- Enhanced provider console to display sanitized stream events instead of raw internal thinking blocks.\n- Added `tools/restart-dev.ps1` for one-command clean restart of Electron, renderer, and mock cloud processes.\n- Bumped application version to 0.4.8 across package, constants, and mock cloud server."
 }

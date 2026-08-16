@@ -131,7 +131,16 @@ export const jobProviderDebugEventSchema = z
     processId: z.number().int().positive().nullable(),
     providerId: providerIdSchema,
     model: z.string().min(1).nullable(),
-    kind: z.enum(["provider-start", "stdout", "stderr", "provider-exit", "parser", "contract"]),
+    kind: z.enum([
+      "provider-start",
+      "stdout",
+      "stderr",
+      "provider-event",
+      "provider-result",
+      "provider-exit",
+      "parser",
+      "contract"
+    ]),
     message: z.string().min(1),
     text: z.string().nullable(),
     exitCode: z.number().int().nullable(),

@@ -7,6 +7,12 @@
 
 ## 2026-08-16
 
+- Switched Claude Code provider to stream-json output with default permission mode for structured event parsing.
+- Added JSONL event parsing in stage execution to extract only the final visible model response.
+- Enhanced provider console to display sanitized stream events instead of raw internal thinking blocks.
+- Added `tools/restart-dev.ps1` for one-command clean restart of Electron, renderer, and mock cloud processes.
+- Bumped application version to 0.4.8 across package, constants, and mock cloud server.
+
 - Added Provider Console page under Super Admin navigation for live provider process monitoring
 - Implemented debug event streaming from main process to renderer via new IPC channel
 - Added provider start, exit, stdout/stderr, and parser debug event types with schema validation
@@ -27,6 +33,7 @@
 - Bağlı/aktif Dashboard ve Settings runtime kartları koyu renkli durum yüzeyleriyle vurgulandı; eksik provider/model durumları uyarı rengiyle ayrıştırıldı.
 - Dashboard üst runtime kartları ve alt stage alanı aynı iki kolon hizasına alındı; `Project` kartı `Stages` paneliyle, sağdaki üç durum kartı `Stage` detay paneliyle aynı başlangıç/bitiş çizgisini kullanıyor.
 - ForgePilot ana penceresi açılışta sabit `1440x900` boyutunda açılacak ve kullanıcı tarafından yeniden boyutlandırılamayacak şekilde ayarlandı; native menü çubuğu korunuyor.
+- Tek komutla temiz dev yeniden başlatma için `tools/restart-dev.ps1` eklendi; Electron, renderer dev server ve mock cloud süreçlerini kapatıp temiz mock state ile yeniden başlatıyor.
 - Provider environment check alanı Dashboard altından Settings sayfasına taşındı ve Settings'e Cloud/Provider/Model runtime status bölümü eklendi.
 - Global üst durum barı tekrar eden Cloud/Provider bilgisinden arındırılıp bridge durumuna sadeleştirildi.
 

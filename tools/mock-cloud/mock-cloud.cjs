@@ -328,7 +328,7 @@ const createTask = (jobId, requestBody) => {
         stageId
       }
     },
-    timeoutMs: stageId === DISCOVERY_D05_STAGE_ID ? 900000 : 300000
+    timeoutMs: stageId === DISCOVERY_D05_STAGE_ID ? 1800000 : 300000
   };
 };
 
@@ -912,7 +912,7 @@ const server = http.createServer(async (request, response) => {
         d05RuntimeCompatible;
       sendJson(response, 200, {
         status: compatible ? "ok" : "update-required",
-        serverVersion: "mock-0.4.7-debug",
+        serverVersion: "mock-0.4.8-debug",
         protocolVersion: "2",
         message: compatible
           ? "Mock cloud connected (Startup 2.1.0, Discovery D05 trial)"

@@ -217,7 +217,7 @@ export const useJobStore = create<JobStoreState>((set) => ({
         providerId: provider.id,
         serverUrl,
         stageId,
-        timeoutMs: stageId?.startsWith("020-discovery:") ? 900_000 : 300_000
+        timeoutMs: stageId?.startsWith("020-") ? 1_800_000 : 300_000
       });
       const finalOperation = getFinalOperation(lastRun);
       set({

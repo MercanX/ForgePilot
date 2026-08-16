@@ -24,6 +24,8 @@ olarak düzenlendi ve seçili model bilgisi eklendi.
 - Dashboard iki kolon hizasına alındı: `Project` kartı ve `Stages` paneli aynı
   sol kolon genişliğini, `Cloud/Provider/Model` kartları ve `Stage` detay paneli
   aynı sağ kolon başlangıç/bitiş hizasını kullanır.
+- `tools/restart-dev.ps1` eklendi; Electron, renderer dev server ve mock cloud
+  süreçlerini kapatıp temiz mock state ile yeniden başlatır.
 
 ## Doğrulama
 
@@ -34,6 +36,8 @@ olarak düzenlendi ve seçili model bilgisi eklendi.
 - `corepack pnpm exec eslint src/main/app/window.ts src/renderer/src/pages/DashboardPage.tsx`
 - `corepack pnpm exec eslint src/main/app/window.ts`
 - `corepack pnpm vitest run tests/main/window.test.ts tests/main/security.test.ts`
+- PowerShell syntax kontrolü: `[scriptblock]::Create((Get-Content -Raw tools\restart-dev.ps1))`
+- `powershell -ExecutionPolicy Bypass -File tools\restart-dev.ps1`
 
 Çalıştırıldı ancak repo genelindeki eski test fixture uyumsuzlukları nedeniyle
 geçmedi:

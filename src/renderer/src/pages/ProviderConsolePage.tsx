@@ -24,17 +24,22 @@ export const ProviderConsolePage = (): ReactElement => {
   const providerLabel = latestEvent
     ? providers.find((provider) => provider.id === latestEvent.providerId)?.label ?? latestEvent.providerId
     : "No provider run yet";
-  const rawOutput = useMemo(
-    () =>
-      debugEvents
-        .filter((event) => (event.kind === "stdout" || event.kind === "stderr") && event.text)
-        .map(
-          (event) =>
-            `[${formatTime(event.timestamp)}] [${event.kind.toUpperCase()}]\n${event.text ?? ""}`
-        )
-        .join("\n"),
-    [debugEvents]
-  );
+  const rawOutput = useMemo(() => {
+    const finalResult = [...debugEvents]
+      .reverse()
+      .find((event) => event.kind === "provider-result" && event.text);
+    if (finalResult?.text) {
+      return finalResult.text;
+    }
+
+    return debugEvents
+      .filter((event) => (event.kind === "stdout" || event.kind === "stderr") && event.text)
+      .map(
+        (event) =>
+          `[${formatTime(event.timestamp)}] [${event.kind.toUpperCase()}]\n${event.text ?? ""}`
+      )
+      .join("\n");
+  }, [debugEvents]);
 
   return (
     <div className="provider-console-page">

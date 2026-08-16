@@ -42,6 +42,15 @@ PowerShell:
 $env:FORGEPILOT_OPEN_DEVTOOLS='1'; corepack pnpm dev
 ```
 
+## Temiz Dev Yeniden BaÅŸlatma
+
+Electron, renderer dev server ve mock cloud sÃ¼reÃ§lerini tek komutla kapatÄ±p
+temiz mock state ile yeniden baÅŸlatmak iÃ§in:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\restart-dev.ps1
+```
+
 ## Mock Cloud
 
 Faz 6 ile birlikte yerel AI Factory mock cloud server eklenmiştir. Dev app'i

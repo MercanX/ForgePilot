@@ -1,3 +1,4 @@
+import { PROVIDER_IDS } from "@shared/constants/providerIds";
 import { SUPPORTED_CAPABILITIES } from "@shared/constants/protocolVersion";
 import {
   getTaskResponseSchema,
@@ -241,9 +242,129 @@ const parseProviderText = (rawText: string): Record<string, unknown> | null => {
   return null;
 };
 
+type ProviderStreamResult = {
+  event: Record<string, unknown>;
+  finalText: string | null;
+};
+
+const parseJsonLines = (value: string): Record<string, unknown>[] =>
+  stripAnsi(value)
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => parseJsonObjectText(line))
+    .filter((item): item is Record<string, unknown> => item !== null);
+
+const findProviderStreamResult = (chunks: ProviderOutputChunk[]): ProviderStreamResult | null => {
+  const stdout = chunks
+    .filter((chunk) => chunk.stream === "stdout")
+    .map((chunk) => chunk.text)
+    .join("");
+  const events = parseJsonLines(stdout);
+
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event?.type !== "result") {
+      continue;
+    }
+
+    return {
+      event,
+      finalText: typeof event.result === "string" ? event.result : null
+    };
+  }
+
+  return null;
+};
+
 export const parseLastJsonObject = (
-  chunks: ProviderOutputChunk[]
-): Record<string, unknown> | null => parseProviderText(chunks.map((chunk) => chunk.text).join(""));
+  chunks: ProviderOutputChunk[],
+  providerId?: string
+): Record<string, unknown> | null => {
+  // Claude Code stream-json emits JSONL events and ends with a `type=result`
+  // record whose `result` field contains the model's final visible response.
+  // Parse ONLY that final response for the AI Factory output contract.
+  const streamResult = findProviderStreamResult(chunks);
+  if (streamResult) {
+    return streamResult.finalText ? parseProviderText(streamResult.finalText) : null;
+  }
+
+  // Never reinterpret an arbitrary Claude stream event (system/tool/thinking)
+  // as the semantic task result. If Claude did not emit `type=result`, the
+  // provider run is incomplete even when an earlier event happens to be JSON.
+  if (providerId === PROVIDER_IDS.claudeCode) {
+    return null;
+  }
+
+  // Codex and older non-streaming provider modes may still return plain text / JSON.
+  return parseProviderText(chunks.map((chunk) => chunk.text).join(""));
+};
+
+const safeJsonPreview = (value: unknown, maxLength = 1600): string | null => {
+  try {
+    const text = JSON.stringify(value, null, 2);
+    return text.length > maxLength ? `${text.slice(0, maxLength)}\n…` : text;
+  } catch {
+    return null;
+  }
+};
+
+const describeProviderStreamEvent = (event: Record<string, unknown>): { message: string; text: string | null } => {
+  const type = typeof event.type === "string" ? event.type : "event";
+  const subtype = typeof event.subtype === "string" ? event.subtype : null;
+
+  if (type === "system" && subtype === "init") {
+    const model = typeof event.model === "string" ? event.model : "unknown";
+    const permissionMode = typeof event.permissionMode === "string" ? event.permissionMode : "unknown";
+    return {
+      message: `Claude initialized (model=${model}, permission=${permissionMode}).`,
+      text: null
+    };
+  }
+
+  if (type === "assistant" && isJsonObject(event.message)) {
+    const content = Array.isArray(event.message.content) ? event.message.content : [];
+    const visible: string[] = [];
+    for (const block of content) {
+      if (!isJsonObject(block)) {
+        continue;
+      }
+      if (block.type === "tool_use") {
+        const toolName = typeof block.name === "string" ? block.name : "tool";
+        const input = safeJsonPreview(block.input, 1200);
+        visible.push(input ? `TOOL ${toolName}\n${input}` : `TOOL ${toolName}`);
+      } else if (block.type === "text" && typeof block.text === "string") {
+        visible.push(block.text);
+      }
+      // Intentionally ignore thinking/redacted_thinking blocks.
+    }
+    return {
+      message: "Claude assistant event.",
+      text: visible.length > 0 ? visible.join("\n\n") : null
+    };
+  }
+
+  if (type === "user") {
+    return {
+      message: "Claude tool/user event received.",
+      text: null
+    };
+  }
+
+  if (type === "result") {
+    const turns = typeof event.num_turns === "number" ? event.num_turns : null;
+    const isError = event.is_error === true;
+    return {
+      message: `Claude final result (${isError ? "error" : "success"}${turns !== null ? `, turns=${turns}` : ""}).`,
+      text: typeof event.result === "string" ? event.result : null
+    };
+  }
+
+  return {
+    message: `Claude stream event: ${subtype ? `${type}/${subtype}` : type}.`,
+    text: null
+  };
+};
 
 type JsonSchema = Record<string, unknown>;
 
@@ -479,17 +600,66 @@ export const createStageExecutionService = (
       | ((exit: { exitCode: number | null; finishedAt: string; signal: string | null }) => void)
       | null = null;
     let expectedTaskId: string | null = null;
-    const publishOutputDebug = (taskId: string, chunk: ProviderOutputChunk): void => {
+    const streamLineBuffers = new Map<string, string>();
+    const publishStreamEventDebug = (taskId: string, line: string, timestamp: string): boolean => {
+      const event = parseJsonObjectText(line.trim());
+      if (!event || typeof event.type !== "string") {
+        return false;
+      }
+      const summary = describeProviderStreamEvent(event);
       emitDebug(request, onDebug, {
-        kind: chunk.stream,
+        kind: event.type === "result" ? "provider-result" : "provider-event",
         taskId,
         processId: null,
-        message: chunk.stream === "stderr" ? "Provider STDERR" : "Provider STDOUT",
-        text: chunk.text,
+        message: summary.message,
+        text: summary.text,
         exitCode: null,
         signal: null,
-        timestamp: chunk.timestamp
+        timestamp
       });
+      return true;
+    };
+    const publishOutputDebug = (taskId: string, chunk: ProviderOutputChunk): void => {
+      if (chunk.stream === "stderr" || request.providerId !== PROVIDER_IDS.claudeCode) {
+        emitDebug(request, onDebug, {
+          kind: chunk.stream,
+          taskId,
+          processId: null,
+          message: chunk.stream === "stderr" ? "Provider STDERR" : "Provider STDOUT",
+          text: chunk.text,
+          exitCode: null,
+          signal: null,
+          timestamp: chunk.timestamp
+        });
+      }
+
+      if (chunk.stream !== "stdout" || request.providerId !== PROVIDER_IDS.claudeCode) {
+        return;
+      }
+
+      // Claude stream-json can contain internal thinking blocks. Never expose raw
+      // JSONL in the admin UI; emit only sanitized visible text/tool metadata.
+      const combined = `${streamLineBuffers.get(taskId) ?? ""}${stripAnsi(chunk.text)}`;
+      const lines = combined.split(/\r?\n/);
+      streamLineBuffers.set(taskId, lines.pop() ?? "");
+      for (const line of lines) {
+        if (!line.trim()) {
+          continue;
+        }
+        const parsed = publishStreamEventDebug(taskId, line, chunk.timestamp);
+        if (!parsed) {
+          emitDebug(request, onDebug, {
+            kind: "stdout",
+            taskId,
+            processId: null,
+            message: "Provider STDOUT (non-JSON stream line)",
+            text: line,
+            exitCode: null,
+            signal: null,
+            timestamp: chunk.timestamp
+          });
+        }
+      }
     };
     const removeOutput = taskExecutionService.onOutput((event) => {
       const entry = { taskId: event.taskId, chunk: event.chunk, debugged: false };
@@ -562,6 +732,23 @@ export const createStageExecutionService = (
             resolveExpectedExit = resolve;
           }
         ));
+      const trailingStreamLine = streamLineBuffers.get(started.handle.id)?.trim();
+      if (trailingStreamLine) {
+        const parsed = publishStreamEventDebug(started.handle.id, trailingStreamLine, exitInfo.finishedAt);
+        if (!parsed && request.providerId === PROVIDER_IDS.claudeCode) {
+          emitDebug(request, onDebug, {
+            kind: "stdout",
+            taskId: started.handle.id,
+            processId: started.handle.processId,
+            message: "Provider STDOUT (non-JSON trailing line)",
+            text: trailingStreamLine,
+            exitCode: null,
+            signal: null,
+            timestamp: exitInfo.finishedAt
+          });
+        }
+      }
+      streamLineBuffers.delete(started.handle.id);
       emitDebug(request, onDebug, {
         kind: "provider-exit",
         taskId: started.handle.id,
@@ -601,6 +788,46 @@ export const createStageExecutionService = (
         { findings: submit.findings, runId: job.runId },
         syncFindingsResponseSchema
       );
+
+      if (result.status !== "completed") {
+        const timeoutSeconds = Math.round(Math.min(request.timeoutMs, task.timeoutMs) / 1000);
+        const failureDetail = providerFailureDetail(outputChunks);
+        const failureMessage =
+          result.status === "timeout"
+            ? `Provider timed out after ${timeoutSeconds} seconds before emitting a final result.`
+            : `Provider process failed${failureDetail ? `: ${failureDetail}` : "."}`;
+
+        emitDebug(request, onDebug, {
+          kind: "parser",
+          taskId: started.handle.id,
+          processId: started.handle.processId,
+          message:
+            result.status === "timeout"
+              ? "Provider timed out; final-result parsing and output-contract validation were skipped."
+              : "Provider did not complete successfully; final-result parsing and output-contract validation were skipped.",
+          text: null,
+          exitCode: result.exitCode,
+          signal: exitInfo.signal,
+          timestamp: new Date().toISOString()
+        });
+
+        emit(request, onProgress, {
+          message: failureMessage,
+          progress: directive.progressCompleted,
+          status: "failed",
+          stepId: directive.id
+        });
+
+        return {
+          job,
+          outputContractErrors: [],
+          parsedOutput: null,
+          result,
+          submitAccepted: submit.accepted,
+          syncedFindings: sync.accepted ? submit.findings : []
+        };
+      }
+
       const rawOutputText = outputChunks.map((chunk) => chunk.text).join("");
       emitDebug(request, onDebug, {
         kind: "parser",
@@ -612,7 +839,7 @@ export const createStageExecutionService = (
         signal: null,
         timestamp: new Date().toISOString()
       });
-      const rawParsedOutput = parseLastJsonObject(outputChunks);
+      const rawParsedOutput = parseLastJsonObject(outputChunks, request.providerId);
       const parsedOutput =
         directive.mode === "semantic"
           ? selectContractOutput(rawParsedOutput, directive.outputSchema)

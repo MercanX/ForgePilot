@@ -227,6 +227,9 @@ const runStage = async (stageId) => {
     } else {
       const taskId = directive.job.task?.instructions?.metadata?.localExecution?.semantic_task?.semantic_task_id ?? "startup-verification";
       providerTasks.push(taskId);
+      if (directive.mode === "semantic" && (!directive.outputSchema || directive.outputSchema.type !== "object")) {
+        throw new Error(`${taskId} semantic directive is missing a structured output schema.`);
+      }
       output = providerOutputFor(directive);
       await submitFakeProviderResult(directive, output);
       const midStage = await workflowStage(stageId);

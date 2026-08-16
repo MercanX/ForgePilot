@@ -523,6 +523,163 @@ const localDirective = (operation, inputs, saveAs, messages, progress) => ({
   saveAs: saveAs ?? null
 });
 
+const semanticLocatorSchema = () => ({
+  oneOf: [
+    {
+      type: "object",
+      properties: { source: { type: "string" }, line: { type: "integer", minimum: 1 } },
+      required: ["source", "line"],
+      additionalProperties: false
+    },
+    {
+      type: "object",
+      properties: { source: { type: "string" }, field: { type: "string" } },
+      required: ["source", "field"],
+      additionalProperties: false
+    }
+  ]
+});
+
+const nullableLocatorSchema = () => ({ anyOf: [{ type: "null" }, semanticLocatorSchema()] });
+
+const discoverySemanticOutputSchema = (localExecution) => {
+  const taskId = localExecution?.semantic_task?.semantic_task_id;
+
+  if (taskId === "D03_DOMAIN_GLOSSARY") {
+    return {
+      type: "object",
+      properties: {
+        candidates: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              term: { type: "string" },
+              category: {
+                type: "string",
+                enum: ["business_term", "module_name", "entity_name", "role", "service_name", "api_name"]
+              },
+              evidence: {
+                type: "object",
+                properties: { source: { type: "string" }, line: { type: "integer", minimum: 1 } },
+                required: ["source", "line"],
+                additionalProperties: false
+              }
+            },
+            required: ["term", "category", "evidence"],
+            additionalProperties: false
+          }
+        }
+      },
+      required: ["candidates"],
+      additionalProperties: false
+    };
+  }
+
+  if (taskId === "D04_CONTEXT_FIELDS") {
+    return {
+      type: "object",
+      properties: {
+        project: {
+          type: "object",
+          properties: {
+            type: { type: "string", enum: ["application", "service", "library", "cli", "monorepo", "infrastructure", "UNKNOWN"] },
+            purpose: { type: "string" },
+            evidence: {
+              type: "object",
+              properties: { type: nullableLocatorSchema(), purpose: nullableLocatorSchema() },
+              required: ["type", "purpose"],
+              additionalProperties: false
+            }
+          },
+          required: ["type", "purpose", "evidence"],
+          additionalProperties: false
+        },
+        business_domain: {
+          type: "object",
+          properties: { name: { type: "string" }, name_evidence: nullableLocatorSchema() },
+          required: ["name", "name_evidence"],
+          additionalProperties: false
+        },
+        assumptions: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: { statement: { type: "string" }, evidence: semanticLocatorSchema() },
+            required: ["statement", "evidence"],
+            additionalProperties: false
+          }
+        },
+        modules: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              id: { type: "string" },
+              description: { type: "string" },
+              description_evidence: nullableLocatorSchema()
+            },
+            required: ["id", "description", "description_evidence"],
+            additionalProperties: false
+          }
+        }
+      },
+      required: ["project", "business_domain", "assumptions", "modules"],
+      additionalProperties: false
+    };
+  }
+
+  if (taskId === "D05_SEMANTIC_GAPS") {
+    return {
+      type: "object",
+      properties: {
+        candidates: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              kind: {
+                type: "string",
+                enum: ["duplicate_finding", "absence_judged", "absence_scope_undeclared", "unknown_not_marked"]
+              },
+              target: { anyOf: [{ type: "string" }, { type: "null" }] },
+              locator: nullableLocatorSchema(),
+              candidate_keys: { type: "array", items: { type: "string" } },
+              reason: { type: "string" }
+            },
+            required: ["kind", "target", "locator", "candidate_keys", "reason"],
+            additionalProperties: false
+          }
+        }
+      },
+      required: ["candidates"],
+      additionalProperties: false
+    };
+  }
+
+  if (taskId === "D07_REPORT_PROSE") {
+    return {
+      type: "object",
+      properties: {
+        executive_summary_body: { type: "string" },
+        recommended_actions: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: { finding_id: { type: "string" }, action: { type: "string" } },
+            required: ["finding_id", "action"],
+            additionalProperties: false
+          }
+        }
+      },
+      required: ["executive_summary_body", "recommended_actions"],
+      additionalProperties: false
+    };
+  }
+
+  return null;
+};
+
 const providerDirective = (
   session,
   localExecution,
@@ -546,6 +703,7 @@ const providerDirective = (
     job,
     kind: "provider",
     mode,
+    outputSchema: mode === "semantic" ? discoverySemanticOutputSchema(localExecution) : null,
     requireOk,
     saveAs: saveAs ?? null
   };

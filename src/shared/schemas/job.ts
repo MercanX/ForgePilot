@@ -72,7 +72,8 @@ export const taskExecutionRequestSchema = z
     instructions: taskInstructionsSchema,
     model: z.string().min(1).nullable().default(null),
     timeoutMs: z.number().int().positive().default(DEFAULT_JOB_TIMEOUT_MS),
-    mode: taskExecutionModeSchema.default("echo-fixture")
+    mode: taskExecutionModeSchema.default("echo-fixture"),
+    outputJsonSchema: z.record(z.string(), z.unknown()).nullable().default(null)
   })
   .strict();
 

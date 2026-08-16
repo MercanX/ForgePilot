@@ -9,6 +9,11 @@ export const createClaudeCodeAdapter = (): CliProviderAdapter =>
       "--no-session-persistence",
       "--permission-mode",
       "plan",
+      "--output-format",
+      "json",
+      ...(request.outputJsonSchema
+        ? ["--json-schema", JSON.stringify(request.outputJsonSchema)]
+        : []),
       ...(request.model ? ["--model", request.model] : [])
     ],
     command: "claude",

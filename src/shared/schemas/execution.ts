@@ -30,6 +30,7 @@ export const providerExecutionDirectiveSchema = directiveBaseSchema
     job: jobSchema,
     kind: z.literal("provider"),
     mode: z.enum(["verification", "semantic"]),
+    outputSchema: z.record(z.string(), z.unknown()).nullable().default(null),
     requireOk: z.boolean().default(false),
     saveAs: z.string().min(1).nullable().default(null)
   })

@@ -53,6 +53,7 @@ const startTask = async (
     },
     model,
     mode,
+    outputJsonSchema: null,
     projectRootPath: project.rootPath,
     providerId: provider.id,
     timeoutMs

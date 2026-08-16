@@ -134,9 +134,26 @@ const extractJsonObjects = (text: string): string[] => {
 const unwrapProviderJsonEnvelope = (
   parsed: Record<string, unknown>
 ): Record<string, unknown> | null => {
-  // Claude Code `--output-format json` returns a result envelope. Supporting
-  // it here also makes the parser forward-compatible if the adapter switches
-  // to structured CLI output later.
+  // Claude Code structured output (`--output-format json --json-schema`)
+  // returns the validated payload in `structured_output`. Prefer that over
+  // free-form text so semantic jobs cannot fail merely because the model used
+  // Markdown or explanatory prose around an otherwise valid answer.
+  if (
+    typeof parsed.structured_output === "object" &&
+    parsed.structured_output !== null &&
+    !Array.isArray(parsed.structured_output)
+  ) {
+    return parsed.structured_output as Record<string, unknown>;
+  }
+
+  if (typeof parsed.structured_output === "string") {
+    const nested = parseProviderText(parsed.structured_output);
+    if (nested) {
+      return nested;
+    }
+  }
+
+  // Plain `--output-format json` places the textual response in `result`.
   if (typeof parsed.result === "string") {
     const nested = parseProviderText(parsed.result);
     if (nested) {
@@ -247,6 +264,7 @@ export const createStageExecutionService = (
         instructions: task.instructions,
         mode: "provider",
         model: request.model,
+        outputJsonSchema: directive.outputSchema,
         projectRootPath: request.project.rootPath,
         providerId: request.providerId,
         timeoutMs: Math.min(request.timeoutMs, task.timeoutMs)

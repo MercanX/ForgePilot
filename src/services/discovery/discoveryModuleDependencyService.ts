@@ -4,7 +4,7 @@ import path from "node:path";
 import { parse as parseToml } from "smol-toml";
 import ts from "typescript";
 
-import type { FileFormat, FileKind } from "./discoveryJobService";
+import type { FileFormat, FileKind, FileOrigin } from "./discoveryJobService";
 
 const REPORTS_SEGMENTS = [".ai-factory", "020-Discovery", "reports"];
 const CONTEXT_SEGMENTS = [".ai-factory", "context", "project"];
@@ -67,6 +67,7 @@ const moduleRootForPath = (filePath: string): string => {
 type ClassifiedFile = {
   format: FileFormat;
   kind: FileKind;
+  origin: FileOrigin;
   path: string;
   signals: string[];
 };
@@ -439,8 +440,17 @@ export const runMapModuleDependenciesJob = async (
     throw new Error("Invalid D08 inputs.");
   }
 
-  const classifiedPaths = new Set(classified.files.map((file) => file.path));
-  if (classifiedPaths.size !== classified.files.length) throw new Error("Duplicate CLASSIFIED_FILES path.");
+  const allClassifiedPaths = new Set(classified.files.map((file) => file.path));
+  if (allClassifiedPaths.size !== classified.files.length) {
+    throw new Error("Duplicate CLASSIFIED_FILES path.");
+  }
+
+  // MODULE_MAP_BASE intentionally owns only project-authored files. Generated,
+  // third-party and ForgePilot tool-state entries remain in CLASSIFIED_FILES as
+  // canonical inventory truth, but they must not be forced into project modules.
+  const classifiedPaths = new Set(
+    classified.files.filter((file) => file.origin === "project").map((file) => file.path)
+  );
   const pathToModule = new Map<string, string>();
   const moduleById = new Map<string, BaseModule>();
 

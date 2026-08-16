@@ -36,6 +36,11 @@ import {
 } from "./project";
 import { providerDetectionResultSchema, providerIdSchema } from "./provider";
 import { appSettingsSchema, settingsSaveRequestSchema } from "./settings";
+import {
+  startupApprovedScopeSchema,
+  startupScopeDocumentSchema,
+  startupStateSchema
+} from "./startup";
 
 export const appPingRequestSchema = z.object({}).strict();
 
@@ -51,26 +56,24 @@ export const appPingResponseSchema = z
 export type AppPingRequest = z.infer<typeof appPingRequestSchema>;
 export type AppPingResponse = z.infer<typeof appPingResponseSchema>;
 
-export const startupInputFileNameSchema = z.enum(["SCOPE.md", "BASELINE.md"]);
+export const startupGetStateRequestSchema = z
+  .object({ projectRootPath: z.string().min(1) })
+  .strict();
 
-export const startupOpenInputFileRequestSchema = z
+export const startupApproveScopeRequestSchema = z
   .object({
-    fileName: startupInputFileNameSchema,
-    projectRootPath: z.string().min(1),
-    runId: z.string().min(1)
+    approved: startupApprovedScopeSchema,
+    projectRootPath: z.string().min(1)
   })
   .strict();
 
-export const startupOpenInputFileResponseSchema = z
-  .object({
-    errorMessage: z.string().min(1).nullable(),
-    opened: z.boolean(),
-    path: z.string().min(1)
-  })
+export const startupApproveScopeResponseSchema = z
+  .object({ scope: startupScopeDocumentSchema })
   .strict();
 
-export type StartupOpenInputFileRequest = z.infer<typeof startupOpenInputFileRequestSchema>;
-export type StartupOpenInputFileResponse = z.infer<typeof startupOpenInputFileResponseSchema>;
+export type StartupGetStateRequest = z.infer<typeof startupGetStateRequestSchema>;
+export type StartupApproveScopeRequest = z.infer<typeof startupApproveScopeRequestSchema>;
+export type StartupApproveScopeResponse = z.infer<typeof startupApproveScopeResponseSchema>;
 
 export const ipcSchemaMap = {
   app: {
@@ -140,9 +143,13 @@ export const ipcSchemaMap = {
     }
   },
   startup: {
-    openInputFile: {
-      request: startupOpenInputFileRequestSchema,
-      response: startupOpenInputFileResponseSchema
+    getState: {
+      request: startupGetStateRequestSchema,
+      response: startupStateSchema
+    },
+    approveScope: {
+      request: startupApproveScopeRequestSchema,
+      response: startupApproveScopeResponseSchema
     }
   },
   jobs: {

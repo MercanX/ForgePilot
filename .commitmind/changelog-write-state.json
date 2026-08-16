@@ -1,5 +1,5 @@
 {
-  "lastFingerprint": "024ff149bcd270457aee68147eceb7fcf2931c1c",
-  "lastDate": "2026-08-15",
-  "lastContent": "- Reduced dashboard activity log display from 10 to 5 entries for a more concise view.\n- Switched activity list markup from ordered to unordered for consistent styling.\n- Simplified mock cloud startup flow by removing redundant verification steps and adjusting progress ranges.\n- Added a seal check before final verification in the startup sequence to prevent unnecessary provider calls.\n- Reformatted mock cloud code for improved readability and maintainability."
+  "lastFingerprint": "033ff9af84e85a186822453aeea6c6b7991101f5",
+  "lastDate": "2026-08-16",
+  "lastContent": "- Added an interactive audit scope panel to the dashboard for reviewing and editing the AI-proposed project boundary before startup execution.\n- Introduced new IPC channels for retrieving startup state and approving scope, replacing the previous file-opening mechanism.\n- Enabled users to approve, modify, or reject include/exclude lists and explicit file overrides, ensuring final authority over AI access.\n- Updated the startup stage to block execution until scope approval is granted, preventing unintended file inspection.\n- Bumped the application version to 0.4.0 to reflect the new scope approval workflow."
 }

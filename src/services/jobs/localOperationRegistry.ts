@@ -27,13 +27,10 @@ import {
   prepareIndexDocumentsV2Job
 } from "../discovery/discoverySemanticPreparation";
 import {
-  runBuildFactoryManifestJob,
-  runBuildSourceManifestJob,
-  runCaptureGitStateJob,
-  runPlaceInputsJob,
-  runSealRunJob,
-  runSelectRunJob,
-  runStartupJob
+  runBuildWorkspaceManifestJob,
+  runSaveScopeProposalJob,
+  runScopeStatusJob,
+  runSealWorkspaceJob
 } from "../startup/startupJobService";
 
 export type LocalOperationHandler = (
@@ -82,19 +79,13 @@ const requireObject = <T>(inputs: Record<string, unknown>, key: string): T => {
 };
 
 const handlers: Record<string, LocalOperationHandler> = {
-  "startup.check": (projectRootPath) => runStartupJob(projectRootPath),
-  "startup.select-run": (projectRootPath, inputs) =>
-    runSelectRunJob(projectRootPath, inputs.newRun === true),
-  "startup.place-inputs": (projectRootPath, inputs) =>
-    runPlaceInputsJob(projectRootPath, requireString(inputs, "runId")),
-  "startup.capture-git-state": (projectRootPath, inputs) =>
-    runCaptureGitStateJob(projectRootPath, requireString(inputs, "runId")),
-  "startup.build-source-manifest": (projectRootPath, inputs) =>
-    runBuildSourceManifestJob(projectRootPath, requireString(inputs, "runId")),
-  "startup.build-factory-manifest": (projectRootPath, inputs) =>
-    runBuildFactoryManifestJob(projectRootPath, requireString(inputs, "runId")),
-  "startup.seal-run": (projectRootPath, inputs) =>
-    runSealRunJob(projectRootPath, requireString(inputs, "runId")),
+  "startup.scope-status": (projectRootPath, inputs) =>
+    runScopeStatusJob(projectRootPath, inputs.reset === true),
+  "startup.save-scope-proposal": (projectRootPath, inputs) =>
+    runSaveScopeProposalJob(projectRootPath, inputs.proposal),
+  "startup.build-workspace-manifest": (projectRootPath) =>
+    runBuildWorkspaceManifestJob(projectRootPath),
+  "startup.seal-workspace": (projectRootPath) => runSealWorkspaceJob(projectRootPath),
 
   // Discovery v2: full canonical data stays local. Only bounded semantic views
   // produced by the prepare operations are returned to Cloud/LLM.

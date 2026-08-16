@@ -64,7 +64,7 @@ const createClientFactory =
 
 export const createJobService = (options: JobServiceOptions = {}): JobService => {
   const createClient = createClientFactory(options);
-  const desktopVersion = options.desktopVersion ?? "0.3.0";
+  const desktopVersion = options.desktopVersion ?? "0.4.0";
   const stageExecutionService =
     options.stageExecutionService ?? createStageExecutionService({ createClient });
 

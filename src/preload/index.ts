@@ -11,8 +11,9 @@ import type {
 } from "@shared/schemas/cloud-api";
 import type {
   AppPingResponse,
-  StartupOpenInputFileRequest,
-  StartupOpenInputFileResponse
+  StartupApproveScopeRequest,
+  StartupApproveScopeResponse,
+  StartupGetStateRequest
 } from "@shared/schemas/ipc";
 import type {
   TaskExecutionRequest,
@@ -23,6 +24,7 @@ import type {
 import type { Project, ProjectAddResponse, ProjectListResponse } from "@shared/schemas/project";
 import type { ProviderDetectionResult, ProviderId } from "@shared/schemas/provider";
 import type { AppSettings } from "@shared/schemas/settings";
+import type { StartupState } from "@shared/schemas/startup";
 
 const { contextBridge, ipcRenderer } = electron;
 
@@ -85,8 +87,10 @@ const forgepilotApi = {
       ipcRenderer.invoke(IPC_CHANNELS.settings.save, settings)
   },
   startup: {
-    openInputFile: (request: StartupOpenInputFileRequest): Promise<StartupOpenInputFileResponse> =>
-      ipcRenderer.invoke(IPC_CHANNELS.startup.openInputFile, request)
+    getState: (request: StartupGetStateRequest): Promise<StartupState> =>
+      ipcRenderer.invoke(IPC_CHANNELS.startup.getState, request),
+    approveScope: (request: StartupApproveScopeRequest): Promise<StartupApproveScopeResponse> =>
+      ipcRenderer.invoke(IPC_CHANNELS.startup.approveScope, request)
   }
 } as const;
 

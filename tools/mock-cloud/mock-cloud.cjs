@@ -8,7 +8,6 @@ const PORT = Number(process.env.FORGEPILOT_MOCK_CLOUD_PORT ?? 4317);
 const jobs = new Map();
 const STARTUP_STAGE_ID = "010-startup";
 const DISCOVERY_STAGE_ID = "020-discovery";
-const LEGACY_STARTUP_SEAL_STAGE_ID = "010-startup:seal-run";
 const LEGACY_DISCOVERY_FINAL_STAGE_ID = "020-discovery:build-context";
 const executions = new Map();
 
@@ -59,30 +58,23 @@ const markStagePassed = (projectId, stageId) => {
   passedStagesByProject.get(projectId).add(stageId);
   persistPassedStagesByProject();
 };
-const CHECK_FACTORY_RULE_PATH =
-  process.env.FORGEPILOT_STARTUP_CHECK_FACTORY_RULE ??
-  "C:\\Github\\aiFactory\\.ai-factory\\010-Startup\\rules\\010-check_factory.rules.md";
-const READ_CONFIG_RULE_PATH =
-  process.env.FORGEPILOT_STARTUP_READ_CONFIG_RULE ??
-  "C:\\Github\\aiFactory\\.ai-factory\\010-Startup\\rules\\020-read_config.rules.md";
-const SELECT_RUN_RULE_PATH =
-  process.env.FORGEPILOT_STARTUP_SELECT_RUN_RULE ??
-  "C:\\Github\\aiFactory\\.ai-factory\\010-Startup\\rules\\030-select_run.rules.md";
-const PLACE_INPUTS_RULE_PATH =
-  process.env.FORGEPILOT_STARTUP_PLACE_INPUTS_RULE ??
-  "C:\\Github\\aiFactory\\.ai-factory\\010-Startup\\rules\\040-place_inputs.rules.md";
-const CAPTURE_GIT_STATE_RULE_PATH =
-  process.env.FORGEPILOT_STARTUP_CAPTURE_GIT_STATE_RULE ??
-  "C:\\Github\\aiFactory\\.ai-factory\\010-Startup\\rules\\050-capture_git_state.rules.md";
-const BUILD_SOURCE_MANIFEST_RULE_PATH =
-  process.env.FORGEPILOT_STARTUP_BUILD_SOURCE_MANIFEST_RULE ??
-  "C:\\Github\\aiFactory\\.ai-factory\\010-Startup\\rules\\060-build_source_manifest.rules.md";
-const BUILD_FACTORY_MANIFEST_RULE_PATH =
-  process.env.FORGEPILOT_STARTUP_BUILD_FACTORY_MANIFEST_RULE ??
-  "C:\\Github\\aiFactory\\.ai-factory\\010-Startup\\rules\\070-build_factory_manifest.rules.md";
-const SEAL_RUN_RULE_PATH =
-  process.env.FORGEPILOT_STARTUP_SEAL_RUN_RULE ??
-  "C:\\Github\\aiFactory\\.ai-factory\\010-Startup\\rules\\080-seal_run.rules.md";
+const STARTUP_CONTRACT_PATH =
+  process.env.FORGEPILOT_STARTUP_CONTRACT ??
+  "C:\\Github\\aiFactory\\.ai-factory\\010-Startup\\STARTUP_CONTRACT.json";
+
+const loadStartupContract = () => JSON.parse(readFileSync(STARTUP_CONTRACT_PATH, "utf8"));
+
+const getStartupProviderTask = (taskId) => {
+  const contract = loadStartupContract();
+  const task = contract?.provider_tasks?.[taskId];
+  if (!task || typeof task.rule !== "string" || !task.output_schema) {
+    throw new Error(`Startup contract does not define provider task: ${taskId}`);
+  }
+  return {
+    ...task,
+    rulePath: path.resolve(path.dirname(STARTUP_CONTRACT_PATH), task.rule)
+  };
+};
 
 
 const sendJson = (response, statusCode, payload) => {
@@ -129,7 +121,7 @@ const getLastJsonObject = (outputChunks) => {
 
 const buildStages = (projectId) => {
   const passed = getProjectStageSet(projectId);
-  const startupCompleted = passed.has(STARTUP_STAGE_ID) || passed.has(LEGACY_STARTUP_SEAL_STAGE_ID);
+  const startupCompleted = passed.has(STARTUP_STAGE_ID);
   const discoveryCompleted =
     passed.has(DISCOVERY_STAGE_ID) || passed.has(LEGACY_DISCOVERY_FINAL_STAGE_ID);
 
@@ -181,168 +173,23 @@ const buildStages = (projectId) => {
   ];
 };
 
-const createStartupPrompt = (requestBody) => {
-  const checkFactoryRule = readRule(CHECK_FACTORY_RULE_PATH);
-  const readConfigRule = readRule(READ_CONFIG_RULE_PATH);
+const createStartupScopePrompt = (requestBody) => {
+  const task = getStartupProviderTask("SCOPE_PROPOSAL");
+  const rule = readRule(task.rulePath);
 
   return [
-    `Proje koku: ${requestBody.project.rootPath}`,
+    "AI Factory 010-Startup semantic task: SCOPE_PROPOSAL.",
+    `Selected project root: ${requestBody.project.rootPath}`,
     "",
-    `exe_result: ${JSON.stringify(requestBody.localExecution ?? null)}`,
+    "The selected project root is your working directory. Explore it with your normal read/search tools as needed.",
+    "Do not modify project files. Do not perform the software audit. Only propose the audit scope.",
     "",
-    "--- kural (RULE-A01, 010-check_factory.rules.md) ---",
-    checkFactoryRule,
-    "--- kural sonu ---",
-    "",
-    "--- kural (RULE-A02, 020-read_config.rules.md) ---",
-    readConfigRule,
-    "--- kural sonu ---",
-    "",
-    "Exe az once bu iki kuralin gerektirdigi islemi tamamladigini iddia ediyor.",
-    "Sen bunu yapmiyorsun - yalnizca gercegi kontrol ediyorsun.",
-    "RULE-A01 icin klasor disi degisiklik kontrolunu check_factory adimi icin yorumla;",
-    "factory.config.yaml dosyasi varsa/olustuysa bu RULE-A02 read_config adiminin kapsamindadir.",
-    "",
-    "Sirayla dogrula: once RULE-A01, sonra RULE-A02. Kendi Read/Bash'inle diske bak.",
-    "Biri ihlal edilirse HEMEN dur, sonrakine gecme.",
-    "",
-    "Bitince, baska hicbir sey yazmadan, SON SATIRA tek satirlik JSON yaz:",
-    "- Ikisi de gectiyse:",
-    '{"ok": true, "check_factory": {"created": true|false, "path": "..."}, "read_config": {"version": "...", "mode": "...", "locale": "..."}}',
-    "- Biri gecmediyse:",
-    '{"ok": false, "failed_at": "RULE-A01"|"RULE-A02", "violation": "<hangi madde>", "detail": "<ne oldu>"}'
-  ].join("\n");
-};
-
-const createSelectRunPrompt = (requestBody) => {
-  const selectRunRule = readRule(SELECT_RUN_RULE_PATH);
-
-  return [
-    `Project root: ${requestBody.project.rootPath}`,
-    "",
-    "--- kural (RULE-A03, 030-select_run.rules.md) ---",
-    selectRunRule,
-    "--- kural sonu ---",
-    "",
-    "Exe az once bu kuralin algoritmasini calistirdigini, su sonuca ulastigini iddia ediyor:",
-    "",
-    `exe_result: ${JSON.stringify(requestBody.localExecution?.select_run ?? null)}`,
-    "",
-    "Sen bunu yapmiyorsun - RULE-A03'un kontrol listesine gore, kendi Read/Bash'inle diske bakarak dogrula.",
-    "",
-    "Bitince, baska hicbir sey yazmadan, SON SATIRA tek satirlik JSON yaz:",
-    '- Gectiyse: exe_result\'u aynen ilet, {"ok": true, ...} ile sarmalayarak',
-    '- Gecmediyse: {"ok": false, "violation": "<hangi madde>", "detail": "<ne oldu>"}'
-  ].join("\n");
-};
-
-const createPlaceInputsPrompt = (requestBody) => {
-  const placeInputsRule = readRule(PLACE_INPUTS_RULE_PATH);
-
-  return [
-    `Project root: ${requestBody.project.rootPath}`,
-    "",
-    "--- kural (RULE-A04, 040-place_inputs.rules.md) ---",
-    placeInputsRule,
-    "--- kural sonu ---",
-    "",
-    "Exe az once bu kuralin algoritmasini calistirdigini, su sonuca ulastigini iddia ediyor:",
-    "",
-    `exe_result: ${JSON.stringify(requestBody.localExecution?.place_inputs ?? null)}`,
-    "",
-    "Sen bunu yapmiyorsun - RULE-A04'un kontrol listesine gore, kendi Read/Bash'inle diske bakarak dogrula.",
-    "",
-    "Bitince, baska hicbir sey yazmadan, SON SATIRA tek satirlik JSON yaz:",
-    '- Kontrol gectiyse (ready ya da waiting_for_input, ikisi de gecerli sonuctur): exe_result\'u aynen ilet, {"ok": true, ...} ile sarmalayarak',
-    '- Kontrol gecmediyse: {"ok": false, "violation": "<hangi madde>", "detail": "<ne oldu>"}'
-  ].join("\n");
-};
-
-const createCaptureGitStatePrompt = (requestBody) => {
-  const captureGitStateRule = readRule(CAPTURE_GIT_STATE_RULE_PATH);
-
-  return [
-    `Project root: ${requestBody.project.rootPath}`,
-    "",
-    "--- kural (RULE-A05, 050-capture_git_state.rules.md) ---",
-    captureGitStateRule,
-    "--- kural sonu ---",
-    "",
-    "Exe az once bu kuralin algoritmasini calistirdigini, su sonuca ulastigini iddia ediyor:",
-    "",
-    `exe_result: ${JSON.stringify(requestBody.localExecution?.capture_git_state ?? null)}`,
-    "",
-    "Sen bunu yapmiyorsun - RULE-A05'in kontrol listesine gore, kendi Read/Bash'inle diske bakarak ve gerekirse kendi git komutlarini calistirarak dogrula.",
-    "",
-    "Bitince, baska hicbir sey yazmadan, SON SATIRA tek satirlik JSON yaz:",
-    '- Gectiyse: exe_result\'u aynen ilet, {"ok": true, ...} ile sarmalayarak',
-    '- Gecmediyse: {"ok": false, "violation": "<hangi madde>", "detail": "<ne oldu>"}'
-  ].join("\n");
-};
-
-const createBuildSourceManifestPrompt = (requestBody) => {
-  const rule = readRule(BUILD_SOURCE_MANIFEST_RULE_PATH);
-
-  return [
-    `Project root: ${requestBody.project.rootPath}`,
-    "",
-    "--- kural (RULE-A06, 060-build_source_manifest.rules.md) ---",
+    "--- authoritative Startup scope rule ---",
     rule,
-    "--- kural sonu ---",
+    "--- end authoritative Startup scope rule ---",
     "",
-    "Exe az once bu kuralin algoritmasini calistirdigini, su sonuca ulastigini iddia ediyor:",
-    "",
-    `exe_result: ${JSON.stringify(requestBody.localExecution?.build_source_manifest ?? null)}`,
-    "",
-    "Sen bunu yapmiyorsun - RULE-A06'nin kontrol listesine gore, kendi Read/Bash'inle diske bakarak ve birkac dosyanin hash'ini kendin hesaplayarak dogrula.",
-    "",
-    "Bitince, baska hicbir sey yazmadan, SON SATIRA tek satirlik JSON yaz:",
-    '- Gectiyse: exe_result\'u aynen ilet, {"ok": true, ...} ile sarmalayarak',
-    '- Gecmediyse: {"ok": false, "violation": "<hangi madde>", "detail": "<ne oldu>"}'
-  ].join("\n");
-};
-
-const createBuildFactoryManifestPrompt = (requestBody) => {
-  const rule = readRule(BUILD_FACTORY_MANIFEST_RULE_PATH);
-
-  return [
-    `Project root: ${requestBody.project.rootPath}`,
-    "",
-    "--- kural (RULE-A07, 070-build_factory_manifest.rules.md) ---",
-    rule,
-    "--- kural sonu ---",
-    "",
-    "Exe az once bu kuralin algoritmasini calistirdigini, su sonuca ulastigini iddia ediyor:",
-    "",
-    `exe_result: ${JSON.stringify(requestBody.localExecution?.build_factory_manifest ?? null)}`,
-    "",
-    "Sen bunu yapmiyorsun - RULE-A07'nin kontrol listesine gore, kendi Read/Bash'inle diske bakarak ve birkac dosyanin hash'ini kendin hesaplayarak dogrula.",
-    "",
-    "Bitince, baska hicbir sey yazmadan, SON SATIRA tek satirlik JSON yaz:",
-    '- Gectiyse: exe_result\'u aynen ilet, {"ok": true, ...} ile sarmalayarak',
-    '- Gecmediyse: {"ok": false, "violation": "<hangi madde>", "detail": "<ne oldu>"}'
-  ].join("\n");
-};
-
-const createSealRunPrompt = (requestBody) => {
-  const rule = readRule(SEAL_RUN_RULE_PATH);
-
-  return [
-    `Project root: ${requestBody.project.rootPath}`,
-    "",
-    "--- kural (RULE-A08, 080-seal_run.rules.md) ---",
-    rule,
-    "--- kural sonu ---",
-    "",
-    "Exe az once bu kuralin algoritmasini calistirdigini, su sonuca ulastigini iddia ediyor:",
-    "",
-    `exe_result: ${JSON.stringify(requestBody.localExecution?.seal_run ?? null)}`,
-    "",
-    "Sen bunu yapmiyorsun - RULE-A08'in kontrol listesine gore, kendi Read/Bash'inle diske bakarak 7 dosyanin hash'ini kendin hesaplayarak dogrula.",
-    "",
-    "Bitince, baska hicbir sey yazmadan, SON SATIRA tek satirlik JSON yaz:",
-    '- Gectiyse: exe_result\'u aynen ilet, {"ok": true, ...} ile sarmalayarak',
-    '- Gecmediyse: {"ok": false, "violation": "<hangi madde>", "detail": "<ne oldu>"}'
+    `Required output JSON schema: ${JSON.stringify(task.output_schema)}`,
+    "Return one raw JSON object matching this schema. Do not use Markdown fences or prose outside JSON."
   ].join("\n");
 };
 
@@ -410,68 +257,30 @@ const createDiscoverySemanticPrompt = (requestBody) => {
 };
 
 const createPrompt = (requestBody) => {
-  if (requestBody.localExecution?.semantic_task) {
+  const semanticTask = requestBody.localExecution?.semantic_task?.semantic_task_id;
+
+  if (semanticTask === "SCOPE_PROPOSAL") {
+    return createStartupScopePrompt(requestBody);
+  }
+
+  if (typeof semanticTask === "string") {
     return createDiscoverySemanticPrompt(requestBody);
   }
 
-  if (requestBody.localExecution?.seal_run) {
-    return createSealRunPrompt(requestBody);
-  }
-
-  if (requestBody.localExecution?.build_factory_manifest) {
-    return createBuildFactoryManifestPrompt(requestBody);
-  }
-
-  if (requestBody.localExecution?.build_source_manifest) {
-    return createBuildSourceManifestPrompt(requestBody);
-  }
-
-  if (requestBody.localExecution?.capture_git_state) {
-    return createCaptureGitStatePrompt(requestBody);
-  }
-
-  if (requestBody.localExecution?.place_inputs) {
-    return createPlaceInputsPrompt(requestBody);
-  }
-
-  if (requestBody.localExecution?.select_run) {
-    return createSelectRunPrompt(requestBody);
-  }
-
-  return createStartupPrompt(requestBody);
+  throw new Error("Provider job does not identify a supported semantic task.");
 };
 
 const getStageId = (requestBody) => {
   const semanticTask = requestBody.localExecution?.semantic_task?.semantic_task_id;
+  if (semanticTask === "SCOPE_PROPOSAL") {
+    return "010-startup:scope-proposal";
+  }
+
   if (typeof semanticTask === "string") {
     return `020-discovery:${semanticTask.toLowerCase().replaceAll("_", "-")}`;
   }
 
-  if (requestBody.localExecution?.seal_run) {
-    return "010-startup:seal-run";
-  }
-
-  if (requestBody.localExecution?.build_factory_manifest) {
-    return "010-startup:build-factory-manifest";
-  }
-
-  if (requestBody.localExecution?.build_source_manifest) {
-    return "010-startup:build-source-manifest";
-  }
-
-  if (requestBody.localExecution?.capture_git_state) {
-    return "010-startup:capture-git-state";
-  }
-
-  if (requestBody.localExecution?.place_inputs) {
-    return "010-startup:place-inputs";
-  }
-
-  if (requestBody.localExecution?.select_run) {
-    return "010-startup:select-run";
-  }
-
-  return "010-startup";
+  return "unknown";
 };
 
 const createTask = (jobId, requestBody) => ({
@@ -541,6 +350,14 @@ const semanticLocatorSchema = () => ({
 });
 
 const nullableLocatorSchema = () => ({ anyOf: [{ type: "null" }, semanticLocatorSchema()] });
+
+const semanticOutputSchema = (localExecution) => {
+  const taskId = localExecution?.semantic_task?.semantic_task_id;
+  if (taskId === "SCOPE_PROPOSAL") {
+    return getStartupProviderTask("SCOPE_PROPOSAL").output_schema;
+  }
+  return discoverySemanticOutputSchema(localExecution);
+};
 
 const discoverySemanticOutputSchema = (localExecution) => {
   const taskId = localExecution?.semantic_task?.semantic_task_id;
@@ -703,7 +520,7 @@ const providerDirective = (
     job,
     kind: "provider",
     mode,
-    outputSchema: mode === "semantic" ? discoverySemanticOutputSchema(localExecution) : null,
+    outputSchema: mode === "semantic" ? semanticOutputSchema(localExecution) : null,
     requireOk,
     saveAs: saveAs ?? null
   };
@@ -723,125 +540,107 @@ const outputObject = (session, key) => {
 };
 
 const startupDirectiveFor = (session) => {
-  const selectRun = outputObject(session, "selectRun");
-  const placeInputs = outputObject(session, "placeInputs");
-  const sealRun = outputObject(session, "sealRun");
+  const scopeStatus = outputObject(session, "scopeStatus");
 
-  switch (session.step) {
-    case 0:
-      return localDirective(
-        "startup.select-run",
-        { newRun: session.newRun },
-        "selectRun",
-        ["Selecting the AI Factory run folder.", "Run folder selection completed."],
-        [20, 28]
-      );
-    case 1:
-      if (selectRun.decision === "already_sealed") {
-        return providerDirective(
-          session,
-          { select_run: selectRun },
-          "verification",
-          true,
-          null,
-          ["Verifying the existing sealed run.", "Existing sealed run verification completed."],
-          [30, 100]
-        );
-      }
-
-      return localDirective(
-        "startup.check",
-        {},
-        "startupCheck",
-        [
-          "Checking the factory folder and configuration.",
-          "Factory and configuration check completed."
-        ],
-        [30, 38]
-      );
-    case 2:
-      if (selectRun.decision === "already_sealed") {
-        return terminalDirective(
-          "completed",
-          "A valid sealed run already exists; Startup is complete.",
-          100
-        );
-      }
-
-      return localDirective(
-        "startup.place-inputs",
-        { runId: selectRun.run_id },
-        "placeInputs",
-        ["Placing SCOPE.md and BASELINE.md.", "Input placement completed."],
-        [40, 50]
-      );
-    case 3:
-      if (placeInputs.status === "waiting_for_input") {
-        return terminalDirective(
-          "blocked",
-          "SCOPE.md and BASELINE.md need user review before Startup can continue.",
-          50
-        );
-      }
-
-      return localDirective(
-        "startup.capture-git-state",
-        { runId: selectRun.run_id },
-        "gitState",
-        ["Capturing git state.", "Git state captured."],
-        [52, 62]
-      );
-    case 4:
-      return localDirective(
-        "startup.build-source-manifest",
-        { runId: selectRun.run_id },
-        "sourceManifest",
-        ["Building SOURCE_MANIFEST.csv.", "Source manifest built."],
-        [64, 74]
-      );
-    case 5:
-      return localDirective(
-        "startup.build-factory-manifest",
-        { runId: selectRun.run_id },
-        "factoryManifest",
-        ["Building FACTORY_MANIFEST.csv.", "Factory manifest built."],
-        [76, 86]
-      );
-    case 6:
-      return localDirective(
-        "startup.seal-run",
-        { runId: selectRun.run_id },
-        "sealRun",
-        ["Sealing the Startup run.", "Startup seal calculation completed."],
-        [88, 94]
-      );
-    case 7:
-      if (sealRun.decision !== "PASS") {
-        return terminalDirective(
-          "blocked",
-          "Startup seal did not pass; review the missing run artifacts.",
-          94
-        );
-      }
-
-      return providerDirective(
-        session,
-        { seal_run: sealRun },
-        "verification",
-        true,
-        null,
-        ["Performing final Startup verification.", "Final Startup verification completed."],
-        [95, 100]
-      );
-    default:
-      return sealRun.decision === "PASS"
-        ? terminalDirective("completed", "Startup completed and the run is sealed.", 100)
-        : terminalDirective(
-            "blocked",
-            "Startup seal did not pass; review the missing run artifacts.",
-            100
-          );
+  if (!Object.prototype.hasOwnProperty.call(session.context, "scopeStatus")) {
+    return localDirective(
+      "startup.scope-status",
+      { reset: session.newRun === true },
+      "scopeStatus",
+      [
+        session.newRun ? "Resetting Startup workspace state." : "Checking Startup workspace state.",
+        session.newRun ? "Startup workspace state reset." : "Startup workspace state checked."
+      ],
+      [20, 26]
+    );
   }
+
+  if (scopeStatus.state === "sealed") {
+    return terminalDirective(
+      "completed",
+      "Startup workspace is approved and sealed for Discovery.",
+      100
+    );
+  }
+
+  if (scopeStatus.state === "proposal_pending") {
+    return terminalDirective(
+      "blocked",
+      "AI scope proposal is ready. Review/edit the scope and approve it in ForgePilot.",
+      52
+    );
+  }
+
+  if (scopeStatus.state === "missing" && !Object.prototype.hasOwnProperty.call(session.context, "scopeProposal")) {
+    return providerDirective(
+      session,
+      { semantic_task: { semantic_task_id: "SCOPE_PROPOSAL" } },
+      "semantic",
+      false,
+      "scopeProposal",
+      ["AI is surveying the project and proposing audit scope.", "AI scope proposal completed."],
+      [28, 46]
+    );
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(session.context, "scopeProposal") &&
+    !Object.prototype.hasOwnProperty.call(session.context, "scopeProposalSaved")
+  ) {
+    return localDirective(
+      "startup.save-scope-proposal",
+      { proposal: session.context.scopeProposal },
+      "scopeProposalSaved",
+      ["Saving the AI scope proposal for user review.", "AI scope proposal saved."],
+      [48, 52]
+    );
+  }
+
+  if (Object.prototype.hasOwnProperty.call(session.context, "scopeProposalSaved")) {
+    return terminalDirective(
+      "blocked",
+      "AI scope proposal is ready. Review/edit the scope and approve it in ForgePilot.",
+      52
+    );
+  }
+
+  if (scopeStatus.state === "approved" && !Object.prototype.hasOwnProperty.call(session.context, "workspaceManifest")) {
+    return localDirective(
+      "startup.build-workspace-manifest",
+      {},
+      "workspaceManifest",
+      ["Hashing the approved workspace.", "Approved workspace manifest created."],
+      [62, 88]
+    );
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(session.context, "workspaceManifest") &&
+    !Object.prototype.hasOwnProperty.call(session.context, "startupSeal")
+  ) {
+    return localDirective(
+      "startup.seal-workspace",
+      {},
+      "startupSeal",
+      ["Sealing the approved workspace snapshot.", "Workspace snapshot sealed."],
+      [90, 100]
+    );
+  }
+
+  const startupSeal = outputObject(session, "startupSeal");
+  if (startupSeal.status === "READY_FOR_DISCOVERY") {
+    return terminalDirective(
+      "completed",
+      "Startup completed. Approved workspace is sealed and ready for Discovery.",
+      100
+    );
+  }
+
+  return terminalDirective(
+    "failed",
+    `Startup reached an unsupported state: ${String(scopeStatus.state ?? "UNKNOWN")}`,
+    session.lastProgress ?? 0
+  );
 };
 
 const MOCK_DISCOVERY_SEVERITY_POLICY = {
@@ -1261,17 +1060,28 @@ const server = http.createServer(async (request, response) => {
       const body = await readJson(request);
       const capabilities = Array.isArray(body.supportedCapabilities) ? body.supportedCapabilities : [];
       const protocolCompatible = body.protocolVersion === "2";
+      const startupContract = loadStartupContract();
+      const startupRuntimeCompatible = startupContract.contract_version === "2.1.0";
+      const startupContractCompatible = capabilities.includes("contract:010-startup@2.1.0");
       const discoveryContractCompatible = capabilities.includes("contract:020-discovery@2.0.0");
-      const compatible = protocolCompatible && discoveryContractCompatible;
+      const compatible =
+        protocolCompatible &&
+        startupRuntimeCompatible &&
+        startupContractCompatible &&
+        discoveryContractCompatible;
       sendJson(response, 200, {
         status: compatible ? "ok" : "update-required",
-        serverVersion: "mock-0.3.2",
+        serverVersion: "mock-0.4.0",
         protocolVersion: "2",
         message: compatible
-          ? "Mock cloud connected (Discovery contract 2.0.0)"
+          ? "Mock cloud connected (Startup 2.1.0, Discovery 2.0.0)"
           : !protocolCompatible
             ? "Desktop protocol v2 is required for server-driven execution directives."
-            : "Desktop must support AI Factory Discovery contract 2.0.0."
+            : !startupRuntimeCompatible
+              ? `AI Factory Startup runtime contract 2.1.0 is required; server loaded ${String(startupContract.contract_version ?? "unknown")}.`
+              : !startupContractCompatible
+                ? "Desktop must support AI Factory Startup contract 2.1.0."
+                : "Desktop must support AI Factory Discovery contract 2.0.0."
       });
       return;
     }

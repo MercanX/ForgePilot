@@ -7,6 +7,12 @@
 
 ## 2026-08-16
 
+- Added an interactive audit scope panel to the dashboard for reviewing and editing the AI-proposed project boundary before startup execution.
+- Introduced new IPC channels for retrieving startup state and approving scope, replacing the previous file-opening mechanism.
+- Enabled users to approve, modify, or reject include/exclude lists and explicit file overrides, ensuring final authority over AI access.
+- Updated the startup stage to block execution until scope approval is granted, preventing unintended file inspection.
+- Bumped the application version to 0.4.0 to reflect the new scope approval workflow.
+
 - Desktop job orchestration `010-startup` / `020-discovery` stage-id dallanmalarından çıkarılıp server-driven `POST /executions/next` directive protokolüne taşındı.
 - Stage completion authority mock cloud state-machine'e alındı; individual provider job PASS sonucu artık stage'i erken tamamlamıyor.
 - `stageExecutionService`, local operation registry ve crash recovery journal eklendi; küçük tamamlanmış local directive sonuçları execution id + directive id ile idempotent yeniden gönderilebiliyor.

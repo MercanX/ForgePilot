@@ -7,29 +7,44 @@ const { spawn } = require("node:child_process");
 const tempRoot = mkdtempSync(path.join(os.tmpdir(), "forgepilot-protocol-"));
 const projectRoot = path.join(tempRoot, "project");
 const statePath = path.join(tempRoot, "state.json");
-const rulePath = path.join(tempRoot, "startup-rule.md");
+const startupRuntimeRoot = path.join(tempRoot, "startup-runtime");
+const rulePath = path.join(startupRuntimeRoot, "rules", "005-propose_scope.rules.md");
+const contractPath = path.join(startupRuntimeRoot, "STARTUP_CONTRACT.json");
 const port = 44317;
 const baseUrl = `http://127.0.0.1:${port}`;
 mkdirSync(projectRoot, { recursive: true });
-writeFileSync(rulePath, "# Startup test rule\n", "utf8");
-
-const startupRuleEnvironmentNames = [
-  "FORGEPILOT_STARTUP_CHECK_FACTORY_RULE",
-  "FORGEPILOT_STARTUP_READ_CONFIG_RULE",
-  "FORGEPILOT_STARTUP_SELECT_RUN_RULE",
-  "FORGEPILOT_STARTUP_PLACE_INPUTS_RULE",
-  "FORGEPILOT_STARTUP_CAPTURE_GIT_STATE_RULE",
-  "FORGEPILOT_STARTUP_BUILD_SOURCE_MANIFEST_RULE",
-  "FORGEPILOT_STARTUP_BUILD_FACTORY_MANIFEST_RULE",
-  "FORGEPILOT_STARTUP_SEAL_RUN_RULE"
-];
+mkdirSync(path.dirname(rulePath), { recursive: true });
+writeFileSync(rulePath, "# Startup scope fixture rule\n", "utf8");
+writeFileSync(
+  contractPath,
+  JSON.stringify({
+    contract_version: "2.1.0",
+    provider_tasks: {
+      SCOPE_PROPOSAL: {
+        rule: "rules/005-propose_scope.rules.md",
+        output_schema: {
+          type: "object",
+          properties: {
+            include: { type: "array" },
+            exclude: { type: "array" },
+            needs_user_decision: { type: "array" },
+            summary: { type: "string" }
+          },
+          required: ["include", "exclude", "needs_user_decision", "summary"],
+          additionalProperties: false
+        }
+      }
+    }
+  }),
+  "utf8"
+);
 
 const child = spawn(process.execPath, [path.join(__dirname, "mock-cloud", "mock-cloud.cjs")], {
   env: {
     ...process.env,
     FORGEPILOT_MOCK_CLOUD_PORT: String(port),
     FORGEPILOT_MOCK_CLOUD_STATE_FILE: statePath,
-    ...Object.fromEntries(startupRuleEnvironmentNames.map((name) => [name, rulePath]))
+    FORGEPILOT_STARTUP_CONTRACT: contractPath
   },
   stdio: ["ignore", "pipe", "pipe"]
 });
@@ -72,13 +87,10 @@ const project = {
 };
 
 const LOCAL_OPERATIONS = [
-  "startup.select-run",
-  "startup.check",
-  "startup.place-inputs",
-  "startup.capture-git-state",
-  "startup.build-source-manifest",
-  "startup.build-factory-manifest",
-  "startup.seal-run",
+  "startup.scope-status",
+  "startup.save-scope-proposal",
+  "startup.build-workspace-manifest",
+  "startup.seal-workspace",
   "discovery.scan-project",
   "discovery.classify-files",
   "discovery.prepare-index-documents-v2",
@@ -109,16 +121,30 @@ const semanticPayload = (semanticTaskId) => ({
   }
 });
 
+let startupScopeApproved = false;
+
 const localOutputFor = (operation) => {
-  const runId = "protocol-fixture-20260816-001";
+  if (operation === "startup.scope-status") {
+    return startupScopeApproved
+      ? { state: "approved", approved: true, hasProposal: true, sealed: false, workspace_hash: null }
+      : { state: "missing", approved: false, hasProposal: false, sealed: false, workspace_hash: null };
+  }
+
   const outputs = {
-    "startup.select-run": { decision: "new", run_id: runId },
-    "startup.check": { check_factory: { created: true }, read_config: { version: "1" } },
-    "startup.place-inputs": { run_id: runId, status: "ready" },
-    "startup.capture-git-state": { has_git: false, run_id: runId },
-    "startup.build-source-manifest": { file_count: 1, run_id: runId },
-    "startup.build-factory-manifest": { file_count: 1, run_id: runId },
-    "startup.seal-run": { decision: "PASS", missing: [], run_id: runId },
+    "startup.save-scope-proposal": { status: "pending_approval" },
+    "startup.build-workspace-manifest": {
+      file_count: 1,
+      manifest_hash: "a".repeat(64),
+      scope_hash: "b".repeat(64),
+      workspace_hash: "c".repeat(64)
+    },
+    "startup.seal-workspace": {
+      file_count: 1,
+      manifest_hash: "a".repeat(64),
+      scope_hash: "b".repeat(64),
+      workspace_hash: "c".repeat(64),
+      status: "READY_FOR_DISCOVERY"
+    },
     "discovery.scan-project": { directory_count: 1, file_count: 1 },
     "discovery.classify-files": { file_count: 1, unknown_count: 0 },
     "discovery.prepare-index-documents-v2": {
@@ -161,6 +187,8 @@ const providerOutputFor = (directive) => {
   const task = directive.job.task?.instructions?.metadata?.localExecution?.semantic_task;
   if (directive.mode !== "semantic") return { ok: true };
   switch (task?.semantic_task_id) {
+    case "SCOPE_PROPOSAL":
+      return { include: [{ path: "src", reason: "source", confidence: "high" }], exclude: [], needs_user_decision: [], summary: "fixture" };
     case "D03_DOMAIN_GLOSSARY":
     case "D05_SEMANTIC_GAPS":
       return { candidates: [] };
@@ -193,7 +221,7 @@ const workflowStage = async (stageId) => {
   return workflow.stages.find((stage) => stage.id === stageId);
 };
 
-const runStage = async (stageId) => {
+const runStage = async (stageId, expectedOutcome = "completed") => {
   let executionId = null;
   let previous = null;
   const providerTasks = [];
@@ -201,7 +229,7 @@ const runStage = async (stageId) => {
 
   for (let index = 0; index < 80; index += 1) {
     const next = await requestJson("POST", "/executions/next", {
-      capabilities: ["stage-execution:directives-v1", "contract:020-discovery@2.0.0"],
+      capabilities: ["stage-execution:directives-v1", "contract:010-startup@2.1.0", "contract:020-discovery@2.0.0"],
       executionId,
       localOperations: LOCAL_OPERATIONS,
       newRun: false,
@@ -214,7 +242,7 @@ const runStage = async (stageId) => {
     const directive = next.directive;
 
     if (directive.kind === "terminal") {
-      if (directive.outcome !== "completed") {
+      if (directive.outcome !== expectedOutcome) {
         throw new Error(`${stageId} ended as ${directive.outcome}: ${directive.message}`);
       }
       return { localOperations, providerTasks };
@@ -248,9 +276,9 @@ const runStage = async (stageId) => {
   try {
     await waitForServer();
     const handshake = await requestJson("POST", "/session/handshake", {
-      desktopVersion: "0.3.0",
+      desktopVersion: "0.4.0",
       protocolVersion: "2",
-      supportedCapabilities: ["stage-execution:directives-v1", "contract:020-discovery@2.0.0"]
+      supportedCapabilities: ["stage-execution:directives-v1", "contract:010-startup@2.1.0", "contract:020-discovery@2.0.0"]
     });
     if (handshake.status !== "ok" || handshake.protocolVersion !== "2") {
       throw new Error("Mock cloud did not negotiate Discovery contract v2.");
@@ -271,9 +299,23 @@ const runStage = async (stageId) => {
       throw new Error("Initial workflow gating is incorrect.");
     }
 
-    const startup = await runStage("010-startup");
-    if (startup.providerTasks.length !== 1 || startup.providerTasks[0] !== "startup-verification") {
-      throw new Error(`Startup should use one final provider verification, saw ${startup.providerTasks.join(", ")}.`);
+    const startupProposal = await runStage("010-startup", "blocked");
+    if (startupProposal.providerTasks.length !== 1 || startupProposal.providerTasks[0] !== "SCOPE_PROPOSAL") {
+      throw new Error(`Startup should use exactly one AI scope proposal task, saw ${startupProposal.providerTasks.join(", ")}.`);
+    }
+    if (!startupProposal.localOperations.includes("startup.save-scope-proposal")) {
+      throw new Error("Startup did not persist the AI scope proposal before blocking for approval.");
+    }
+
+    startupScopeApproved = true;
+    const startupSeal = await runStage("010-startup");
+    for (const operation of ["startup.build-workspace-manifest", "startup.seal-workspace"]) {
+      if (!startupSeal.localOperations.includes(operation)) {
+        throw new Error(`Startup approval continuation missed ${operation}.`);
+      }
+    }
+    if (startupSeal.providerTasks.length !== 0) {
+      throw new Error("Startup deterministic sealing must not run another LLM verification.");
     }
 
     const startupAfter = await workflowStage("010-startup");
@@ -309,7 +351,7 @@ const runStage = async (stageId) => {
       throw new Error("Discovery terminal completion was not persisted.");
     }
 
-    console.log("Execution protocol verification passed (Startup single verifier + Discovery v2 semantic allowlist)." );
+    console.log("Execution protocol verification passed (Startup AI scope + user approval/seal + Discovery v2 semantic allowlist)." );
   } finally {
     child.kill("SIGTERM");
     rmSync(tempRoot, { recursive: true, force: true });

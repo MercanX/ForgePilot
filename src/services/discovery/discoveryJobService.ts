@@ -5,6 +5,8 @@ import mammoth from "mammoth";
 import { PDFParse } from "pdf-parse";
 import { parse as parseToml } from "smol-toml";
 
+import { startupScopeDocumentSchema } from "@shared/schemas/startup";
+
 import { isDirectory, isFile, runGit, toPosixRelative } from "../shared/fsUtils";
 
 export type ScanProjectResult = {
@@ -120,10 +122,11 @@ const ROOT_EXCLUDED_DIRECTORIES = new Set([
   "vendor"
 ]);
 const EXCLUDED_FILE_NAME = "RUN_ENV.json";
-const RUNS_DIR = ".ai-factory-runs";
+const STARTUP_SCOPE_PATH = path.join(".ai-factory", "010-Startup", "SCOPE.json");
 
 type ScopePolicy = {
   exclude: string[];
+  explicitFiles: string[];
   include: string[];
   source: string | null;
 };
@@ -131,89 +134,41 @@ type ScopePolicy = {
 const normalizeScopePath = (value: string): string =>
   value
     .trim()
-    .replace(/^`|`$/g, "")
     .replaceAll("\\", "/")
     .replace(/^\.\//, "")
-    .replace(/^\/+|\/+$/g, "");
-
-const parseScopeList = (body: string, heading: "Include" | "Exclude"): string[] => {
-  const lines = body.split(/\r?\n/);
-  const headingIndex = lines.findIndex((line) => line.trim().toLowerCase() === `## ${heading.toLowerCase()}`);
-
-  if (headingIndex === -1) {
-    return [];
-  }
-
-  const values: string[] = [];
-
-  for (let index = headingIndex + 1; index < lines.length; index += 1) {
-    const line = lines[index].trim();
-
-    if (line.startsWith("## ")) {
-      break;
-    }
-
-    const match = /^[-*+]\s+(.+)$/.exec(line);
-
-    if (!match) {
-      continue;
-    }
-
-    const value = normalizeScopePath(match[1]);
-
-    if (value && value !== "-") {
-      values.push(value);
-    }
-  }
-
-  return [...new Set(values)].sort();
-};
+    .replace(/\/+$/g, "") || ".";
 
 const readScopePolicy = async (projectRootPath: string): Promise<ScopePolicy> => {
-  const candidatePaths: string[] = [];
-  const runsPath = path.join(projectRootPath, RUNS_DIR);
+  const candidatePath = path.join(projectRootPath, STARTUP_SCOPE_PATH);
 
-  try {
-    const runEntries = await readdir(runsPath, { withFileTypes: true });
-    const runIds = runEntries
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
-      .sort()
-      .reverse();
-
-    for (const runId of runIds) {
-      candidatePaths.push(path.join(runsPath, runId, "SCOPE.md"));
-    }
-  } catch {
-    // A project can be inspected before Startup has produced a run directory.
+  if (!(await isFile(candidatePath))) {
+    return { exclude: [], explicitFiles: [], include: [], source: null };
   }
 
-  candidatePaths.push(path.join(projectRootPath, "SCOPE.md"));
+  const scope = startupScopeDocumentSchema.parse(
+    JSON.parse(await readFile(candidatePath, "utf8")) as unknown
+  );
 
-  for (const candidatePath of candidatePaths) {
-    if (!(await isFile(candidatePath))) {
-      continue;
-    }
-
-    const body = await readFile(candidatePath, "utf8");
-
-    return {
-      exclude: parseScopeList(body, "Exclude"),
-      include: parseScopeList(body, "Include"),
-      source: toPosixRelative(projectRootPath, candidatePath)
-    };
+  if (scope.status !== "approved" || !scope.approved) {
+    throw new Error("Startup SCOPE.json exists but has not been approved by the user.");
   }
 
-  return { exclude: [], include: [], source: null };
+  return {
+    exclude: scope.approved.exclude.map(normalizeScopePath),
+    explicitFiles: scope.approved.explicit_files.map(normalizeScopePath),
+    include: scope.approved.include.map(normalizeScopePath),
+    source: STARTUP_SCOPE_PATH.replaceAll("\\", "/")
+  };
 };
 
 const pathMatchesOrIsBelow = (relativePath: string, scopePath: string): boolean =>
-  relativePath === scopePath || relativePath.startsWith(`${scopePath}/`);
+  scopePath === "." || relativePath === scopePath || relativePath.startsWith(`${scopePath}/`);
 
 const isExcludedByScope = (relativePath: string, policy: ScopePolicy): boolean =>
   policy.exclude.some((scopePath) => pathMatchesOrIsBelow(relativePath, scopePath));
 
 const isIncludedFileByScope = (relativePath: string, policy: ScopePolicy): boolean =>
+  policy.explicitFiles.includes(relativePath) ||
   policy.include.length === 0 ||
   policy.include.some((scopePath) => pathMatchesOrIsBelow(relativePath, scopePath));
 
@@ -223,7 +178,8 @@ const shouldTraverseDirectoryByScope = (relativePath: string, policy: ScopePolic
     (scopePath) =>
       pathMatchesOrIsBelow(relativePath, scopePath) ||
       pathMatchesOrIsBelow(scopePath, relativePath)
-  );
+  ) ||
+  policy.explicitFiles.some((filePath) => pathMatchesOrIsBelow(filePath, relativePath));
 
 const byPath = <T extends { path: string }>(left: T, right: T): number =>
   left.path < right.path ? -1 : left.path > right.path ? 1 : 0;

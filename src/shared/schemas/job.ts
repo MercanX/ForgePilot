@@ -88,7 +88,9 @@ export const taskHandleSchema = z
 export const taskStartResponseSchema = z
   .object({
     handle: taskHandleSchema,
-    startedAt: z.string().datetime()
+    startedAt: z.string().datetime(),
+    command: z.string().min(1),
+    args: z.array(z.string())
   })
   .strict();
 
@@ -120,6 +122,23 @@ export const taskExitEventSchema = z
   })
   .strict();
 
+
+export const jobProviderDebugEventSchema = z
+  .object({
+    projectId: z.string().uuid(),
+    stageId: z.string().min(1),
+    taskId: z.string().uuid().nullable(),
+    processId: z.number().int().positive().nullable(),
+    providerId: providerIdSchema,
+    model: z.string().min(1).nullable(),
+    kind: z.enum(["provider-start", "stdout", "stderr", "provider-exit", "parser", "contract"]),
+    message: z.string().min(1),
+    text: z.string().nullable(),
+    exitCode: z.number().int().nullable(),
+    signal: z.string().nullable(),
+    timestamp: z.string().datetime()
+  })
+  .strict();
 export const taskResultSchema = z
   .object({
     taskId: z.string().uuid(),
@@ -147,3 +166,4 @@ export type TaskStartResponse = z.infer<typeof taskStartResponseSchema>;
 export type TaskStopRequest = z.infer<typeof taskStopRequestSchema>;
 export type TaskOutputEvent = z.infer<typeof taskOutputEventSchema>;
 export type TaskExitEvent = z.infer<typeof taskExitEventSchema>;
+export type JobProviderDebugEvent = z.infer<typeof jobProviderDebugEventSchema>;

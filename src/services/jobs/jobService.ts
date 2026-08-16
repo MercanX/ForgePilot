@@ -25,7 +25,7 @@ import {
   syncFindingsResponseSchema,
   workflowResponseSchema
 } from "@shared/schemas/cloud-api";
-import type { TaskResult } from "@shared/schemas/job";
+import type { JobProviderDebugEvent, TaskResult } from "@shared/schemas/job";
 
 import { createHttpClient, type HttpClient } from "../api/httpClient";
 import { createProjectWorkflowState } from "./projectWorkflowState";
@@ -35,6 +35,7 @@ import {
 } from "./stageExecutionService";
 
 export type JobRunProgressListener = (event: JobRunProgressEvent) => void;
+export type JobRunDebugListener = (event: JobProviderDebugEvent) => void;
 
 export type JobService = {
   fail: (request: FailJobRequest, serverUrl: string) => Promise<{ accepted: true }>;
@@ -42,7 +43,11 @@ export type JobService = {
   getTask: (jobId: string, serverUrl: string) => Promise<GetTaskResponse>;
   getWorkflow: (projectId: string, rootPath: string, serverUrl: string) => Promise<WorkflowResponse>;
   requestJob: (request: RequestJobRequest, serverUrl: string) => Promise<RequestJobResponse>;
-  runOnce: (request: JobRunRequest, onProgress?: JobRunProgressListener) => Promise<JobRunResponse>;
+  runOnce: (
+    request: JobRunRequest,
+    onProgress?: JobRunProgressListener,
+    onDebug?: JobRunDebugListener
+  ) => Promise<JobRunResponse>;
   submitResult: (result: TaskResult, serverUrl: string) => Promise<SubmitResultResponse>;
   syncFindings: (
     runId: string,
@@ -64,7 +69,7 @@ const createClientFactory =
 
 export const createJobService = (options: JobServiceOptions = {}): JobService => {
   const createClient = createClientFactory(options);
-  const desktopVersion = options.desktopVersion ?? "0.4.0";
+  const desktopVersion = options.desktopVersion ?? "0.4.7";
   const stageExecutionService =
     options.stageExecutionService ?? createStageExecutionService({ createClient });
 
@@ -181,7 +186,8 @@ export const createJobService = (options: JobServiceOptions = {}): JobService =>
 
   const runOnce = async (
     request: JobRunRequest,
-    onProgress?: JobRunProgressListener
+    onProgress?: JobRunProgressListener,
+    onDebug?: JobRunDebugListener
   ): Promise<JobRunResponse> => {
     emit(request, onProgress, {
       message: "Connecting to the cloud session.",
@@ -249,7 +255,8 @@ export const createJobService = (options: JobServiceOptions = {}): JobService =>
     try {
       const response = await stageExecutionService.run(
         { ...request, stageId: requestedStage.id },
-        persistProgress
+        persistProgress,
+        onDebug
       );
       await stateWrites;
       await projectState.finishStage(response);

@@ -94,7 +94,9 @@ export const createTaskExecutionService = (
 
     return {
       handle: managedProcess.handle,
-      startedAt: new Date().toISOString()
+      startedAt: new Date().toISOString(),
+      command: command.command,
+      args: [...command.args]
     };
   };
 

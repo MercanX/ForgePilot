@@ -14,7 +14,7 @@ import {
   type StageExecutionNextRequest,
   type StageExecutionNextResponse
 } from "@shared/schemas/execution";
-import type { Job, ProviderOutputChunk, TaskResult } from "@shared/schemas/job";
+import type { Job, JobProviderDebugEvent, ProviderOutputChunk, TaskResult } from "@shared/schemas/job";
 
 import { createHttpClient, type HttpClient } from "../api/httpClient";
 import { createTaskExecutionService, type TaskExecutionService } from "../tasks/taskExecutionService";
@@ -26,6 +26,7 @@ const HEARTBEAT_INTERVAL_MS = 30_000;
 const MAX_DIRECTIVES_PER_RUN = 100;
 
 type ProgressListener = (event: JobRunProgressEvent) => void;
+type DebugListener = (event: JobProviderDebugEvent) => void;
 
 type StageExecutionServiceOptions = {
   createClient?: (serverUrl: string) => HttpClient;
@@ -37,7 +38,8 @@ type StageExecutionServiceOptions = {
 export type StageExecutionService = {
   run: (
     request: JobRunRequest & { stageId: string },
-    onProgress?: ProgressListener
+    onProgress?: ProgressListener,
+    onDebug?: DebugListener
   ) => Promise<JobRunResponse>;
 };
 
@@ -59,6 +61,20 @@ const emit = (
     ...event,
     projectId: request.project.id,
     stageId: request.stageId
+  });
+};
+
+const emitDebug = (
+  request: JobRunRequest & { stageId: string },
+  onDebug: DebugListener | undefined,
+  event: Omit<JobProviderDebugEvent, "projectId" | "stageId" | "providerId" | "model">
+): void => {
+  onDebug?.({
+    ...event,
+    projectId: request.project.id,
+    stageId: request.stageId,
+    providerId: request.providerId,
+    model: request.model
   });
 };
 
@@ -449,11 +465,12 @@ export const createStageExecutionService = (
     request: JobRunRequest & { stageId: string },
     directive: ProviderExecutionDirective,
     client: HttpClient,
-    onProgress?: ProgressListener
+    onProgress?: ProgressListener,
+    onDebug?: DebugListener
   ): Promise<ProviderExecutionResult> => {
     const job = directive.job;
     const task = await client.get(`/jobs/${encodeURIComponent(job.id)}`, getTaskResponseSchema);
-    const observedOutput: Array<{ taskId: string; chunk: ProviderOutputChunk }> = [];
+    const observedOutput: Array<{ taskId: string; chunk: ProviderOutputChunk; debugged: boolean }> = [];
     const observedExits = new Map<
       string,
       { exitCode: number | null; finishedAt: string; signal: string | null }
@@ -462,8 +479,25 @@ export const createStageExecutionService = (
       | ((exit: { exitCode: number | null; finishedAt: string; signal: string | null }) => void)
       | null = null;
     let expectedTaskId: string | null = null;
+    const publishOutputDebug = (taskId: string, chunk: ProviderOutputChunk): void => {
+      emitDebug(request, onDebug, {
+        kind: chunk.stream,
+        taskId,
+        processId: null,
+        message: chunk.stream === "stderr" ? "Provider STDERR" : "Provider STDOUT",
+        text: chunk.text,
+        exitCode: null,
+        signal: null,
+        timestamp: chunk.timestamp
+      });
+    };
     const removeOutput = taskExecutionService.onOutput((event) => {
-      observedOutput.push({ taskId: event.taskId, chunk: event.chunk });
+      const entry = { taskId: event.taskId, chunk: event.chunk, debugged: false };
+      observedOutput.push(entry);
+      if (event.taskId === expectedTaskId) {
+        entry.debugged = true;
+        publishOutputDebug(event.taskId, event.chunk);
+      }
     });
     const removeExit = taskExecutionService.onExit((event) => {
       observedExits.set(event.taskId, event.exitInfo);
@@ -503,6 +537,23 @@ export const createStageExecutionService = (
       }, HEARTBEAT_INTERVAL_MS);
 
       expectedTaskId = started.handle.id;
+      const commandPreview = [started.command, ...started.args.map((arg) => JSON.stringify(arg))].join(" ");
+      emitDebug(request, onDebug, {
+        kind: "provider-start",
+        taskId: started.handle.id,
+        processId: started.handle.processId,
+        message: "Provider process started.",
+        text: commandPreview,
+        exitCode: null,
+        signal: null,
+        timestamp: started.startedAt
+      });
+      for (const entry of observedOutput) {
+        if (entry.taskId === started.handle.id && !entry.debugged) {
+          entry.debugged = true;
+          publishOutputDebug(entry.taskId, entry.chunk);
+        }
+      }
       const alreadyExited = observedExits.get(started.handle.id);
       const exitInfo =
         alreadyExited ??
@@ -511,6 +562,16 @@ export const createStageExecutionService = (
             resolveExpectedExit = resolve;
           }
         ));
+      emitDebug(request, onDebug, {
+        kind: "provider-exit",
+        taskId: started.handle.id,
+        processId: started.handle.processId,
+        message: "Provider process exited.",
+        text: null,
+        exitCode: exitInfo.exitCode,
+        signal: exitInfo.signal,
+        timestamp: exitInfo.finishedAt
+      });
       const outputChunks = observedOutput
         .filter((entry) => entry.taskId === started.handle.id)
         .map((entry) => entry.chunk);
@@ -540,15 +601,53 @@ export const createStageExecutionService = (
         { findings: submit.findings, runId: job.runId },
         syncFindingsResponseSchema
       );
+      const rawOutputText = outputChunks.map((chunk) => chunk.text).join("");
+      emitDebug(request, onDebug, {
+        kind: "parser",
+        taskId: started.handle.id,
+        processId: started.handle.processId,
+        message: `Parsing provider output (${outputChunks.length} chunks, ${rawOutputText.length} chars).`,
+        text: null,
+        exitCode: null,
+        signal: null,
+        timestamp: new Date().toISOString()
+      });
       const rawParsedOutput = parseLastJsonObject(outputChunks);
       const parsedOutput =
         directive.mode === "semantic"
           ? selectContractOutput(rawParsedOutput, directive.outputSchema)
           : rawParsedOutput;
+      emitDebug(request, onDebug, {
+        kind: "parser",
+        taskId: started.handle.id,
+        processId: started.handle.processId,
+        message: rawParsedOutput
+          ? `JSON object extracted (${describeJsonShape(rawParsedOutput)}).`
+          : "Parser could not extract a valid JSON object.",
+        text: null,
+        exitCode: null,
+        signal: null,
+        timestamp: new Date().toISOString()
+      });
       const outputContractErrors =
         directive.mode === "semantic"
           ? validateOutputContract(parsedOutput, directive.outputSchema)
           : [];
+      if (directive.mode === "semantic") {
+        emitDebug(request, onDebug, {
+          kind: "contract",
+          taskId: started.handle.id,
+          processId: started.handle.processId,
+          message:
+            outputContractErrors.length === 0
+              ? "Provider output contract passed."
+              : `Provider output contract failed: ${outputContractErrors[0]}`,
+          text: null,
+          exitCode: null,
+          signal: null,
+          timestamp: new Date().toISOString()
+        });
+      }
       const directiveSucceeded =
         result.status === "completed" &&
         (directive.mode !== "semantic" || parsedOutput !== null) &&
@@ -603,7 +702,8 @@ export const createStageExecutionService = (
 
   const run = async (
     request: JobRunRequest & { stageId: string },
-    onProgress?: ProgressListener
+    onProgress?: ProgressListener,
+    onDebug?: DebugListener
   ): Promise<JobRunResponse> => {
     const client = createClient(request.serverUrl);
     const journal = createJournal(request.project.rootPath);
@@ -751,7 +851,7 @@ export const createStageExecutionService = (
       }
 
       try {
-        const provider = await executeProvider(request, directive, client, onProgress);
+        const provider = await executeProvider(request, directive, client, onProgress, onDebug);
         lastJob = provider.job;
         lastResult = provider.result;
         submitAccepted = provider.submitAccepted;

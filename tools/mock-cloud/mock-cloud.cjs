@@ -912,7 +912,7 @@ const server = http.createServer(async (request, response) => {
         d05RuntimeCompatible;
       sendJson(response, 200, {
         status: compatible ? "ok" : "update-required",
-        serverVersion: "mock-0.4.6-d05",
+        serverVersion: "mock-0.4.7-debug",
         protocolVersion: "2",
         message: compatible
           ? "Mock cloud connected (Startup 2.1.0, Discovery D05 trial)"

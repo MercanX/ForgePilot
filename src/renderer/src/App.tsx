@@ -3,10 +3,11 @@ import { type ReactElement, useEffect, useState } from "react";
 import { DashboardPage } from "@renderer/pages/DashboardPage";
 import { ProjectsPage } from "@renderer/pages/ProjectsPage";
 import { SettingsPage } from "@renderer/pages/SettingsPage";
+import { ProviderConsolePage } from "@renderer/pages/ProviderConsolePage";
 import { useProjectStore } from "@renderer/stores/projectStore";
 import { useSettingsStore } from "@renderer/stores/settingsStore";
 
-type AppPage = "dashboard" | "projects" | "settings";
+type AppPage = "dashboard" | "projects" | "settings" | "super-admin";
 
 export const App = (): ReactElement => {
   const [activePage, setActivePage] = useState<AppPage>("projects");
@@ -52,8 +53,12 @@ export const App = (): ReactElement => {
           <button className="nav-item" type="button" disabled>
             Runs
           </button>
-          <button className="nav-item" type="button" disabled>
-            Logs
+          <button
+            className={`nav-item${activePage === "super-admin" ? " is-active" : ""}`}
+            type="button"
+            onClick={() => setActivePage("super-admin")}
+          >
+            Super Admin
           </button>
           <button
             className={`nav-item${activePage === "settings" ? " is-active" : ""}`}
@@ -73,6 +78,7 @@ export const App = (): ReactElement => {
         ) : null}
         {activePage === "dashboard" ? <DashboardPage /> : null}
         {activePage === "settings" ? <SettingsPage /> : null}
+        {activePage === "super-admin" ? <ProviderConsolePage /> : null}
       </section>
     </main>
   );

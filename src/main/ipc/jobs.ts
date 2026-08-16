@@ -1,6 +1,7 @@
 import { createJobService, type JobService } from "@services/jobs/jobService";
 import { IPC_CHANNELS } from "@shared/constants/channels";
 import { ipcSchemaMap } from "@shared/schemas/ipc";
+import { jobProviderDebugEventSchema } from "@shared/schemas/job";
 
 import { defineIpcHandler } from "./registerHandler";
 
@@ -17,9 +18,18 @@ export const registerJobsIpc = (service: JobService = createJobService()): void 
     requestSchema: ipcSchemaMap.jobs.runOnce.request,
     responseSchema: ipcSchemaMap.jobs.runOnce.response,
     handler: (request, event) =>
-      service.runOnce(request, (progressEvent) => {
-        event.sender.send(IPC_CHANNELS.jobs.progress, progressEvent);
-      })
+      service.runOnce(
+        request,
+        (progressEvent) => {
+          event.sender.send(IPC_CHANNELS.jobs.progress, progressEvent);
+        },
+        (debugEvent) => {
+          const parsed = jobProviderDebugEventSchema.safeParse(debugEvent);
+          if (parsed.success) {
+            event.sender.send(IPC_CHANNELS.jobs.debug, parsed.data);
+          }
+        }
+      )
   });
 
   defineIpcHandler({

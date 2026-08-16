@@ -5,6 +5,7 @@ import type {
   JobRunResponse,
   WorkflowResponse
 } from "@shared/schemas/cloud-api";
+import type { JobProviderDebugEvent } from "@shared/schemas/job";
 import type { Project } from "@shared/schemas/project";
 import type { ProviderDetectionResult } from "@shared/schemas/provider";
 
@@ -19,12 +20,14 @@ type JobStoreState = {
   cloudMessage: string;
   connected: boolean;
   currentOperation: string;
+  debugEvents: JobProviderDebugEvent[];
   errorMessage: string | null;
   isRunning: boolean;
   lastRun: JobRunResponse | null;
   runProgress: number;
   runningStageId: string | null;
   workflow: WorkflowResponse | null;
+  clearDebugEvents: () => void;
   checkCloud: (serverUrl?: string) => Promise<void>;
   loadWorkflow: (projectId: string, rootPath: string) => Promise<void>;
   runCloudJob: (
@@ -79,12 +82,15 @@ export const useJobStore = create<JobStoreState>((set) => ({
   cloudMessage: "Not connected",
   connected: false,
   currentOperation: "Ready",
+  debugEvents: [],
   errorMessage: null,
   isRunning: false,
   lastRun: null,
   runProgress: 0,
   runningStageId: null,
   workflow: null,
+
+  clearDebugEvents: () => set({ debugEvents: [] }),
 
   checkCloud: async (serverUrl = DEFAULT_SERVER_URL) => {
     try {
@@ -164,6 +170,7 @@ export const useJobStore = create<JobStoreState>((set) => ({
         activityEntries: [],
         currentOperation: "Stage run requested.",
         errorMessage: null,
+        debugEvents: [],
         isRunning: true,
         lastRun: null,
         runProgress: 2,
@@ -188,6 +195,19 @@ export const useJobStore = create<JobStoreState>((set) => ({
         }));
       }
     );
+
+    const removeDebugListener = window.forgepilot.jobs.onDebug((event) => {
+      if (
+        event.projectId !== project.id ||
+        (stageId !== null && event.stageId !== stageId)
+      ) {
+        return;
+      }
+
+      set((state) => ({
+        debugEvents: [...state.debugEvents, event].slice(-5000)
+      }));
+    });
 
     try {
       const lastRun = await window.forgepilot.jobs.runOnce({
@@ -234,6 +254,7 @@ export const useJobStore = create<JobStoreState>((set) => ({
       });
     } finally {
       removeProgressListener();
+      removeDebugListener();
     }
   }
 }));

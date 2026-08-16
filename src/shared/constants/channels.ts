@@ -34,6 +34,7 @@ export const IPC_CHANNELS = {
     get: "jobs:get",
     workflow: "jobs:workflow",
     progress: "jobs:progress",
+    debug: "jobs:debug",
     heartbeat: "jobs:heartbeat",
     submitResult: "jobs:submit-result",
     fail: "jobs:fail",

@@ -16,6 +16,7 @@ import type {
   StartupGetStateRequest
 } from "@shared/schemas/ipc";
 import type {
+  JobProviderDebugEvent,
   TaskExecutionRequest,
   TaskExitEvent,
   TaskOutputEvent,
@@ -79,7 +80,9 @@ const forgepilotApi = {
     runOnce: (request: JobRunRequest): Promise<JobRunResponse> =>
       ipcRenderer.invoke(IPC_CHANNELS.jobs.runOnce, request),
     onProgress: (callback: (event: JobRunProgressEvent) => void): Unsubscribe =>
-      subscribe(IPC_CHANNELS.jobs.progress, callback)
+      subscribe(IPC_CHANNELS.jobs.progress, callback),
+    onDebug: (callback: (event: JobProviderDebugEvent) => void): Unsubscribe =>
+      subscribe(IPC_CHANNELS.jobs.debug, callback)
   },
   settings: {
     get: (): Promise<AppSettings> => ipcRenderer.invoke(IPC_CHANNELS.settings.get, {}),

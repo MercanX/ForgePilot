@@ -7,6 +7,12 @@
 
 ## 2026-08-16
 
+- Added Provider Console page under Super Admin navigation for live provider process monitoring
+- Implemented debug event streaming from main process to renderer via new IPC channel
+- Added provider start, exit, stdout/stderr, and parser debug event types with schema validation
+- Integrated debug event collection into job store with 5000 event ring buffer
+- Added responsive console UI with live and raw output views, summary stats, and clear functionality
+
 - Aligned dashboard summary cards with the stage area using a consistent two-column layout for improved visual coherence.
 - Set the ForgePilot main window to open at a fixed 1440x900 size and disabled user resizing while preserving the native menu bar.
 - Grouped Cloud, Provider, and Model status cards into a dedicated status container for better visual separation and responsive behavior.

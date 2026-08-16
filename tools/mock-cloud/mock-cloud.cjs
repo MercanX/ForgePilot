@@ -7,9 +7,7 @@ const { readFileSync, writeFileSync } = require("node:fs");
 const PORT = Number(process.env.FORGEPILOT_MOCK_CLOUD_PORT ?? 4317);
 const jobs = new Map();
 const STARTUP_STAGE_ID = "010-startup";
-const DISCOVERY_STAGE_ID = "020-discovery";
-const DISCOVERY_D05_STAGE_ID = "020-discovery:d05-project-overview";
-const LEGACY_DISCOVERY_FINAL_STAGE_ID = "020-discovery:build-context";
+const DISCOVERY_D05_STAGE_ID = "020-d05-project-overview";
 const executions = new Map();
 
 // Persisted to disk (not just in-memory) so that stage-completion status
@@ -151,16 +149,8 @@ const buildStages = (projectId) => {
       currentOperation: startupCompleted ? "Run sealed." : "Waiting for execution directive"
     },
     {
-      id: DISCOVERY_STAGE_ID,
-      name: "020-Discovery",
-      status: "waiting",
-      progress: d05Completed ? 7 : 0,
-      currentAgent: startupCompleted ? "Discovery" : null,
-      currentOperation: startupCompleted ? "Select a Discovery sub-stage." : null
-    },
-    {
       id: DISCOVERY_D05_STAGE_ID,
-      name: "D05 Project Overview",
+      name: "020-D05-Project-Overview",
       status: d05Completed ? "completed" : startupCompleted ? "ready" : "waiting",
       progress: d05Completed ? 100 : 0,
       currentAgent: startupCompleted ? "D05 Project Overview Agent" : null,
@@ -319,7 +309,7 @@ const getStageId = (requestBody) => {
   }
 
   if (typeof semanticTask === "string") {
-    return `020-discovery:${semanticTask.toLowerCase().replaceAll("_", "-")}`;
+    return `020-${semanticTask.toLowerCase().replaceAll("_", "-")}`;
   }
 
   return "unknown";
@@ -690,294 +680,7 @@ const startupDirectiveFor = (session) => {
   );
 };
 
-const MOCK_DISCOVERY_SEVERITY_POLICY = {
-  base: {
-    mandatory_output_missing: "HIGH",
-    output_schema_invalid: "CRITICAL",
-    inventory_inconsistent: "MEDIUM",
-    document_index_inconsistent: "MEDIUM",
-    dependency_map_inconsistent: "HIGH",
-    evidence_missing: "HIGH",
-    evidence_excerpt_is_note: "MEDIUM",
-    evidence_line_mismatch: "MEDIUM",
-    secret_unmasked: "CRITICAL",
-    vcs_status_inferred: "CRITICAL",
-    duplicate_finding: "LOW",
-    absence_judged: "MEDIUM",
-    absence_scope_undeclared: "LOW",
-    unknown_not_marked: "HIGH"
-  }
-};
-
-// The real Cloud resolves these policies from AI Factory. The local mock sends
-// concrete policy objects so ForgePilot never invents severity/scoring policy.
-const MOCK_DISCOVERY_CHECKLIST = {
-  items: [
-    { id: "CHECK-PRESENCE", obligation: "mandatory", predicate: "check:CHK-PRE-GATE-PRESENCE" },
-    { id: "CHECK-SCHEMA", obligation: "mandatory", predicate: "check:CHK-PRE-GATE-SCHEMA" },
-    { id: "CHECK-INVENTORY", obligation: "mandatory", predicate: "check:CHK-INVENTORY-CONSISTENCY" },
-    { id: "CHECK-DOCUMENTS", obligation: "mandatory", predicate: "check:CHK-DOCUMENT-CONSISTENCY" },
-    { id: "CHECK-DEPENDENCIES", obligation: "mandatory", predicate: "check:CHK-DEPENDENCY-CONSISTENCY" },
-    { id: "CHECK-MODULES", obligation: "mandatory", predicate: "check:CHK-MODULE-MAP-CONSISTENCY" },
-    { id: "CHECK-EVIDENCE", obligation: "reporting", predicate: "check:CHK-EVIDENCE-INTEGRITY" },
-    { id: "CHECK-SECRETS", obligation: "reporting", predicate: "check:CHK-SECRET-REDACTION" },
-    { id: "CHECK-VCS", obligation: "reporting", predicate: "check:CHK-VCS-ASSERTIONS" },
-    { id: "POST-GATE-REPORT", obligation: "post_gate", predicate: "post_gate:DISCOVERY_REPORT.md" },
-    { id: "POST-GATE-SUMMARY", obligation: "post_gate", predicate: "post_gate:DISCOVERY_EXECUTIVE_SUMMARY.md" },
-    { id: "POST-GATE-RESULT", obligation: "post_gate", predicate: "post_gate:DISCOVERY_RESULT.json" },
-    { id: "POST-GATE-METRICS", obligation: "post_gate", predicate: "post_gate:DISCOVERY_METRICS.json" }
-  ]
-};
-
-const MOCK_DISCOVERY_SCORE_POLICY = {
-  components: [
-    { name: "Presence", weight: 15, gap_kinds: ["mandatory_output_missing"] },
-    { name: "Schema", weight: 20, gap_kinds: ["output_schema_invalid"] },
-    {
-      name: "Consistency",
-      weight: 25,
-      gap_kinds: [
-        "inventory_inconsistent",
-        "document_index_inconsistent",
-        "dependency_map_inconsistent",
-        "duplicate_finding",
-        "unknown_not_marked"
-      ]
-    },
-    {
-      name: "Evidence",
-      weight: 25,
-      gap_kinds: [
-        "evidence_missing",
-        "evidence_excerpt_is_note",
-        "evidence_line_mismatch",
-        "vcs_status_inferred",
-        "absence_judged",
-        "absence_scope_undeclared"
-      ]
-    },
-    { name: "Security", weight: 15, gap_kinds: ["secret_unmasked"] }
-  ]
-};
-
-const MOCK_DISCOVERY_MINIMUM_SCORE = Number(process.env.FORGEPILOT_DISCOVERY_MINIMUM_SCORE ?? 90);
-
 const hasOutput = (session, key) => Object.prototype.hasOwnProperty.call(session.context, key);
-
-const discoveryDirectiveFor = (session) => {
-  if (!hasOutput(session, "scanProject")) {
-    return localDirective(
-      "discovery.scan-project",
-      {},
-      "scanProject",
-      ["Scanning the project tree.", "Project scan completed and validated locally."],
-      [20, 28]
-    );
-  }
-
-  if (!hasOutput(session, "classifyFiles")) {
-    return localDirective(
-      "discovery.classify-files",
-      {},
-      "classifyFiles",
-      ["Classifying inventoried files.", "File classification completed and validated locally."],
-      [30, 38]
-    );
-  }
-
-  if (!hasOutput(session, "indexPreparation")) {
-    return localDirective(
-      "discovery.prepare-index-documents-v2",
-      {},
-      "indexPreparation",
-      ["Indexing project documents.", "Document index preparation completed."],
-      [40, 43]
-    );
-  }
-
-  const indexPreparation = outputObject(session, "indexPreparation");
-  if (indexPreparation.semanticNeeded === true && !hasOutput(session, "glossaryPatch")) {
-    return providerDirective(
-      session,
-      { semantic_task: indexPreparation.semanticPayload },
-      "semantic",
-      false,
-      "glossaryPatch",
-      ["Resolving bounded domain glossary semantics.", "Domain glossary semantic pass completed."],
-      [44, 48]
-    );
-  }
-
-  if (!hasOutput(session, "indexDocuments")) {
-    const glossaryPatch = outputObject(session, "glossaryPatch");
-    return localDirective(
-      "discovery.finalize-index-documents-v2",
-      {
-        preparationId: indexPreparation.preparationId,
-        candidates: Array.isArray(glossaryPatch.candidates) ? glossaryPatch.candidates : []
-      },
-      "indexDocuments",
-      ["Finalizing document artifacts.", "Document artifacts finalized and validated locally."],
-      [49, 53]
-    );
-  }
-
-  if (!hasOutput(session, "mapDependencies")) {
-    return localDirective(
-      "discovery.map-dependencies",
-      {},
-      "mapDependencies",
-      ["Mapping manifest dependencies.", "Manifest dependency map completed and validated locally."],
-      [54, 60]
-    );
-  }
-
-  if (!hasOutput(session, "contextPreparation")) {
-    return localDirective(
-      "discovery.prepare-context-v2",
-      {},
-      "contextPreparation",
-      ["Preparing bounded project-context evidence.", "Project-context evidence prepared."],
-      [62, 65]
-    );
-  }
-
-  const contextPreparation = outputObject(session, "contextPreparation");
-  if (contextPreparation.semanticNeeded === true && !hasOutput(session, "contextPatch")) {
-    return providerDirective(
-      session,
-      { semantic_task: contextPreparation.semanticPayload },
-      "semantic",
-      false,
-      "contextPatch",
-      ["Resolving bounded semantic project context.", "Semantic project-context pass completed."],
-      [66, 72]
-    );
-  }
-
-  if (!hasOutput(session, "buildContext")) {
-    return localDirective(
-      "discovery.finalize-context-v2",
-      {
-        preparationId: contextPreparation.preparationId,
-        patch: hasOutput(session, "contextPatch") ? session.context.contextPatch : {}
-      },
-      "buildContext",
-      ["Finalizing project context.", "Project context finalized and validated locally."],
-      [73, 76]
-    );
-  }
-
-  if (!hasOutput(session, "moduleDependencies")) {
-    return localDirective(
-      "discovery.map-module-dependencies-v2",
-      {},
-      "moduleDependencies",
-      ["Mapping module dependencies.", "Module dependency map completed and validated locally."],
-      [78, 83]
-    );
-  }
-
-  if (!hasOutput(session, "gapPreparation")) {
-    return localDirective(
-      "discovery.prepare-detect-gaps-v2",
-      {
-        severityPolicy: MOCK_DISCOVERY_SEVERITY_POLICY,
-        checklist: MOCK_DISCOVERY_CHECKLIST
-      },
-      "gapPreparation",
-      ["Running deterministic Discovery validation.", "Deterministic Discovery validation completed."],
-      [85, 88]
-    );
-  }
-
-  const gapPreparation = outputObject(session, "gapPreparation");
-  if (gapPreparation.semanticNeeded === true && !hasOutput(session, "gapPatch")) {
-    return providerDirective(
-      session,
-      { semantic_task: gapPreparation.semanticPayload },
-      "semantic",
-      false,
-      "gapPatch",
-      ["Checking bounded semantic gap candidates.", "Semantic gap candidate pass completed."],
-      [89, 92]
-    );
-  }
-
-  if (!hasOutput(session, "detectGaps")) {
-    const gapPatch = outputObject(session, "gapPatch");
-    return localDirective(
-      "discovery.finalize-detect-gaps-v2",
-      {
-        preparationId: gapPreparation.preparationId,
-        candidates: Array.isArray(gapPatch.candidates) ? gapPatch.candidates : []
-      },
-      "detectGaps",
-      ["Finalizing Discovery findings.", "Discovery findings finalized and validated locally."],
-      [92, 94]
-    );
-  }
-
-  if (!hasOutput(session, "scoreGate")) {
-    return localDirective(
-      "discovery.score-and-gate-v2",
-      {
-        scorePolicy: MOCK_DISCOVERY_SCORE_POLICY,
-        minimumScore: MOCK_DISCOVERY_MINIMUM_SCORE
-      },
-      "scoreGate",
-      ["Calculating Discovery score and gate.", "Discovery score and gate calculated locally."],
-      [94, 96]
-    );
-  }
-
-  const scoreGate = outputObject(session, "scoreGate");
-  if (scoreGate.decision !== "PASS" && scoreGate.decision !== "PASS_WITH_WARNINGS") {
-    return terminalDirective(
-      "blocked",
-      `Discovery gate requires revision: ${String(scoreGate.decision ?? "UNKNOWN")} (${String(scoreGate.matched_rule ?? "no-rule")}).`,
-      96
-    );
-  }
-
-  if (!hasOutput(session, "reportPreparation")) {
-    return localDirective(
-      "discovery.prepare-report-v2",
-      {},
-      "reportPreparation",
-      ["Preparing final Discovery report model.", "Final Discovery report model prepared."],
-      [97, 97]
-    );
-  }
-
-  const reportPreparation = outputObject(session, "reportPreparation");
-  if (reportPreparation.semanticNeeded === true && !hasOutput(session, "reportPatch")) {
-    return providerDirective(
-      session,
-      { semantic_task: reportPreparation.semanticPayload },
-      "semantic",
-      false,
-      "reportPatch",
-      ["Writing bounded executive-summary prose.", "Executive-summary prose completed."],
-      [98, 99]
-    );
-  }
-
-  if (!hasOutput(session, "generateReport")) {
-    return localDirective(
-      "discovery.finalize-report-v2",
-      {
-        preparationId: reportPreparation.preparationId,
-        patch: hasOutput(session, "reportPatch") ? session.context.reportPatch : null
-      },
-      "generateReport",
-      ["Committing final Discovery reports.", "Final Discovery reports committed and validated locally."],
-      [99, 100]
-    );
-  }
-
-  return terminalDirective("completed", "Discovery v2 completed successfully.", 100);
-};
 
 const discoveryD05DirectiveFor = (session) => {
   if (!hasOutput(session, "d05Status")) {
@@ -1063,14 +766,6 @@ const nextDirectiveFor = (session) => {
 
   if (session.stageId === STARTUP_STAGE_ID) {
     return startupDirectiveFor(session);
-  }
-
-  if (session.stageId === DISCOVERY_STAGE_ID) {
-    return terminalDirective(
-      "blocked",
-      "020-Discovery is a stage group. Start D05 Project Overview manually.",
-      0
-    );
   }
 
   if (session.stageId === DISCOVERY_D05_STAGE_ID) {
@@ -1217,7 +912,7 @@ const server = http.createServer(async (request, response) => {
         d05RuntimeCompatible;
       sendJson(response, 200, {
         status: compatible ? "ok" : "update-required",
-        serverVersion: "mock-0.4.4-d05",
+        serverVersion: "mock-0.4.6-d05",
         protocolVersion: "2",
         message: compatible
           ? "Mock cloud connected (Startup 2.1.0, Discovery D05 trial)"

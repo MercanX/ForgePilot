@@ -12,6 +12,8 @@ import type {
   WorkflowStage
 } from "@shared/schemas/run";
 
+import { runScopeStatusJob } from "../startup/startupJobService";
+
 const STATE_RELATIVE_PATH = path.join(".forgepilot", "ai-factory-state.json");
 const MAX_ACTIVITY_ENTRIES = 50;
 
@@ -221,9 +223,10 @@ export const createProjectWorkflowState = (projectRootPath: string): ProjectWork
     },
 
     mergeWorkflow: async (workflow) => {
-      // Cloud owns readiness/dependency decisions. Local state only overlays
-      // activity/report plus completed/failed/interrupted execution state.
-      // This is required for manually selectable Discovery sub-stages.
+      // The cloud owns the stage catalog/directives, but readiness for local
+      // artifact-backed prerequisites must follow the real project state.
+      // In particular, D05 is runnable as soon as 010 has a valid sealed
+      // workspace even if the mock-cloud process lost its in-memory/pass state.
       const exists = await factoryExists();
       if (!exists) {
         return {
@@ -252,8 +255,38 @@ export const createProjectWorkflowState = (projectRootPath: string): ProjectWork
       }
 
       const document = await read();
+      const startupStatus = await runScopeStatusJob(projectRootPath, false);
+      const startupSealed = startupStatus.sealed;
       const stages = workflow.stages.map((stage): WorkflowStage => {
         const local = document.stages[stage.id];
+
+        // Startup completion is artifact-backed. A valid STARTUP_SEAL is the
+        // source of truth, not the lifetime of the mock-cloud process.
+        if (stage.id === "010-startup" && startupSealed) {
+          return {
+            ...stage,
+            activity: local?.activity ?? stage.activity,
+            currentAgent: stage.currentAgent ?? "Startup Agent",
+            currentOperation: local?.report?.message ?? "Workspace sealed.",
+            progress: 100,
+            report: local?.report ?? stage.report,
+            status: "completed"
+          };
+        }
+
+        // D05 depends directly on the sealed 010 workspace. 020-Discovery is
+        // not an executable container stage and mock-cloud restart state must
+        // never leave D05 stuck in Waiting after Startup is actually complete.
+        if (stage.id === "020-d05-project-overview" && !local) {
+          return {
+            ...stage,
+            currentAgent: startupSealed ? "D05 Project Overview Agent" : null,
+            currentOperation: startupSealed ? "Ready for manual start." : null,
+            progress: 0,
+            status: startupSealed ? "ready" : "waiting"
+          };
+        }
+
         if (!local) {
           return stage;
         }
@@ -286,7 +319,12 @@ export const createProjectWorkflowState = (projectRootPath: string): ProjectWork
           currentOperation: local.report?.message ?? "Ready to continue or restart",
           progress: stage.progress ?? 0,
           report: local.report,
-          status: stage.status === "waiting" ? "waiting" : "ready"
+          status:
+            stage.id === "020-d05-project-overview" && startupSealed
+              ? "ready"
+              : stage.status === "waiting"
+                ? "waiting"
+                : "ready"
         };
       });
 

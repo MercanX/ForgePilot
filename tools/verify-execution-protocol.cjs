@@ -252,13 +252,18 @@ const runStage = async (stageId, expectedOutcome = "completed", newRun = false) 
   try {
     await waitForServer();
     const handshake = await requestJson("POST", "/session/handshake", {
-      desktopVersion: "0.4.4",
+      desktopVersion: "0.4.6",
       protocolVersion: "2",
       supportedCapabilities: ["stage-execution:directives-v1", "contract:010-startup@2.1.0", "contract:020-discovery@2.0.0"]
     });
     if (handshake.status !== "ok") throw new Error(`Handshake failed: ${handshake.message}`);
 
-    const initialD05 = await workflowStage("020-discovery:d05-project-overview");
+    const workflow = await requestJson("GET", `/workflows/current?projectId=${encodeURIComponent(project.id)}`);
+    if (workflow.stages?.some((stage) => stage.id === "020-discovery" || stage.name === "020-Discovery")) {
+      throw new Error("020-Discovery must not exist as an executable workflow stage.");
+    }
+
+    const initialD05 = await workflowStage("020-d05-project-overview");
     if (initialD05.status !== "waiting") throw new Error("D05 must wait for 010-Startup.");
 
     const startupProposal = await runStage("010-startup", "blocked");
@@ -267,10 +272,10 @@ const runStage = async (stageId, expectedOutcome = "completed", newRun = false) 
     startupScopeApproved = true;
     await runStage("010-startup");
 
-    const d05Ready = await workflowStage("020-discovery:d05-project-overview");
+    const d05Ready = await workflowStage("020-d05-project-overview");
     if (d05Ready.status !== "ready") throw new Error("D05 did not become ready after Startup.");
 
-    const d05 = await runStage("020-discovery:d05-project-overview");
+    const d05 = await runStage("020-d05-project-overview");
     if (JSON.stringify(d05.providerTasks) !== JSON.stringify(["D05_PROJECT_OVERVIEW"])) {
       throw new Error(`D05 should use exactly one AI task, saw ${d05.providerTasks.join(", ")}.`);
     }
@@ -278,10 +283,10 @@ const runStage = async (stageId, expectedOutcome = "completed", newRun = false) 
       if (!d05.localOperations.includes(operation)) throw new Error(`D05 missed ${operation}.`);
     }
 
-    const d05After = await workflowStage("020-discovery:d05-project-overview");
+    const d05After = await workflowStage("020-d05-project-overview");
     if (d05After.status !== "completed") throw new Error("D05 completion was not persisted by Cloud.");
 
-    const d05Restart = await runStage("020-discovery:d05-project-overview", "completed", true);
+    const d05Restart = await runStage("020-d05-project-overview", "completed", true);
     if (d05Restart.providerTasks[0] !== "D05_PROJECT_OVERVIEW") throw new Error("D05 Restart did not rerun only D05 AI task.");
 
     console.log("Execution protocol verification passed (Startup -> manual D05 -> D05 restart; compiled prompt + schema loaded from AI Factory)." );

@@ -42,6 +42,7 @@ export type StageExecutionService = {
 
 type ProviderExecutionResult = {
   job: Job;
+  outputContractErrors: string[];
   parsedOutput: Record<string, unknown> | null;
   result: TaskResult;
   submitAccepted: boolean;
@@ -134,10 +135,8 @@ const extractJsonObjects = (text: string): string[] => {
 const unwrapProviderJsonEnvelope = (
   parsed: Record<string, unknown>
 ): Record<string, unknown> | null => {
-  // Claude Code structured output (`--output-format json --json-schema`)
-  // returns the validated payload in `structured_output`. Prefer that over
-  // free-form text so semantic jobs cannot fail merely because the model used
-  // Markdown or explanatory prose around an otherwise valid answer.
+  // Some provider versions may return a structured_output envelope. Prefer it
+  // when present, while remaining compatible with plain --output-format json.
   if (
     typeof parsed.structured_output === "object" &&
     parsed.structured_output !== null &&
@@ -214,6 +213,214 @@ const parseProviderText = (rawText: string): Record<string, unknown> | null => {
 export const parseLastJsonObject = (
   chunks: ProviderOutputChunk[]
 ): Record<string, unknown> | null => parseProviderText(chunks.map((chunk) => chunk.text).join(""));
+
+type JsonSchema = Record<string, unknown>;
+
+const resolveLocalSchemaRef = (root: JsonSchema, ref: string): JsonSchema | null => {
+  if (!ref.startsWith("#/")) {
+    return null;
+  }
+
+  let current: unknown = root;
+  for (const rawSegment of ref.slice(2).split("/")) {
+    const segment = rawSegment.replaceAll("~1", "/").replaceAll("~0", "~");
+    if (!isJsonObject(current) || !(segment in current)) {
+      return null;
+    }
+    current = current[segment];
+  }
+
+  return isJsonObject(current) ? current : null;
+};
+
+const jsonValuesEqual = (left: unknown, right: unknown): boolean =>
+  JSON.stringify(left) === JSON.stringify(right);
+
+const validateJsonSchemaValue = (
+  value: unknown,
+  schema: JsonSchema,
+  root: JsonSchema,
+  path = "$"
+): string[] => {
+  if (typeof schema.$ref === "string") {
+    const resolved = resolveLocalSchemaRef(root, schema.$ref);
+    return resolved
+      ? validateJsonSchemaValue(value, resolved, root, path)
+      : [`${path}: unresolved schema ref ${schema.$ref}`];
+  }
+
+  if (Array.isArray(schema.anyOf)) {
+    const branches = schema.anyOf.filter(isJsonObject);
+    if (branches.length > 0) {
+      const branchErrors = branches.map((branch) => validateJsonSchemaValue(value, branch, root, path));
+      if (!branchErrors.some((errors) => errors.length === 0)) {
+        return [`${path}: value does not match any allowed schema`];
+      }
+    }
+  }
+
+  if (Array.isArray(schema.enum) && !schema.enum.some((candidate) => jsonValuesEqual(candidate, value))) {
+    return [`${path}: value is not one of the allowed enum values`];
+  }
+
+  const expectedType = schema.type;
+  if (typeof expectedType === "string") {
+    const matches =
+      expectedType === "object"
+        ? isJsonObject(value)
+        : expectedType === "array"
+          ? Array.isArray(value)
+          : expectedType === "string"
+            ? typeof value === "string"
+            : expectedType === "number"
+              ? typeof value === "number" && Number.isFinite(value)
+              : expectedType === "integer"
+                ? typeof value === "number" && Number.isInteger(value)
+                : expectedType === "boolean"
+                  ? typeof value === "boolean"
+                  : expectedType === "null"
+                    ? value === null
+                    : true;
+    if (!matches) {
+      return [`${path}: expected ${expectedType}`];
+    }
+  }
+
+  const errors: string[] = [];
+
+  if (typeof value === "string") {
+    if (typeof schema.minLength === "number" && value.length < schema.minLength) {
+      errors.push(`${path}: string is shorter than minLength ${schema.minLength}`);
+    }
+    if (typeof schema.pattern === "string") {
+      try {
+        if (!new RegExp(schema.pattern).test(value)) {
+          errors.push(`${path}: string does not match required pattern`);
+        }
+      } catch {
+        errors.push(`${path}: schema contains an invalid pattern`);
+      }
+    }
+  }
+
+  if (Array.isArray(value)) {
+    if (typeof schema.minItems === "number" && value.length < schema.minItems) {
+      errors.push(`${path}: array has fewer than ${schema.minItems} items`);
+    }
+    if (typeof schema.maxItems === "number" && value.length > schema.maxItems) {
+      errors.push(`${path}: array has more than ${schema.maxItems} items`);
+    }
+    if (isJsonObject(schema.items)) {
+      value.forEach((item, index) => {
+        errors.push(...validateJsonSchemaValue(item, schema.items as JsonSchema, root, `${path}[${index}]`));
+      });
+    }
+  }
+
+  if (isJsonObject(value)) {
+    const required = Array.isArray(schema.required)
+      ? schema.required.filter((entry): entry is string => typeof entry === "string")
+      : [];
+    for (const key of required) {
+      if (!(key in value)) {
+        errors.push(`${path}.${key}: required property is missing`);
+      }
+    }
+
+    const properties = isJsonObject(schema.properties) ? schema.properties : {};
+    for (const [key, propertySchema] of Object.entries(properties)) {
+      if (key in value && isJsonObject(propertySchema)) {
+        errors.push(...validateJsonSchemaValue(value[key], propertySchema, root, `${path}.${key}`));
+      }
+    }
+
+    if (schema.additionalProperties === false) {
+      for (const key of Object.keys(value)) {
+        if (!(key in properties)) {
+          errors.push(`${path}.${key}: additional property is not allowed`);
+        }
+      }
+    }
+  }
+
+  return errors;
+};
+
+const validateOutputContract = (
+  value: Record<string, unknown> | null,
+  schema: Record<string, unknown> | null
+): string[] => {
+  if (!schema || value === null) {
+    return value === null && schema ? ["$: provider did not return a JSON object"] : [];
+  }
+  return validateJsonSchemaValue(value, schema, schema);
+};
+
+/**
+ * Providers occasionally wrap the requested semantic object even when the
+ * prompt asks for raw JSON (for example `{ proposal: {...} }`).  Contract
+ * validation must target the semantic payload, not the provider/container
+ * envelope.  Prefer an exact top-level match, then inspect only well-known
+ * wrapper fields.  Never manufacture missing contract fields.
+ */
+const selectContractOutput = (
+  value: Record<string, unknown> | null,
+  schema: Record<string, unknown> | null
+): Record<string, unknown> | null => {
+  if (!value || !schema) {
+    return value;
+  }
+
+  if (validateOutputContract(value, schema).length === 0) {
+    return value;
+  }
+
+  const wrapperKeys = [
+    "proposal",
+    "scope_proposal",
+    "scope",
+    "output",
+    "data",
+    "result",
+    "structured_output"
+  ] as const;
+
+  for (const key of wrapperKeys) {
+    const nested = value[key];
+    if (isJsonObject(nested) && validateOutputContract(nested, schema).length === 0) {
+      return nested;
+    }
+    if (typeof nested === "string") {
+      const parsed = parseProviderText(nested);
+      if (parsed && validateOutputContract(parsed, schema).length === 0) {
+        return parsed;
+      }
+    }
+  }
+
+  return value;
+};
+
+const describeJsonShape = (value: Record<string, unknown> | null): string => {
+  if (!value) {
+    return "no JSON object";
+  }
+  const keys = Object.keys(value).slice(0, 12);
+  return keys.length > 0 ? `top-level keys: ${keys.join(", ")}` : "empty JSON object";
+};
+
+const providerFailureDetail = (chunks: ProviderOutputChunk[]): string | null => {
+  const stderr = chunks
+    .filter((chunk) => chunk.stream === "stderr")
+    .map((chunk) => stripAnsi(chunk.text))
+    .join("\n")
+    .trim();
+  if (!stderr) {
+    return null;
+  }
+  const lines = stderr.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  return lines.slice(-3).join(" | ").slice(0, 700) || null;
+};
 
 export const createStageExecutionService = (
   options: StageExecutionServiceOptions = {}
@@ -318,16 +525,32 @@ export const createStageExecutionService = (
         { findings: submit.findings, runId: job.runId },
         syncFindingsResponseSchema
       );
-      const parsedOutput = parseLastJsonObject(outputChunks);
+      const rawParsedOutput = parseLastJsonObject(outputChunks);
+      const parsedOutput =
+        directive.mode === "semantic"
+          ? selectContractOutput(rawParsedOutput, directive.outputSchema)
+          : rawParsedOutput;
+      const outputContractErrors =
+        directive.mode === "semantic"
+          ? validateOutputContract(parsedOutput, directive.outputSchema)
+          : [];
       const directiveSucceeded =
         result.status === "completed" &&
         (directive.mode !== "semantic" || parsedOutput !== null) &&
+        outputContractErrors.length === 0 &&
         (!directive.requireOk || parsedOutput?.ok === true);
+      const failureDetail = providerFailureDetail(outputChunks);
+      const failureMessage =
+        result.status !== "completed"
+          ? `Provider process failed${failureDetail ? `: ${failureDetail}` : "."}`
+          : parsedOutput === null
+            ? "Provider did not return a valid final JSON object."
+            : outputContractErrors.length > 0
+              ? `Provider output contract failed: ${outputContractErrors[0]} (${describeJsonShape(rawParsedOutput)})`
+              : "Provider verification returned ok != true.";
 
       emit(request, onProgress, {
-        message: directiveSucceeded
-          ? directive.messageCompleted
-          : "Provider directive did not pass its output contract.",
+        message: directiveSucceeded ? directive.messageCompleted : failureMessage,
         progress: directive.progressCompleted,
         status: directiveSucceeded ? "completed" : "failed",
         stepId: directive.id
@@ -335,6 +558,7 @@ export const createStageExecutionService = (
 
       return {
         job,
+        outputContractErrors,
         parsedOutput,
         result,
         submitAccepted: submit.accepted,
@@ -521,19 +745,24 @@ export const createStageExecutionService = (
         const processSucceeded = provider.result.status === "completed";
         const semanticOutputPresent =
           directive.mode !== "semantic" || provider.parsedOutput !== null;
+        const outputContractPassed = provider.outputContractErrors.length === 0;
         const verificationPassed =
           !directive.requireOk || provider.parsedOutput?.ok === true;
-        const succeeded = processSucceeded && semanticOutputPresent && verificationPassed;
+        const succeeded =
+          processSucceeded && semanticOutputPresent && outputContractPassed && verificationPassed;
+        const failureDetail = providerFailureDetail(provider.result.outputChunks);
 
         previous = {
           directiveId: directive.id,
           message: succeeded
             ? null
             : !processSucceeded
-              ? `Provider process finished with status ${provider.result.status}.`
+              ? `Provider process failed${failureDetail ? `: ${failureDetail}` : "."}`
               : !semanticOutputPresent
                 ? "Provider did not return a valid final JSON object."
-                : "Provider verification returned ok != true.",
+                : !outputContractPassed
+                  ? `Provider output contract failed: ${provider.outputContractErrors[0]}`
+                  : "Provider verification returned ok != true.",
           output: provider.parsedOutput,
           status: succeeded ? "completed" : "failed"
         };

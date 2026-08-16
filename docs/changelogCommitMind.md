@@ -7,6 +7,10 @@
 
 ## 2026-08-16
 
+- Claude Code provider adapter'ından resmi CLI'da bulunmayan `--json-schema` argümanı kaldırıldı; semantic çıktı sözleşmesi artık ForgePilot içinde lokal JSON Schema doğrulamasıyla kontrol ediliyor.
+- Provider process non-zero çıktığında stage hata mesajı genel contract fail yerine stderr/stdout özetini içererek gerçek sağlayıcı hatasını görünür kılıyor.
+- Provider contract doğrulaması, Claude adapter argümanları ve stderr taşıma davranışı için hedefli regresyon testleri eklendi.
+
 - Added an interactive audit scope panel to the dashboard for reviewing and editing the AI-proposed project boundary before startup execution.
 - Introduced new IPC channels for retrieving startup state and approving scope, replacing the previous file-opening mechanism.
 - Enabled users to approve, modify, or reject include/exclude lists and explicit file overrides, ensuring final authority over AI access.

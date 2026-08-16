@@ -172,6 +172,54 @@ export const DashboardPage = (): ReactElement => {
   const parseScopeText = (value: string): string[] =>
     [...new Set(value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean))];
 
+  const normalizeUiScopePath = (value: string): string =>
+    value.trim().replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/+$/g, "");
+
+  const pathMatchesOrIsBelow = (relativePath: string, scopePath: string): boolean => {
+    const relative = normalizeUiScopePath(relativePath);
+    const scope = normalizeUiScopePath(scopePath);
+    return scope === "." || relative === scope || relative.startsWith(`${scope}/`);
+  };
+
+  const unresolvedStartupDecisions = startupState?.scope
+    ? startupState.scope.proposal.needs_user_decision.filter((decision) => {
+        const decisionPath = normalizeUiScopePath(decision.path);
+        const include = parseScopeText(scopeIncludeText);
+        const exclude = parseScopeText(scopeExcludeText);
+        const explicitFiles = parseScopeText(scopeExplicitFilesText);
+
+        const included = include.some((candidate) => pathMatchesOrIsBelow(decisionPath, candidate));
+        const excluded = exclude.some((candidate) => pathMatchesOrIsBelow(decisionPath, candidate));
+        const explicit = explicitFiles.some(
+          (candidate) =>
+            normalizeUiScopePath(candidate) === decisionPath ||
+            pathMatchesOrIsBelow(candidate, decisionPath)
+        );
+
+        return !included && !excluded && !explicit;
+      })
+    : [];
+
+  const resolveStartupDecision = (path: string, target: "include" | "exclude"): void => {
+    const normalized = normalizeUiScopePath(path);
+    const include = parseScopeText(scopeIncludeText).filter(
+      (candidate) => normalizeUiScopePath(candidate) !== normalized
+    );
+    const exclude = parseScopeText(scopeExcludeText).filter(
+      (candidate) => normalizeUiScopePath(candidate) !== normalized
+    );
+
+    if (target === "include") {
+      include.push(normalized);
+    } else {
+      exclude.push(normalized);
+    }
+
+    setScopeIncludeText([...new Set(include)].join("\n"));
+    setScopeExcludeText([...new Set(exclude)].join("\n"));
+    setStartupMessage(null);
+  };
+
   const approveScopeAndContinue = async (): Promise<void> => {
     if (!activeProject || !selectedProvider) {
       return;
@@ -415,14 +463,41 @@ export const DashboardPage = (): ReactElement => {
 
                   {startupState.scope.proposal.needs_user_decision.length > 0 ? (
                     <div className="startup-decision-list">
-                      <strong>Needs your decision</strong>
-                      <ul>
-                        {startupState.scope.proposal.needs_user_decision.map((item) => (
-                          <li key={`${item.path}:${item.reason}`}>
-                            <code>{item.path}</code> — {item.reason} ({item.confidence})
-                          </li>
-                        ))}
-                      </ul>
+                      <div className="startup-decision-heading">
+                        <strong>Needs your decision</strong>
+                        <span>{unresolvedStartupDecisions.length} remaining</span>
+                      </div>
+
+                      {unresolvedStartupDecisions.length > 0 ? (
+                        <ul>
+                          {unresolvedStartupDecisions.map((item) => (
+                            <li key={`${item.path}:${item.reason}`} className="startup-decision-item">
+                              <div className="startup-decision-copy">
+                                <code>{item.path}</code>
+                                <span>{item.reason} ({item.confidence})</span>
+                              </div>
+                              <div className="startup-decision-actions">
+                                <button
+                                  type="button"
+                                  disabled={isRunning || Boolean(startupState.seal)}
+                                  onClick={() => resolveStartupDecision(item.path, "include")}
+                                >
+                                  Include
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={isRunning || Boolean(startupState.seal)}
+                                  onClick={() => resolveStartupDecision(item.path, "exclude")}
+                                >
+                                  Exclude
+                                </button>
+                              </div>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="startup-decisions-resolved">✓ All AI uncertainties resolved.</p>
+                      )}
                     </div>
                   ) : null}
 
@@ -461,7 +536,11 @@ export const DashboardPage = (): ReactElement => {
                       <button
                         className="primary-action"
                         type="button"
-                        disabled={isRunning || startupState.scope.status !== "pending_approval"}
+                        disabled={
+                          isRunning ||
+                          startupState.scope.status !== "pending_approval" ||
+                          unresolvedStartupDecisions.length > 0
+                        }
                         onClick={() => void approveScopeAndContinue()}
                       >
                         Approve scope & seal workspace

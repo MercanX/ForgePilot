@@ -856,9 +856,71 @@ h1 {
 
 .startup-decision-list ul {
   display: grid;
-  gap: 6px;
+  gap: 8px;
   margin: 0;
-  padding-left: 18px;
+  padding: 0;
+  list-style: none;
+}
+
+.startup-decision-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.startup-decision-heading span {
+  color: var(--muted-text, #9da7b3);
+  font-size: 12px;
+}
+
+.startup-decision-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border-color, #2d333b);
+}
+
+.startup-decision-copy {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.startup-decision-copy code {
+  color: inherit;
+  overflow-wrap: anywhere;
+}
+
+.startup-decision-copy span {
+  color: var(--muted-text, #9da7b3);
+  font-size: 12px;
+}
+
+.startup-decision-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.startup-decision-actions button {
+  padding: 7px 11px;
+  border: 1px solid var(--border-color, #2d333b);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.startup-decision-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.startup-decisions-resolved {
+  margin: 0;
 }
 
 .startup-scope-editors {

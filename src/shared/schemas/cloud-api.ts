@@ -107,7 +107,8 @@ export const jobRunRequestSchema = z
     newRun: z.boolean().default(false),
     stageId: z.string().min(1).nullable().default(null),
     serverUrl: z.string().url().default("http://localhost:4317"),
-    timeoutMs: z.number().int().positive().default(300_000)
+    outputLanguage: z.string().trim().min(1).max(64).default("Turkish"),
+    timeoutMs: z.number().int().positive().max(10_800_000).default(5_400_000)
   })
   .strict();
 

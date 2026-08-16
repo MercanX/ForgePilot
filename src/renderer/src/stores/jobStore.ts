@@ -9,6 +9,8 @@ import type { JobProviderDebugEvent } from "@shared/schemas/job";
 import type { Project } from "@shared/schemas/project";
 import type { ProviderDetectionResult } from "@shared/schemas/provider";
 
+import { useSettingsStore } from "./settingsStore";
+
 export type ActivityEntry = {
   message: string;
   status: JobRunProgressEvent["status"];
@@ -210,6 +212,7 @@ export const useJobStore = create<JobStoreState>((set) => ({
     });
 
     try {
+      const executionSettings = useSettingsStore.getState().settings;
       const lastRun = await window.forgepilot.jobs.runOnce({
         model,
         newRun,
@@ -217,7 +220,8 @@ export const useJobStore = create<JobStoreState>((set) => ({
         providerId: provider.id,
         serverUrl,
         stageId,
-        timeoutMs: stageId?.startsWith("020-") ? 1_800_000 : 300_000
+        outputLanguage: executionSettings.aiOutputLanguage,
+        timeoutMs: executionSettings.providerStageTimeoutMinutes * 60_000
       });
       const finalOperation = getFinalOperation(lastRun);
       set({

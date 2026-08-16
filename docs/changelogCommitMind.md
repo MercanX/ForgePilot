@@ -7,6 +7,12 @@
 
 ## 2026-08-16
 
+- Added AI output language setting with Turkish default, supporting localized responses while preserving JSON keys and code symbols.
+- Introduced configurable provider stage timeout (5–180 minutes, default 90) replacing hardcoded timeout values.
+- Extended job execution protocol with output language and timeout parameters, propagated through cloud API and mock cloud.
+- Enhanced D05 evidence validation to accept runtime authority paths and enforce canonical ID references across all checklist dispositions.
+- Bumped application version to 0.5.0 with updated protocol compatibility checks.
+
 - Switched Claude Code provider to stream-json output with default permission mode for structured event parsing.
 - Added JSONL event parsing in stage execution to extract only the final visible model response.
 - Enhanced provider console to display sanitized stream events instead of raw internal thinking blocks.

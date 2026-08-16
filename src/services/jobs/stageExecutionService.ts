@@ -956,6 +956,8 @@ export const createStageExecutionService = (
         previous,
         project: request.project,
         providerId: request.providerId,
+        outputLanguage: request.outputLanguage,
+        timeoutMs: request.timeoutMs,
         stageId: request.stageId
       };
 

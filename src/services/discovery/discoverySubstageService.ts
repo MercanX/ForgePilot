@@ -344,18 +344,38 @@ const evidenceArraysFromResult = (result: Record<string, unknown>): unknown[][] 
   return arrays;
 };
 
+const D05_RUNTIME_EVIDENCE_PATHS = new Set([
+  "@startup/scope",
+  "@startup/seal",
+  "@startup/workspace-manifest",
+  "@discovery/context"
+]);
+
 const validateEvidence = (
   result: Record<string, unknown>,
   manifestPaths: Set<string>
 ): void => {
+  const manifestList = [...manifestPaths];
   for (const evidenceArray of evidenceArraysFromResult(result)) {
     for (const raw of evidenceArray) {
       if (!isObject(raw) || typeof raw.path !== "string") {
-        throw new Error("D05 evidence entries must contain a project-relative path.");
+        throw new Error("D05 evidence entries must contain a valid evidence path.");
       }
-      const relativePath = normalizeRelativePath(raw.path);
-      if (!manifestPaths.has(relativePath)) {
-        throw new Error(`D05 evidence is outside the approved Startup manifest: ${relativePath}`);
+
+      const rawPath = raw.path.trim();
+      if (D05_RUNTIME_EVIDENCE_PATHS.has(rawPath)) {
+        continue;
+      }
+
+      const relativePath = normalizeRelativePath(rawPath);
+      const isManifestFile = manifestPaths.has(relativePath);
+      const directoryPrefix = relativePath.endsWith("/") ? relativePath : `${relativePath}/`;
+      const isApprovedDirectory = manifestList.some((path) => path.startsWith(directoryPrefix));
+
+      if (!isManifestFile && !isApprovedDirectory) {
+        throw new Error(
+          `D05 evidence is outside the approved Startup manifest/runtime authority: ${relativePath}`
+        );
       }
     }
   }
@@ -364,12 +384,46 @@ const validateEvidence = (
 const validateChecklist = (result: Record<string, unknown>): void => {
   const checklist = asArray(result.checklist);
   const seen = new Set<string>();
-  const findingIds = new Set(
-    asArray(result.findings)
-      .filter(isObject)
-      .map((finding) => finding.id)
-      .filter((id): id is string => typeof id === "string")
-  );
+  const canonicalIds = {
+    findings: new Set(
+      asArray(result.findings)
+        .filter(isObject)
+        .map((finding) => finding.id)
+        .filter((id): id is string => typeof id === "string")
+    ),
+    unknowns: new Set(
+      asArray(result.unknowns)
+        .filter(isObject)
+        .map((unknown) => unknown.id)
+        .filter((id): id is string => typeof id === "string")
+    ),
+    contradictions: new Set(
+      asArray(result.contradictions)
+        .filter(isObject)
+        .map((contradiction) => contradiction.id)
+        .filter((id): id is string => typeof id === "string")
+    ),
+    strengths: new Set(
+      asArray(result.strengths)
+        .filter(isObject)
+        .map((strength) => strength.id)
+        .filter((id): id is string => typeof id === "string")
+    )
+  };
+
+  const validateReferenceArray = (
+    checkId: string,
+    fieldName: string,
+    value: unknown,
+    validIds: Set<string>
+  ): string[] => {
+    const ids = asArray(value).filter((id): id is string => typeof id === "string");
+    const invalid = ids.find((id) => !validIds.has(id));
+    if (invalid) {
+      throw new Error(`${checkId} ${fieldName} references unknown canonical id: ${invalid}`);
+    }
+    return ids;
+  };
 
   for (const item of checklist) {
     if (!isObject(item) || typeof item.check_id !== "string" || typeof item.status !== "string") {
@@ -384,16 +438,27 @@ const validateChecklist = (result: Record<string, unknown>): void => {
     seen.add(item.check_id);
 
     const evidence = asArray(item.evidence);
-    const ids = asArray(item.finding_ids).filter((id): id is string => typeof id === "string");
+    const findingIds = validateReferenceArray(
+      item.check_id,
+      "finding_ids",
+      item.finding_ids,
+      canonicalIds.findings
+    );
+    validateReferenceArray(item.check_id, "unknown_ids", item.unknown_ids, canonicalIds.unknowns);
+    validateReferenceArray(
+      item.check_id,
+      "contradiction_ids",
+      item.contradiction_ids,
+      canonicalIds.contradictions
+    );
+    validateReferenceArray(item.check_id, "strength_ids", item.strength_ids, canonicalIds.strengths);
     const notes = typeof item.notes === "string" ? item.notes.trim() : "";
 
     if (item.status === "CHECKED_OK" && evidence.length === 0) {
       throw new Error(`${item.check_id} cannot be CHECKED_OK without evidence.`);
     }
-    if (item.status === "FINDING") {
-      if (ids.length === 0 || ids.some((id) => !findingIds.has(id))) {
-        throw new Error(`${item.check_id} is FINDING but is not linked to a valid finding id.`);
-      }
+    if (item.status === "FINDING" && findingIds.length === 0) {
+      throw new Error(`${item.check_id} is FINDING but is not linked to a valid finding id.`);
     }
     if (["UNKNOWN", "NOT_INSPECTED_WITH_REASON"].includes(item.status) && !notes) {
       throw new Error(`${item.check_id} requires an explicit note for status ${item.status}.`);

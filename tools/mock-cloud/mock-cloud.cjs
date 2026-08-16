@@ -276,6 +276,7 @@ const createDiscoveryD05Prompt = (requestBody) => {
 
   return template
     .replaceAll("{{PROJECT_ROOT}}", requestBody.project.rootPath)
+    .replaceAll("{{OUTPUT_LANGUAGE}}", requestBody.outputLanguage ?? "Turkish")
     .replaceAll("{{STARTUP_SCOPE_JSON}}", JSON.stringify(runtimeInputs.startup_scope ?? {}))
     .replaceAll("{{STARTUP_SEAL_JSON}}", JSON.stringify(runtimeInputs.startup_seal ?? {}))
     .replaceAll("{{DISCOVERY_CONTEXT_JSON}}", JSON.stringify(runtimeInputs.discovery_context ?? {}));
@@ -324,11 +325,13 @@ const createTask = (jobId, requestBody) => {
       format: "plain-text",
       metadata: {
         localExecution: requestBody.localExecution ?? null,
+        outputLanguage: requestBody.outputLanguage ?? "Turkish",
         source: "mock-cloud",
-        stageId
+        stageId,
+        timeoutMs: Math.min(10_800_000, Math.max(300_000, Number(requestBody.timeoutMs) || 5_400_000))
       }
     },
-    timeoutMs: stageId === DISCOVERY_D05_STAGE_ID ? 1800000 : 300000
+    timeoutMs: Math.min(10_800_000, Math.max(300_000, Number(requestBody.timeoutMs) || 5_400_000))
   };
 };
 
@@ -547,7 +550,9 @@ const providerDirective = (
     capabilities: [],
     localExecution,
     project: session.project,
-    providerId: session.providerId
+    providerId: session.providerId,
+    outputLanguage: session.outputLanguage,
+    timeoutMs: session.timeoutMs
   };
   const job = createJob(requestBody);
   jobs.set(job.id, { ...job, projectId: session.project.id });
@@ -820,6 +825,8 @@ const createExecution = (body) => {
     pending: null,
     project: body.project,
     providerId: body.providerId,
+    outputLanguage: typeof body.outputLanguage === "string" && body.outputLanguage.trim() ? body.outputLanguage.trim() : "Turkish",
+    timeoutMs: Math.min(10_800_000, Math.max(300_000, Number(body.timeoutMs) || 5_400_000)),
     stageId: body.stageId,
     step: 0
   };
@@ -900,7 +907,10 @@ const server = http.createServer(async (request, response) => {
         d05RuntimeCompatible =
           d05Prompt.includes("OV-001") &&
           d05Prompt.includes("OV-082") &&
-          d05Schema?.properties?.substage?.enum?.includes("D05-Project-Overview");
+          d05Prompt.includes("{{OUTPUT_LANGUAGE}}") &&
+          d05Schema?.properties?.substage?.enum?.includes("D05-Project-Overview") &&
+          Array.isArray(d05Schema?.$defs?.checkDisposition?.required) &&
+          d05Schema.$defs.checkDisposition.required.includes("unknown_ids");
       } catch {
         d05RuntimeCompatible = false;
       }
@@ -912,7 +922,7 @@ const server = http.createServer(async (request, response) => {
         d05RuntimeCompatible;
       sendJson(response, 200, {
         status: compatible ? "ok" : "update-required",
-        serverVersion: "mock-0.4.8-debug",
+        serverVersion: "mock-0.5.0-debug",
         protocolVersion: "2",
         message: compatible
           ? "Mock cloud connected (Startup 2.1.0, Discovery D05 trial)"

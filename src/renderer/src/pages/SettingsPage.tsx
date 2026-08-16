@@ -54,6 +54,24 @@ export const SettingsPage = (): ReactElement => {
     });
   };
 
+  const updateOutputLanguage = (aiOutputLanguage: string): void => {
+    const normalized = aiOutputLanguage.trim();
+    if (!normalized) return;
+    void saveSettings({
+      ...settings,
+      aiOutputLanguage: normalized
+    });
+  };
+
+  const updateProviderStageTimeout = (providerStageTimeoutMinutes: number): void => {
+    if (!Number.isInteger(providerStageTimeoutMinutes)) return;
+    const normalized = Math.min(180, Math.max(5, providerStageTimeoutMinutes));
+    void saveSettings({
+      ...settings,
+      providerStageTimeoutMinutes: normalized
+    });
+  };
+
   return (
     <div className="settings-page">
       <header className="workspace-heading">
@@ -121,6 +139,47 @@ export const SettingsPage = (): ReactElement => {
               </datalist>
             </label>
           ))}
+        </div>
+      </section>
+
+
+      <section className="settings-section" aria-labelledby="ai-execution-settings-title">
+        <h2 id="ai-execution-settings-title">AI execution</h2>
+        <div className="settings-grid">
+          <label>
+            AI output language
+            <input
+              list="ai-output-language-options"
+              value={settings.aiOutputLanguage}
+              disabled={isLoading}
+              onChange={(event) => updateOutputLanguage(event.target.value)}
+            />
+            <datalist id="ai-output-language-options">
+              <option value="Turkish" />
+              <option value="English" />
+              <option value="German" />
+              <option value="French" />
+              <option value="Spanish" />
+              <option value="Italian" />
+              <option value="Portuguese" />
+              <option value="Arabic" />
+            </datalist>
+            <small>Only human-readable values change language. JSON keys, enums, IDs, paths, and code symbols stay unchanged.</small>
+          </label>
+
+          <label>
+            Provider stage timeout (minutes)
+            <input
+              type="number"
+              min={5}
+              max={180}
+              step={5}
+              value={settings.providerStageTimeoutMinutes}
+              disabled={isLoading}
+              onChange={(event) => updateProviderStageTimeout(Number(event.target.value))}
+            />
+            <small>Default 90 minutes. Applies to AI provider execution; local deterministic operations are not timed by this setting.</small>
+          </label>
         </div>
       </section>
 

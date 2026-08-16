@@ -1,5 +1,5 @@
 {
-  "lastFingerprint": "f5ba115596b8cfaaab3048a1dfd27fda64d6fcee",
+  "lastFingerprint": "d2bb1c8b2493a14bec1cc6cd85a94648259b204a",
   "lastDate": "2026-08-16",
-  "lastContent": "- Switched Claude Code provider to stream-json output with default permission mode for structured event parsing.\n- Added JSONL event parsing in stage execution to extract only the final visible model response.\n- Enhanced provider console to display sanitized stream events instead of raw internal thinking blocks.\n- Added `tools/restart-dev.ps1` for one-command clean restart of Electron, renderer, and mock cloud processes.\n- Bumped application version to 0.4.8 across package, constants, and mock cloud server."
+  "lastContent": "- Added AI output language setting with Turkish default, supporting localized responses while preserving JSON keys and code symbols.\n- Introduced configurable provider stage timeout (5–180 minutes, default 90) replacing hardcoded timeout values.\n- Extended job execution protocol with output language and timeout parameters, propagated through cloud API and mock cloud.\n- Enhanced D05 evidence validation to accept runtime authority paths and enforce canonical ID references across all checklist dispositions.\n- Bumped application version to 0.5.0 with updated protocol compatibility checks."
 }

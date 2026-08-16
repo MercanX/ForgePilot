@@ -70,6 +70,8 @@ export const stageExecutionNextRequestSchema = z
     previous: executionPreviousResultSchema.nullable().default(null),
     project: projectSchema,
     providerId: providerIdSchema,
+    outputLanguage: z.string().trim().min(1).max(64).default("Turkish"),
+    timeoutMs: z.number().int().positive().max(10_800_000).default(5_400_000),
     stageId: z.string().min(1)
   })
   .strict();

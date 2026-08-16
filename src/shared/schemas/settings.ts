@@ -18,7 +18,9 @@ export const providerModelSettingsSchema = z
 export const appSettingsSchema = z
   .object({
     activeProviderId: providerIdSchema.nullable().default(null),
-    providerModels: providerModelSettingsSchema.default(DEFAULT_PROVIDER_MODELS)
+    providerModels: providerModelSettingsSchema.default(DEFAULT_PROVIDER_MODELS),
+    aiOutputLanguage: z.string().trim().min(1).max(64).default("Turkish"),
+    providerStageTimeoutMinutes: z.number().int().min(5).max(180).default(90)
   })
   .strict();
 

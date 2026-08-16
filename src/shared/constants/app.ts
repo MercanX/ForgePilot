@@ -1,2 +1,2 @@
 export const APP_NAME = "ForgePilot";
-export const APP_VERSION = "0.4.8";
+export const APP_VERSION = "0.5.0";

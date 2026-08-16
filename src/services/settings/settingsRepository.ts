@@ -13,7 +13,9 @@ const DEFAULT_SETTINGS: AppSettings = {
   activeProviderId: null,
   providerModels: {
     ...DEFAULT_PROVIDER_MODELS
-  }
+  },
+  aiOutputLanguage: "Turkish",
+  providerStageTimeoutMinutes: 90
 };
 
 export const createSettingsRepository = (userDataPath: string): SettingsRepository => {

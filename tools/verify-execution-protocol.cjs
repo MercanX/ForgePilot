@@ -52,6 +52,7 @@ writeFileSync(
     "SCOPE={{STARTUP_SCOPE_JSON}}",
     "SEAL={{STARTUP_SEAL_JSON}}",
     "CONTEXT={{DISCOVERY_CONTEXT_JSON}}",
+    "LANG={{OUTPUT_LANGUAGE}}",
     "OV-001",
     "OV-082"
   ].join("\n"),
@@ -68,7 +69,13 @@ writeFileSync(
       checklist: { type: "array" }
     },
     required: ["substage", "result", "summary", "checklist"],
-    additionalProperties: false
+    additionalProperties: false,
+    $defs: {
+      checkDisposition: {
+        type: "object",
+        required: ["check_id", "status", "evidence", "finding_ids", "unknown_ids", "contradiction_ids", "strength_ids", "notes", "confidence"]
+      }
+    }
   }),
   "utf8"
 );
@@ -173,7 +180,13 @@ const providerOutputFor = (directive) => {
   }
   if (task?.semantic_task_id === "D05_PROJECT_OVERVIEW") {
     const prompt = directive.job.task.instructions.body;
-    if (!prompt.includes("OV-001") || !prompt.includes("OV-082") || prompt.includes("{{PROJECT_ROOT}}")) {
+    if (
+      !prompt.includes("OV-001") ||
+      !prompt.includes("OV-082") ||
+      !prompt.includes("LANG=Turkish") ||
+      prompt.includes("{{PROJECT_ROOT}}") ||
+      prompt.includes("{{OUTPUT_LANGUAGE}}")
+    ) {
       throw new Error("D05 compiled prompt was not loaded/substituted correctly.");
     }
     return { substage: "D05-Project-Overview", result: "PASS", summary: "fixture overview", checklist: [] };
@@ -216,6 +229,8 @@ const runStage = async (stageId, expectedOutcome = "completed", newRun = false) 
       previous,
       project,
       providerId: "claude-code",
+      outputLanguage: "Turkish",
+      timeoutMs: 5_400_000,
       stageId
     });
     executionId = next.executionId;
@@ -252,7 +267,7 @@ const runStage = async (stageId, expectedOutcome = "completed", newRun = false) 
   try {
     await waitForServer();
     const handshake = await requestJson("POST", "/session/handshake", {
-      desktopVersion: "0.4.8",
+      desktopVersion: "0.5.0",
       protocolVersion: "2",
       supportedCapabilities: ["stage-execution:directives-v1", "contract:010-startup@2.1.0", "contract:020-discovery@2.0.0"]
     });

@@ -468,7 +468,9 @@ const renderReport = (
   const gapsDoc = inputs["DISCOVERY_GAPS.json"] as Record<string, unknown>;
   const kinds = ["documentation", "source", "manifest", "configuration", "database", "asset", "script", "data", "unknown"];
   const classifiedFiles = array(classified.files);
-  const techOrder = ["Language", "Runtime", "Package Manager", "Build Backend"];
+  const projectClassifiedFiles = classifiedFiles.filter((entry) => isObject(entry) && entry.origin === "project");
+  const origins = ["project", "third_party", "generated", "tool_state"];
+  const techOrder = ["Language", "Runtime", "Framework", "Package Manager", "Build Backend"];
   const stack = array(tech.stack);
   const moduleRows = array(moduleMap.modules).filter(isObject).map((entry) => [
     entry.id,
@@ -509,7 +511,14 @@ const renderReport = (
       ["Unknown files", metrics.inventory.unknown_files]
     ])}\n\n### Classification\n\n${renderTable(
       ["Kind", "Count"],
-      kinds.map((kind) => [kind, classifiedFiles.filter((entry) => isObject(entry) && entry.kind === kind).length])
+      kinds.map((kind) => [kind, projectClassifiedFiles.filter((entry) => isObject(entry) && entry.kind === kind).length])
+    )}
+
+### Origin
+
+${renderTable(
+      ["Origin", "Count"],
+      origins.map((origin) => [origin, classifiedFiles.filter((entry) => isObject(entry) && entry.origin === origin).length])
     )}`
   );
   const standardInventory = isObject(documentIndex.standard_documents_inventory)

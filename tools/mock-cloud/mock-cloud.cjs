@@ -1107,7 +1107,7 @@ const server = http.createServer(async (request, response) => {
       const compatible = protocolCompatible && discoveryContractCompatible;
       sendJson(response, 200, {
         status: compatible ? "ok" : "update-required",
-        serverVersion: "mock-0.3.0",
+        serverVersion: "mock-0.3.2",
         protocolVersion: "2",
         message: compatible
           ? "Mock cloud connected (Discovery contract 2.0.0)"

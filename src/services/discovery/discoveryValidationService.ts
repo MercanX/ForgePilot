@@ -662,6 +662,17 @@ export const prepareDetectGapsV2Job = async (
     const classifiedUnknown = isObject(classified) && Array.isArray(classified.unknown)
       ? classified.unknown.filter((entry): entry is string => typeof entry === "string")
       : [];
+    const derivedProjectUnknown = isObject(classified) && Array.isArray(classified.files)
+      ? classified.files
+          .filter(
+            (entry) =>
+              isObject(entry) &&
+              entry.kind === "unknown" &&
+              entry.origin === "project" &&
+              isString(entry.path)
+          )
+          .map((entry) => (entry as Record<string, unknown>).path as string)
+      : [];
     const unknownPaths = stringPaths(unknownFiles, "files") ?? [];
     const folderDirectories = stringPaths(folders, "directories") ?? [];
     const totals = isObject(inventory) && isObject(inventory.totals) ? inventory.totals : {};
@@ -691,6 +702,13 @@ export const prepareDetectGapsV2Job = async (
     compareSets("FILE_INVENTORY.json", "FOLDER_STRUCTURE.json", inventoryPaths, folderFilePaths, "same file path set as FILE_INVENTORY.json.files[]");
     compareSets("FILE_INVENTORY.json", "CLASSIFIED_FILES.json", inventoryPaths, classifiedPaths, "same file path set as FILE_INVENTORY.json.files[]");
     compareSets("UNKNOWN_FILES.json", "CLASSIFIED_FILES.json", sortedUnique(classifiedUnknown), sortedUnique(unknownPaths), "same unknown path set as CLASSIFIED_FILES.json.unknown[]");
+    compareSets(
+      "CLASSIFIED_FILES.json",
+      "CLASSIFIED_FILES.json",
+      sortedUnique(classifiedUnknown),
+      sortedUnique(derivedProjectUnknown),
+      "unknown[] must contain exactly project-owned files whose kind is unknown"
+    );
 
     if (new Set(inventoryPaths).size !== inventoryPaths.length || new Set(folderDirectories).size !== folderDirectories.length) {
       inventoryFinding = true;
@@ -729,7 +747,13 @@ export const prepareDetectGapsV2Job = async (
   if (classified && documentIndex && documentStructure && documentReferences && missingDocuments && glossary) {
     const classifiedDocs = isObject(classified) && Array.isArray(classified.files)
       ? classified.files
-          .filter((entry) => isObject(entry) && entry.kind === "documentation" && isString(entry.path))
+          .filter(
+            (entry) =>
+              isObject(entry) &&
+              entry.origin === "project" &&
+              entry.kind === "documentation" &&
+              isString(entry.path)
+          )
           .map((entry) => (entry as Record<string, unknown>).path as string)
       : [];
     const indexedDocs = stringPaths(documentIndex, "documents") ?? [];
@@ -780,7 +804,13 @@ export const prepareDetectGapsV2Job = async (
   if (classified && dependencyMap) {
     const manifestPaths = isObject(classified) && Array.isArray(classified.files)
       ? classified.files
-          .filter((entry) => isObject(entry) && entry.kind === "manifest" && isString(entry.path))
+          .filter(
+            (entry) =>
+              isObject(entry) &&
+              entry.origin === "project" &&
+              entry.kind === "manifest" &&
+              isString(entry.path)
+          )
           .map((entry) => (entry as Record<string, unknown>).path as string)
       : [];
     const manifests = isObject(dependencyMap) && Array.isArray(dependencyMap.manifests)
@@ -804,17 +834,36 @@ export const prepareDetectGapsV2Job = async (
           structuralEvidence(
             "DEPENDENCY_MAP.json",
             "/manifests",
-            "classified manifest set with disjoint parsed/unparsed partition",
+            "project-owned classified manifest set with disjoint parsed/unparsed partition",
             `manifest_diff=${setDiff.missing.length + setDiff.extra.length}; partition_diff=${partitionDiff.missing.length + partitionDiff.extra.length}; overlap=${overlap.length}`
           )
         ])
+      );
+    }
+    if (unparsed.length > 0) {
+      dependencyFinding = true;
+      addUniqueDraft(
+        drafts,
+        makeDraft(
+          "dependency_map_inconsistent",
+          "DEPENDENCY_MAP.json",
+          "One or more project-owned dependency manifests could not be parsed.",
+          [
+            structuralEvidence(
+              "DEPENDENCY_MAP.json",
+              "/unparsed_manifests",
+              "empty for project-owned manifests",
+              `count=${unparsed.length}; sample=${unparsed.slice(0, 8).join(",")}`
+            )
+          ]
+        )
       );
     }
     check(checks, "CHK-DEPENDENCY-CONSISTENCY", "dependencies", dependencyFinding ? "finding" : "pass");
     coverageLimitations.push({
       source: "DEPENDENCY_MAP.json",
       pointer: "/parsed_manifests",
-      observation: "D05 validates manifest set/partition locally; independent parser replay remains bounded to D09 producer tests.",
+      observation: "D05 validates project-owned manifest set/partition and requires unparsed_manifests to be empty; parser implementation remains owned by D09.",
       reason: "no_matching_gap_kind"
     });
   } else {

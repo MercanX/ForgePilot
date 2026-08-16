@@ -146,6 +146,9 @@ const readJson = async (filePath: string): Promise<unknown> => JSON.parse(await 
 const writeJson = async (filePath: string, value: unknown): Promise<void> =>
   writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 const deepEqual = (left: unknown, right: unknown): boolean => JSON.stringify(left) === JSON.stringify(right);
+const ratio = (numerator: number, denominator: number): number =>
+  denominator <= 0 ? 1 : Math.max(0, Math.min(1, numerator / denominator));
+const percent = (value: number): number => Math.round(value * 100);
 
 const parseGap = (value: unknown): Gap => {
   if (
@@ -291,11 +294,14 @@ export const runScoreAndGateV2Job = async (
   }
   const policy = validatePolicy(scorePolicyInput);
   const directory = reportsDir(projectRootPath);
-  const [validation, gapsDoc, issuesDoc, warningsDoc] = await Promise.all([
+  const [validation, gapsDoc, issuesDoc, warningsDoc, dependencyMap, classifiedFiles, projectContext] = await Promise.all([
     readJson(path.join(directory, "DISCOVERY_VALIDATION.json")),
     readJson(path.join(directory, "DISCOVERY_GAPS.json")),
     readJson(path.join(directory, "DISCOVERY_ISSUES.json")),
-    readJson(path.join(directory, "DISCOVERY_WARNINGS.json"))
+    readJson(path.join(directory, "DISCOVERY_WARNINGS.json")),
+    readJson(path.join(directory, "DEPENDENCY_MAP.json")),
+    readJson(path.join(directory, "CLASSIFIED_FILES.json")),
+    readJson(path.join(projectRootPath, ".ai-factory", "context", "project", "PROJECT_CONTEXT.json"))
   ]);
   if (!isObject(gapsDoc) || !Array.isArray(gapsDoc.gaps)) throw new Error("Invalid DISCOVERY_GAPS.json.");
   if (!isObject(issuesDoc) || !Array.isArray(issuesDoc.issues)) throw new Error("Invalid DISCOVERY_ISSUES.json.");
@@ -345,6 +351,46 @@ export const runScoreAndGateV2Job = async (
     component: componentFor.get(finding.kind)!,
     penalty: SEVERITY_PENALTY[finding.severity]
   }));
+  const dependencyManifests = isObject(dependencyMap) && Array.isArray(dependencyMap.manifests)
+    ? dependencyMap.manifests.filter((entry): entry is string => typeof entry === "string")
+    : [];
+  const dependencyParsed = isObject(dependencyMap) && Array.isArray(dependencyMap.parsed_manifests)
+    ? dependencyMap.parsed_manifests.filter((entry): entry is string => typeof entry === "string")
+    : [];
+  const classifiedProjectFiles = isObject(classifiedFiles) && Array.isArray(classifiedFiles.files)
+    ? classifiedFiles.files.filter((entry) => isObject(entry) && entry.origin === "project")
+    : [];
+  const classifiedKnownProjectFiles = classifiedProjectFiles.filter(
+    (entry) => isObject(entry) && entry.kind !== "unknown"
+  );
+  const contextModules = isObject(projectContext) && Array.isArray(projectContext.modules)
+    ? projectContext.modules
+    : [];
+  const contextUnknowns = isObject(projectContext) && Array.isArray(projectContext.unknowns)
+    ? projectContext.unknowns
+    : [];
+  const contextSlots = 3 + contextModules.length;
+  const coverage = {
+    dependency_manifest_parse: {
+      parsed: dependencyParsed.length,
+      total: dependencyManifests.length,
+      ratio: ratio(dependencyParsed.length, dependencyManifests.length),
+      minimum_ratio: 0.8
+    },
+    classification_known_project: {
+      known: classifiedKnownProjectFiles.length,
+      total: classifiedProjectFiles.length,
+      ratio: ratio(classifiedKnownProjectFiles.length, classifiedProjectFiles.length),
+      minimum_ratio: 0.95
+    },
+    semantic_context_resolved: {
+      resolved: Math.max(0, contextSlots - contextUnknowns.length),
+      total: contextSlots,
+      ratio: ratio(Math.max(0, contextSlots - contextUnknowns.length), contextSlots),
+      minimum_ratio: 0
+    }
+  };
+
   const componentOrder = new Map(policy.map((component, index) => [component.name, index]));
   appliedFindings.sort((left, right) => {
     const componentDiff = (componentOrder.get(left.component) ?? 0) - (componentOrder.get(right.component) ?? 0);
@@ -353,12 +399,23 @@ export const runScoreAndGateV2Job = async (
   const components = policy.map((component) => {
     const relevant = appliedFindings.filter((entry) => entry.component === component.name);
     const penaltyTotal = relevant.reduce((sum, entry) => sum + entry.penalty, 0);
+    const findingValue = Math.max(0, 100 - penaltyTotal);
+    let coverageCap = 100;
+    if (component.gap_kinds.includes("dependency_map_inconsistent")) {
+      coverageCap = Math.round(
+        percent(coverage.dependency_manifest_parse.ratio) * 0.7 +
+          percent(coverage.classification_known_project.ratio) * 0.3
+      );
+    } else if (component.gap_kinds.includes("evidence_missing")) {
+      coverageCap = 60 + Math.round(percent(coverage.semantic_context_resolved.ratio) * 0.4);
+    }
     return {
       name: component.name,
       weight: component.weight,
-      value: Math.max(0, 100 - penaltyTotal),
+      value: Math.min(findingValue, coverageCap),
       penalty_total: penaltyTotal,
-      finding_count: relevant.length
+      finding_count: relevant.length,
+      coverage_cap: coverageCap
     };
   });
   const weightedNumerator = components.reduce<Rational>(
@@ -381,7 +438,8 @@ export const runScoreAndGateV2Job = async (
     finding_count: active.length,
     issue_count: issues.length,
     warning_count: warnings.length,
-    applied_findings: appliedFindings
+    applied_findings: appliedFindings,
+    coverage
   };
 
   const checklistItems = parseChecklistItems(validation);
@@ -405,6 +463,17 @@ export const runScoreAndGateV2Job = async (
     (item) => item.obligation === "mandatory" && (item.status === "fail" || item.status === "blocked")
   );
   const nonInfo = active.filter((entry) => entry.severity !== "INFO");
+  const coverageMetrics = [
+    ["dependency_manifest_parse", coverage.dependency_manifest_parse],
+    ["classification_known_project", coverage.classification_known_project],
+    ["semantic_context_resolved", coverage.semantic_context_resolved]
+  ] as const;
+  const coverageFailures = coverageMetrics.filter(
+    ([, metric]) => metric.ratio < metric.minimum_ratio
+  );
+  const coverageWarnings = coverageMetrics.filter(
+    ([, metric]) => metric.ratio >= metric.minimum_ratio && metric.ratio < 1
+  );
 
   if (critical.length) {
     decision = "FAIL";
@@ -422,14 +491,30 @@ export const runScoreAndGateV2Job = async (
     decision = "REVISION_REQUIRED";
     matchedRule = "GATE-D06-04";
     decisionEvidence = mandatoryChecklist.map((item) => ({ type: "checklist", item_id: item.id, status: item.status }));
-  } else if (overall < minimumScore) {
+  } else if (coverageFailures.length || overall < minimumScore) {
     decision = "REVISION_REQUIRED";
     matchedRule = "GATE-D06-05";
-    decisionEvidence = [{ type: "score", overall, minimum_score: minimumScore }];
-  } else if (nonInfo.length) {
+    decisionEvidence = [
+      ...(overall < minimumScore ? [{ type: "score", overall, minimum_score: minimumScore }] : []),
+      ...coverageFailures.map(([name, metric]) => ({
+        type: "coverage",
+        metric: name,
+        ratio: (metric as { ratio: number }).ratio,
+        minimum_ratio: (metric as { minimum_ratio: number }).minimum_ratio
+      }))
+    ];
+  } else if (nonInfo.length || coverageWarnings.length) {
     decision = "PASS_WITH_WARNINGS";
     matchedRule = "GATE-D06-06";
-    decisionEvidence = nonInfo.map(findingEvidence);
+    decisionEvidence = [
+      ...nonInfo.map(findingEvidence),
+      ...coverageWarnings.map(([name, metric]) => ({
+        type: "coverage",
+        metric: name,
+        ratio: metric.ratio,
+        minimum_ratio: metric.minimum_ratio
+      }))
+    ];
   } else {
     decision = "PASS";
     matchedRule = "GATE-D06-07";
@@ -443,6 +528,7 @@ export const runScoreAndGateV2Job = async (
     score: { overall, minimum_score: minimumScore },
     finding_summary: summary,
     checklist,
+    coverage,
     decision_evidence: decisionEvidence
   };
 

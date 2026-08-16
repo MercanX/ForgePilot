@@ -99,10 +99,12 @@ export type FileFormat =
   | null;
 
 export type FileSignal = "infrastructure" | "migration" | "seed" | "test";
+export type FileOrigin = "generated" | "project" | "third_party" | "tool_state";
 
 type ClassifiedFile = {
   format: FileFormat;
   kind: FileKind;
+  origin: FileOrigin;
   path: string;
   signals: FileSignal[];
 };
@@ -113,6 +115,7 @@ const ROOT_EXCLUDED_DIRECTORIES = new Set([
   ".ai-factory-runs",
   ".claude",
   ".git",
+  ".forgepilot",
   "node_modules",
   "vendor"
 ]);
@@ -448,7 +451,9 @@ const EXACT_NAME_NULL_FORMAT_CONFIG = new Set([
   ".gitattributes",
   ".dockerignore",
   ".npmignore",
-  ".editorconfig"
+  ".editorconfig",
+  ".htaccess",
+  ".ftpquota"
 ]);
 
 const DOCUMENTATION_EXTENSIONS: Record<string, FileFormat> = {
@@ -568,6 +573,10 @@ const classifyFile = (relativePath: string): { format: FileFormat; kind: FileKin
     return { format: "make", kind: "script" };
   }
 
+  if (basename === "artisan") {
+    return { format: "php", kind: "script" };
+  }
+
   if (basename === ".env" || basename.startsWith(".env")) {
     return { format: "env", kind: "configuration" };
   }
@@ -616,6 +625,53 @@ const INFRASTRUCTURE_EXTENSIONS = new Set([".tf", ".tfvars"]);
 
 const hasGithubWorkflowsSegment = (segments: string[]): boolean =>
   segments.some((segment, index) => segment === ".github" && segments[index + 1] === "workflows");
+
+const THIRD_PARTY_DIRECTORY_NAMES = new Set([
+  "node_modules",
+  "vendor",
+  "bower_components",
+  "third_party",
+  "third-party"
+]);
+
+const hasPathPair = (segments: string[], parent: string, child: string): boolean =>
+  segments.some((segment, index) => segment === parent && segments[index + 1] === child);
+
+const classifyFileOrigin = (relativePath: string): FileOrigin => {
+  const segments = relativePath.split("/").map((segment) => segment.toLowerCase());
+  const basename = segments.at(-1) ?? "";
+
+  if (segments.includes(".forgepilot")) {
+    return "tool_state";
+  }
+
+  if (segments.some((segment) => THIRD_PARTY_DIRECTORY_NAMES.has(segment))) {
+    return "third_party";
+  }
+
+  const vendorAsset = segments.some(
+    (segment, index) =>
+      segment === "vendors" &&
+      ["assets", "css", "js", "scripts", "script", "plugins"].includes(segments[index - 1] ?? "")
+  );
+  if (vendorAsset) {
+    return "third_party";
+  }
+
+  const generatedDirectory =
+    segments.includes("dist") ||
+    segments.includes("coverage") ||
+    segments.includes(".next") ||
+    hasPathPair(segments, "bootstrap", "cache") ||
+    hasPathPair(segments, "storage", "framework") ||
+    hasPathPair(segments, "public", "build") ||
+    (segments.includes("public") &&
+      segments.includes("assets") &&
+      segments.indexOf("public") < segments.indexOf("assets"));
+  const generatedFile = basename.endsWith(".map") || basename.endsWith(".min.js") || basename.endsWith(".min.css");
+
+  return generatedDirectory || generatedFile ? "generated" : "project";
+};
 
 const computeSignals = (relativePath: string): FileSignal[] => {
   const segments = relativePath.split("/");
@@ -681,11 +737,12 @@ export const runClassifyFilesJob = async (
     return {
       format,
       kind,
+      origin: classifyFileOrigin(file.path),
       path: file.path,
       signals: computeSignals(file.path)
     };
   });
-  const unknownFiles = classifiedFiles.filter((file) => file.kind === "unknown");
+  const unknownFiles = classifiedFiles.filter((file) => file.origin === "project" && file.kind === "unknown");
 
   await mkdir(reportsDir, { recursive: true });
 
@@ -693,10 +750,16 @@ export const runClassifyFilesJob = async (
     files: classifiedFiles.map((file) => ({
       format: file.format,
       kind: file.kind,
+      origin: file.origin,
       path: file.path,
       signals: file.signals
     })),
     metadata: buildMetadata(),
+    non_project: {
+      generated: classifiedFiles.filter((file) => file.origin === "generated").length,
+      third_party: classifiedFiles.filter((file) => file.origin === "third_party").length,
+      tool_state: classifiedFiles.filter((file) => file.origin === "tool_state").length
+    },
     unknown: unknownFiles.map((file) => file.path)
   });
 
@@ -704,7 +767,8 @@ export const runClassifyFilesJob = async (
     files: unknownFiles.map((file) => ({
       format: null,
       path: file.path,
-      reason: "no deterministic kind rule matched",
+      origin: file.origin,
+      reason: "no deterministic kind rule matched for a project-owned file",
       signals: file.signals
     })),
     metadata: buildMetadata()
@@ -737,7 +801,7 @@ type DependencyPackage = {
   scopes: string[];
 };
 
-type TechnologyStackCategory = "Build Backend" | "Language" | "Package Manager" | "Runtime";
+type TechnologyStackCategory = "Build Backend" | "Framework" | "Language" | "Package Manager" | "Runtime";
 
 type TechnologyStackEntry = {
   category: TechnologyStackCategory;
@@ -767,6 +831,7 @@ const LANGUAGE_BY_FORMAT: Partial<Record<NonNullable<FileFormat>, string>> = {
 const TECH_STACK_CATEGORY_ORDER: TechnologyStackCategory[] = [
   "Language",
   "Runtime",
+  "Framework",
   "Package Manager",
   "Build Backend"
 ];
@@ -825,37 +890,40 @@ const extractScopedPackages = (
 };
 
 const buildPackageJsonRecords = (
-  manifestPaths: Set<string>,
+  manifestPath: string,
+  siblingNames: Set<string>,
   packageJson: Record<string, unknown>
 ): { packages: DependencyPackage[]; stack: TechnologyStackEntry[] } => {
   const stack: TechnologyStackEntry[] = [];
+  const manifestDir = path.posix.dirname(manifestPath);
+  const siblingPath = (name: string): string => manifestDir === "." ? name : `${manifestDir}/${name}`;
   const packageManagerField =
     typeof packageJson.packageManager === "string" ? packageJson.packageManager : null;
 
   if (packageManagerField) {
     stack.push({
       category: "Package Manager",
-      evidence: { field: "packageManager", note: "packageManager alani.", source: "package.json" },
+      evidence: { field: "packageManager", note: "packageManager alani.", source: manifestPath },
       name: packageManagerField.split("@")[0] ?? packageManagerField
     });
-  } else if (manifestPaths.has("pnpm-lock.yaml")) {
+  } else if (siblingNames.has("pnpm-lock.yaml")) {
     stack.push({
       category: "Package Manager",
-      evidence: { note: "lockfile bulundu.", source: "pnpm-lock.yaml" },
+      evidence: { note: "lockfile bulundu.", source: siblingPath("pnpm-lock.yaml") },
       name: "pnpm"
     });
-  } else if (manifestPaths.has("yarn.lock")) {
+  } else if (siblingNames.has("yarn.lock")) {
     stack.push({
       category: "Package Manager",
-      evidence: { note: "lockfile bulundu.", source: "yarn.lock" },
+      evidence: { note: "lockfile bulundu.", source: siblingPath("yarn.lock") },
       name: "Yarn"
     });
-  } else if (manifestPaths.has("package-lock.json") || manifestPaths.has("npm-shrinkwrap.json")) {
+  } else if (siblingNames.has("package-lock.json") || siblingNames.has("npm-shrinkwrap.json")) {
     stack.push({
       category: "Package Manager",
       evidence: {
         note: "lockfile bulundu.",
-        source: manifestPaths.has("package-lock.json") ? "package-lock.json" : "npm-shrinkwrap.json"
+        source: siblingPath(siblingNames.has("package-lock.json") ? "package-lock.json" : "npm-shrinkwrap.json")
       },
       name: "npm"
     });
@@ -870,13 +938,13 @@ const buildPackageJsonRecords = (
   if (typeof nodeEngine === "string") {
     stack.push({
       category: "Runtime",
-      evidence: { field: "engines.node", note: "engines.node alani.", source: "package.json" },
+      evidence: { field: "engines.node", note: "engines.node alani.", source: manifestPath },
       name: "Node.js"
     });
   }
 
   const packages = extractScopedPackages(
-    "package.json",
+    manifestPath,
     (packageJson.dependencies as Record<string, unknown>) ?? {},
     (packageJson.devDependencies as Record<string, unknown>) ?? {},
     "package dependency kaydi."
@@ -886,21 +954,24 @@ const buildPackageJsonRecords = (
 };
 
 const buildComposerJsonRecords = (
-  manifestPaths: Set<string>,
+  manifestPath: string,
+  siblingNames: Set<string>,
   composerJson: Record<string, unknown>
 ): { packages: DependencyPackage[]; stack: TechnologyStackEntry[] } => {
   const stack: TechnologyStackEntry[] = [];
+  const manifestDir = path.posix.dirname(manifestPath);
+  const siblingPath = (name: string): string => manifestDir === "." ? name : `${manifestDir}/${name}`;
 
-  if (manifestPaths.has("composer.lock")) {
+  if (siblingNames.has("composer.lock")) {
     stack.push({
       category: "Package Manager",
-      evidence: { note: "lockfile bulundu.", source: "composer.lock" },
+      evidence: { note: "lockfile bulundu.", source: siblingPath("composer.lock") },
       name: "Composer"
     });
   }
 
   const packages = extractScopedPackages(
-    "composer.json",
+    manifestPath,
     (composerJson.require as Record<string, unknown>) ?? {},
     (composerJson["require-dev"] as Record<string, unknown>) ?? {},
     "composer dependency kaydi.",
@@ -911,6 +982,7 @@ const buildComposerJsonRecords = (
 };
 
 const buildPyprojectTomlRecords = (
+  manifestPath: string,
   pyproject: Record<string, unknown>
 ): { packages: DependencyPackage[]; stack: TechnologyStackEntry[] } => {
   const stack: TechnologyStackEntry[] = [];
@@ -931,7 +1003,7 @@ const buildPyprojectTomlRecords = (
         evidence: {
           field: "build-system.build-backend",
           note: "pyproject build-backend kaydi.",
-          source: "pyproject.toml"
+          source: manifestPath
         },
         name: matched.name
       });
@@ -961,7 +1033,7 @@ const buildPyprojectTomlRecords = (
 
     for (const name of [...names].sort()) {
       packages.push({
-        evidence: { note: "pyproject dependency kaydi.", source: "pyproject.toml" },
+        evidence: { note: "pyproject dependency kaydi.", source: manifestPath },
         name,
         scopes: ["runtime"]
       });
@@ -984,7 +1056,7 @@ const buildPyprojectTomlRecords = (
 
       for (const name of names.sort()) {
         packages.push({
-          evidence: { note: "pyproject dependency kaydi.", source: "pyproject.toml" },
+          evidence: { note: "pyproject dependency kaydi.", source: manifestPath },
           name,
           scopes: ["runtime"]
         });
@@ -1000,7 +1072,7 @@ const buildLanguageStack = (files: ClassifiedFile[]): TechnologyStackEntry[] => 
   const entries: TechnologyStackEntry[] = [];
 
   for (const file of files) {
-    if (file.kind !== "source" || !file.format) {
+    if (file.origin !== "project" || file.kind !== "source" || !file.format) {
       continue;
     }
 
@@ -1045,54 +1117,88 @@ export const runMapDependenciesJob = async (
   }
 
   const manifests = classified.files
-    .filter((file) => file.kind === "manifest")
+    .filter((file) => file.origin === "project" && file.kind === "manifest")
     .map((file) => file.path)
     .sort();
-  const manifestPathSet = new Set(manifests);
+  const siblingsFor = (manifestPath: string): Set<string> => {
+    const dir = path.posix.dirname(manifestPath);
+    return new Set(
+      manifests
+        .filter((candidate) => path.posix.dirname(candidate) === dir)
+        .map((candidate) => path.posix.basename(candidate))
+    );
+  };
 
   const packages: DependencyPackage[] = [];
   const stack: TechnologyStackEntry[] = [...buildLanguageStack(classified.files)];
   const parsedManifests: string[] = [];
 
-  if (manifestPathSet.has("package.json")) {
-    parsedManifests.push("package.json");
-    const packageJson = await readJsonFile<Record<string, unknown>>(
-      path.join(projectRootPath, "package.json")
-    );
-    const result = buildPackageJsonRecords(manifestPathSet, packageJson);
-    packages.push(...result.packages);
-    stack.push(...result.stack);
-  }
-
-  if (manifestPathSet.has("composer.json")) {
-    parsedManifests.push("composer.json");
-    const composerJson = await readJsonFile<Record<string, unknown>>(
-      path.join(projectRootPath, "composer.json")
-    );
-    const result = buildComposerJsonRecords(manifestPathSet, composerJson);
-    packages.push(...result.packages);
-    stack.push(...result.stack);
-  }
-
-  if (manifestPathSet.has("pyproject.toml")) {
-    parsedManifests.push("pyproject.toml");
-    let pyproject: Record<string, unknown>;
+  for (const manifestPath of manifests) {
+    const basename = path.posix.basename(manifestPath);
+    const absolutePath = path.join(projectRootPath, ...manifestPath.split("/"));
+    const siblingNames = siblingsFor(manifestPath);
 
     try {
-      const raw = await readFile(path.join(projectRootPath, "pyproject.toml"), "utf8");
-      pyproject = parseToml(raw);
-    } catch (error) {
-      throw new Error(`Unable to parse pyproject.toml: ${(error as Error).message}`);
+      if (basename === "package.json") {
+        const packageJson = await readJsonFile<Record<string, unknown>>(absolutePath);
+        const result = buildPackageJsonRecords(manifestPath, siblingNames, packageJson);
+        packages.push(...result.packages);
+        stack.push(...result.stack);
+        parsedManifests.push(manifestPath);
+      } else if (basename === "composer.json") {
+        const composerJson = await readJsonFile<Record<string, unknown>>(absolutePath);
+        const result = buildComposerJsonRecords(manifestPath, siblingNames, composerJson);
+        packages.push(...result.packages);
+        stack.push(...result.stack);
+        parsedManifests.push(manifestPath);
+      } else if (basename === "pyproject.toml") {
+        const raw = await readFile(absolutePath, "utf8");
+        const pyproject = parseToml(raw);
+        const result = buildPyprojectTomlRecords(manifestPath, pyproject);
+        packages.push(...result.packages);
+        stack.push(...result.stack);
+        parsedManifests.push(manifestPath);
+      } else if (["package-lock.json", "npm-shrinkwrap.json", "composer.lock", "Pipfile.lock", "packages.lock.json"].includes(basename)) {
+        await readJsonFile<Record<string, unknown>>(absolutePath);
+        parsedManifests.push(manifestPath);
+      } else if (["Cargo.lock", "poetry.lock"].includes(basename)) {
+        parseToml(await readFile(absolutePath, "utf8"));
+        parsedManifests.push(manifestPath);
+      } else if (["pnpm-lock.yaml", "yarn.lock", "go.sum", "go.work.sum", "gradle.lockfile"].includes(basename)) {
+        await readFile(absolutePath, "utf8");
+        parsedManifests.push(manifestPath);
+      }
+    } catch {
+      // The manifest remains in unparsed_manifests and D05 will fail dependency coverage.
     }
-
-    const result = buildPyprojectTomlRecords(pyproject);
-    packages.push(...result.packages);
-    stack.push(...result.stack);
   }
 
   parsedManifests.sort();
   const parsedManifestSet = new Set(parsedManifests);
   const unparsedManifests = manifests.filter((manifestPath) => !parsedManifestSet.has(manifestPath));
+
+  const FRAMEWORK_BY_PACKAGE: Record<string, string> = {
+    "laravel/framework": "Laravel",
+    "@nestjs/core": "NestJS",
+    "next": "Next.js",
+    "nuxt": "Nuxt",
+    "react": "React",
+    "vue": "Vue",
+    "express": "Express",
+    "django": "Django",
+    "flask": "Flask",
+    "rails": "Ruby on Rails"
+  };
+  for (const pkg of packages) {
+    const framework = FRAMEWORK_BY_PACKAGE[pkg.name.toLowerCase()];
+    if (framework) {
+      stack.push({
+        category: "Framework",
+        evidence: { note: "framework dependency kaydi.", source: pkg.evidence.source },
+        name: framework
+      });
+    }
+  }
 
   const dedupedPackagesMap = new Map<string, DependencyPackage>();
 
@@ -1768,7 +1874,7 @@ const selectDocumentationFiles = (
   const documents: Array<{ format: FileFormat; path: string }> = [];
 
   for (const file of classified.files) {
-    if (file.kind !== "documentation") {
+    if (file.origin !== "project" || file.kind !== "documentation") {
       continue;
     }
 
@@ -2307,7 +2413,7 @@ export const prepareBuildContextJob = async (
   const explicitRootManifests = new Map<string, string[]>();
 
   for (const file of classified.files) {
-    if (file.kind !== "manifest" || !isModuleDefiningManifestPath(file.path)) {
+    if (file.origin !== "project" || file.kind !== "manifest" || !isModuleDefiningManifestPath(file.path)) {
       continue;
     }
 
@@ -2322,7 +2428,9 @@ export const prepareBuildContextJob = async (
     (left, right) => moduleRootDepth(right) - moduleRootDepth(left)
   );
 
-  const sortedInventoryPaths = [...inventoryPaths].sort();
+  const sortedInventoryPaths = [...inventoryPaths]
+    .filter((filePath) => classifiedByPath.get(filePath)?.origin === "project")
+    .sort();
   const assignment = new Map<string, string>();
 
   for (const filePath of sortedInventoryPaths) {

@@ -1,0 +1,1 @@
+D05/D10 contract compatibility verification passed (full envelope, authority checks, no double wrapping, const + date-time enforcement).

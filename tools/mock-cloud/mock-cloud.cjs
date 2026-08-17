@@ -1040,7 +1040,8 @@ const server = http.createServer(async (request, response) => {
           d05Prompt.includes("OV-001") &&
           d05Prompt.includes("OV-082") &&
           d05Prompt.includes("{{OUTPUT_LANGUAGE}}") &&
-          d05Schema?.properties?.substage?.enum?.includes("D05-Project-Overview") &&
+          d05Schema?.properties?.substage?.const === "D05-Project-Overview" &&
+          d05Schema?.properties?.result?.properties?.substage?.const === "D05-Project-Overview" &&
           Array.isArray(d05Schema?.$defs?.checkDisposition?.required) &&
           d05Schema.$defs.checkDisposition.required.includes("unknown_ids");
       } catch {
@@ -1055,7 +1056,8 @@ const server = http.createServer(async (request, response) => {
           d10Prompt.includes("AR-082") &&
           d10Prompt.includes("{{OUTPUT_LANGUAGE}}") &&
           d10Prompt.includes("D05") &&
-          d10Schema?.properties?.substage?.enum?.includes("D10-Architecture") &&
+          d10Schema?.properties?.substage?.const === "D10-Architecture" &&
+          d10Schema?.properties?.result?.properties?.substage?.const === "D10-Architecture" &&
           d10Schema?.$defs?.checkDisposition?.properties?.check_id?.pattern === "^AR-\\d{3}$" &&
           Array.isArray(d10Schema?.$defs?.checkDisposition?.required) &&
           d10Schema.$defs.checkDisposition.required.includes("unknown_ids");

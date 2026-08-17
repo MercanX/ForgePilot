@@ -68,12 +68,24 @@ writeFileSync(
   JSON.stringify({
     type: "object",
     properties: {
-      substage: { type: "string", enum: ["D05-Project-Overview"] },
-      result: { type: "string", enum: ["PASS", "PASS_WITH_FINDINGS", "PARTIAL", "BLOCKED"] },
-      summary: { type: "string" },
-      checklist: { type: "array" }
+      audit_id: { type: "string", minLength: 1 },
+      completed_at: { type: "string", format: "date-time" },
+      result: {
+        type: "object",
+        properties: {
+          substage: { type: "string", const: "D05-Project-Overview" },
+          result: { type: "string", enum: ["PASS", "PASS_WITH_FINDINGS", "PARTIAL", "BLOCKED"] },
+          summary: { type: "string" },
+          checklist: { type: "array" }
+        },
+        required: ["substage", "result", "summary", "checklist"],
+        additionalProperties: false
+      },
+      schema_version: { type: "string", const: "1.0" },
+      substage: { type: "string", const: "D05-Project-Overview" },
+      workspace_hash: { type: "string", pattern: "^[a-f0-9]{64}$" }
     },
-    required: ["substage", "result", "summary", "checklist"],
+    required: ["audit_id", "completed_at", "result", "schema_version", "substage", "workspace_hash"],
     additionalProperties: false,
     $defs: {
       checkDisposition: {
@@ -106,12 +118,24 @@ writeFileSync(
   JSON.stringify({
     type: "object",
     properties: {
-      substage: { type: "string", enum: ["D10-Architecture"] },
-      result: { type: "string", enum: ["PASS", "PASS_WITH_FINDINGS", "PARTIAL", "BLOCKED"] },
-      summary: { type: "string" },
-      checklist: { type: "array" }
+      audit_id: { type: "string", minLength: 1 },
+      completed_at: { type: "string", format: "date-time" },
+      result: {
+        type: "object",
+        properties: {
+          substage: { type: "string", const: "D10-Architecture" },
+          result: { type: "string", enum: ["PASS", "PASS_WITH_FINDINGS", "PARTIAL", "BLOCKED"] },
+          summary: { type: "string" },
+          checklist: { type: "array" }
+        },
+        required: ["substage", "result", "summary", "checklist"],
+        additionalProperties: false
+      },
+      schema_version: { type: "string", const: "1.0" },
+      substage: { type: "string", const: "D10-Architecture" },
+      workspace_hash: { type: "string", pattern: "^[a-f0-9]{64}$" }
     },
-    required: ["substage", "result", "summary", "checklist"],
+    required: ["audit_id", "completed_at", "result", "schema_version", "substage", "workspace_hash"],
     additionalProperties: false,
     $defs: {
       checkDisposition: {
@@ -256,7 +280,14 @@ const providerOutputFor = (directive) => {
     ) {
       throw new Error("D05 compiled prompt was not loaded/substituted correctly.");
     }
-    return { substage: "D05-Project-Overview", result: "PASS", summary: "fixture overview", checklist: [] };
+    return {
+      audit_id: "AUD-001",
+      completed_at: new Date().toISOString(),
+      result: { substage: "D05-Project-Overview", result: "PASS", summary: "fixture overview", checklist: [] },
+      schema_version: "1.0",
+      substage: "D05-Project-Overview",
+      workspace_hash: "c".repeat(64)
+    };
   }
   if (task?.semantic_task_id === "D10_ARCHITECTURE") {
     const prompt = directive.job.task.instructions.body;
@@ -270,7 +301,14 @@ const providerOutputFor = (directive) => {
     ) {
       throw new Error("D10 compiled prompt/context was not loaded/substituted correctly.");
     }
-    return { substage: "D10-Architecture", result: "PASS", summary: "fixture architecture", checklist: [] };
+    return {
+      audit_id: "AUD-001",
+      completed_at: new Date().toISOString(),
+      result: { substage: "D10-Architecture", result: "PASS", summary: "fixture architecture", checklist: [] },
+      schema_version: "1.0",
+      substage: "D10-Architecture",
+      workspace_hash: "c".repeat(64)
+    };
   }
   throw new Error(`Unexpected provider task ${String(task?.semantic_task_id)}`);
 };

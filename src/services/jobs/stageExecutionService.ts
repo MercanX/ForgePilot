@@ -411,6 +411,10 @@ const validateJsonSchemaValue = (
     }
   }
 
+  if ("const" in schema && !jsonValuesEqual(schema.const, value)) {
+    return [`${path}: value does not match the required const`];
+  }
+
   if (Array.isArray(schema.enum) && !schema.enum.some((candidate) => jsonValuesEqual(candidate, value))) {
     return [`${path}: value is not one of the allowed enum values`];
   }
@@ -443,6 +447,12 @@ const validateJsonSchemaValue = (
   if (typeof value === "string") {
     if (typeof schema.minLength === "number" && value.length < schema.minLength) {
       errors.push(`${path}: string is shorter than minLength ${schema.minLength}`);
+    }
+    if (schema.format === "date-time") {
+      const isoDateTime = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+      if (!isoDateTime.test(value) || Number.isNaN(Date.parse(value))) {
+        errors.push(`${path}: string is not a valid date-time with timezone`);
+      }
     }
     if (typeof schema.pattern === "string") {
       try {
@@ -498,7 +508,7 @@ const validateJsonSchemaValue = (
   return errors;
 };
 
-const validateOutputContract = (
+export const validateOutputContract = (
   value: Record<string, unknown> | null,
   schema: Record<string, unknown> | null
 ): string[] => {

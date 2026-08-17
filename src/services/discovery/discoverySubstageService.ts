@@ -24,6 +24,72 @@ const stableJson = (value: unknown): string => `${JSON.stringify(value, null, 2)
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+const ISO_DATE_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+
+type AuthorizedDiscoveryStageEnvelope = {
+  completedAt: string;
+  result: Record<string, unknown>;
+  stageDocument: Record<string, unknown>;
+};
+
+export const parseAuthorizedDiscoveryStageEnvelope = (
+  resultInput: unknown,
+  expected: { auditId: string; label: "D05" | "D10"; substage: string; workspaceHash: string }
+): AuthorizedDiscoveryStageEnvelope => {
+  if (!isObject(resultInput)) {
+    throw new Error(`${expected.label} provider result must be a JSON object.`);
+  }
+  if (resultInput.audit_id !== expected.auditId) {
+    throw new Error(
+      `${expected.label} provider result has unexpected audit_id: ${String(resultInput.audit_id)}; expected ${expected.auditId}.`
+    );
+  }
+  if (resultInput.substage !== expected.substage) {
+    throw new Error(
+      `${expected.label} provider result has unexpected substage: ${String(resultInput.substage)}`
+    );
+  }
+  if (resultInput.schema_version !== "1.0") {
+    throw new Error(
+      `${expected.label} provider result has unsupported schema_version: ${String(resultInput.schema_version)}`
+    );
+  }
+  if (resultInput.workspace_hash !== expected.workspaceHash) {
+    throw new Error(
+      `${expected.label} provider result workspace_hash does not match the sealed Startup workspace.`
+    );
+  }
+  if (typeof resultInput.completed_at !== "string" || !ISO_DATE_TIME.test(resultInput.completed_at) || Number.isNaN(Date.parse(resultInput.completed_at))) {
+    throw new Error(`${expected.label} provider result completed_at must be an ISO 8601 date-time with timezone.`);
+  }
+  if (!isObject(resultInput.result)) {
+    throw new Error(`${expected.label} provider result must contain the full result envelope.`);
+  }
+  if (resultInput.result.substage !== expected.substage) {
+    throw new Error(
+      `${expected.label} provider result.result has unexpected substage: ${String(resultInput.result.substage)}`
+    );
+  }
+  if (typeof resultInput.result.result !== "string") {
+    throw new Error(`${expected.label} provider result.result.result must contain the stage decision.`);
+  }
+
+  const completedAt = resultInput.completed_at;
+  const result = resultInput.result;
+  return {
+    completedAt,
+    result,
+    stageDocument: {
+      audit_id: expected.auditId,
+      completed_at: completedAt,
+      result,
+      schema_version: "1.0",
+      substage: expected.substage,
+      workspace_hash: expected.workspaceHash
+    }
+  };
+};
+
 const readJson = async <T>(filePath: string, parse: (value: unknown) => T): Promise<T> =>
   parse(JSON.parse(await readFile(filePath, "utf8")) as unknown);
 
@@ -527,31 +593,21 @@ export const runSaveD05ResultJob = async (
   projectRootPath: string,
   resultInput: unknown
 ): Promise<Record<string, unknown>> => {
-  if (!isObject(resultInput)) {
-    throw new Error("D05 provider result must be a JSON object.");
-  }
-  if (resultInput.substage !== D05_NAME) {
-    throw new Error(`D05 provider result has unexpected substage: ${String(resultInput.substage)}`);
-  }
-
   const { manifest, seal } = await readStartupAuthority(projectRootPath);
   const auditId = await ensureAudit(projectRootPath, seal.scope_hash, seal.workspace_hash);
   const manifestPaths = new Set(manifest.files.map((file) => file.path.replaceAll("\\", "/")));
+  const { completedAt, result, stageDocument } = parseAuthorizedDiscoveryStageEnvelope(resultInput, {
+    auditId,
+    label: "D05",
+    substage: D05_NAME,
+    workspaceHash: seal.workspace_hash
+  });
 
-  validateChecklist(resultInput);
-  validateFindingsAndStrengths(resultInput);
-  validateEvidence(resultInput, manifestPaths);
+  validateChecklist(result);
+  validateFindingsAndStrengths(result);
+  validateEvidence(result, manifestPaths);
 
   const now = new Date().toISOString();
-  const result = resultInput;
-  const stageDocument = {
-    audit_id: auditId,
-    completed_at: now,
-    result,
-    schema_version: "1.0",
-    substage: D05_NAME,
-    workspace_hash: seal.workspace_hash
-  };
   await writeJson(stageFile(projectRootPath, auditId), stageDocument);
 
   const profile = (await readJsonIfPresent(auditFile(projectRootPath, auditId, "PROJECT_PROFILE.json"))) ?? {};
@@ -621,7 +677,7 @@ export const runSaveD05ResultJob = async (
   const meta = (await readJsonIfPresent(auditFile(projectRootPath, auditId, "AUDIT_META.json"))) ?? {};
   const metaStages = isObject(meta.sub_stages) ? { ...meta.sub_stages } : {};
   metaStages[D05_NAME] = {
-    completed_at: now,
+    completed_at: completedAt,
     finding_count: findings.length,
     result: result.result,
     status: result.result === "BLOCKED" ? "BLOCKED" : "COMPLETED",
@@ -909,13 +965,6 @@ export const runSaveD10ResultJob = async (
   projectRootPath: string,
   resultInput: unknown
 ): Promise<Record<string, unknown>> => {
-  if (!isObject(resultInput)) {
-    throw new Error("D10 provider result must be a JSON object.");
-  }
-  if (resultInput.substage !== D10_NAME) {
-    throw new Error(`D10 provider result has unexpected substage: ${String(resultInput.substage)}`);
-  }
-
   const { manifest, seal } = await readStartupAuthority(projectRootPath);
   const auditId = await ensureAudit(projectRootPath, seal.scope_hash, seal.workspace_hash);
   const d05Saved = await readJsonIfPresent(stageFile(projectRootPath, auditId, D05_STAGE_FILE));
@@ -925,20 +974,17 @@ export const runSaveD10ResultJob = async (
   }
 
   const manifestPaths = new Set(manifest.files.map((file) => file.path.replaceAll("\\", "/")));
-  validateD10Checklist(resultInput);
-  validateD10CanonicalRecords(resultInput);
-  validateD10Evidence(resultInput, manifestPaths);
+  const { completedAt, result, stageDocument } = parseAuthorizedDiscoveryStageEnvelope(resultInput, {
+    auditId,
+    label: "D10",
+    substage: D10_NAME,
+    workspaceHash: seal.workspace_hash
+  });
+  validateD10Checklist(result);
+  validateD10CanonicalRecords(result);
+  validateD10Evidence(result, manifestPaths);
 
   const now = new Date().toISOString();
-  const result = resultInput;
-  const stageDocument = {
-    audit_id: auditId,
-    completed_at: now,
-    result,
-    schema_version: "1.0",
-    substage: D10_NAME,
-    workspace_hash: seal.workspace_hash
-  };
   await writeJson(stageFile(projectRootPath, auditId, D10_STAGE_FILE), stageDocument);
 
   const profile = (await readJsonIfPresent(auditFile(projectRootPath, auditId, "PROJECT_PROFILE.json"))) ?? {};
@@ -995,7 +1041,7 @@ export const runSaveD10ResultJob = async (
   const meta = (await readJsonIfPresent(auditFile(projectRootPath, auditId, "AUDIT_META.json"))) ?? {};
   const metaStages = isObject(meta.sub_stages) ? { ...meta.sub_stages } : {};
   metaStages[D10_NAME] = {
-    completed_at: now,
+    completed_at: completedAt,
     finding_count: findings.length,
     result: result.result,
     status: result.result === "BLOCKED" ? "BLOCKED" : "COMPLETED",

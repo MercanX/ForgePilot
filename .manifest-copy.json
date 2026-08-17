@@ -63,7 +63,7 @@
       "display_name": "020-D25-Backend",
       "order": 25,
       "folder": "D25-Backend",
-      "implementation_status": "not_ready",
+      "implementation_status": "available",
       "description": "Sunucu tarafı iş mantığı, validation, transaction, servis/controller sınırları ve runtime davranışını denetler.",
       "hard": [
         "020-d05-project-overview",

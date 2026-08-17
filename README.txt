@@ -1,36 +1,41 @@
-ForgePilot 0.5.5 — D20 Dependencies / Integrations + Claude final-output parser recovery
+ForgePilot 0.5.6 — D25 Backend + dependency-aware restart invalidation + Claude parser recovery
 
-This package extends the working D05/D10/D15 Discovery runtime with D20 Dependencies / Integrations.
+This package extends the working D05/D10/D15/D20 Discovery runtime with D25 Backend while preserving the 0.5.5 Claude final-output parser fix and Startup scope-evidence guard.
 
 Executable Discovery stages:
 - 020-D05-Project-Overview
 - 020-D10-Architecture
 - 020-D15-Database
 - 020-D20-Dependencies-Integrations
+- 020-D25-Backend
 
 Dependency rules:
-- D20 requires completed D05 + D10 results for the same sealed Startup workspace.
-- D25 remains Not Ready and, when implemented, requires D05 + D10 + D15 + D20.
-- Restarting D20 resets only D20 artifacts/state.
+- D25 requires completed D05 + D10 + D15 + D20 results for the same sealed Startup workspace.
+- D15 and D20 are siblings; both require D05 + D10.
+- Restart invalidation follows HARD dependencies: restarting D15 or D20 invalidates D25; restarting D10 invalidates D15 + D20 + D25; restarting D05 invalidates D10 + D15 + D20 + D25.
+- D30 remains Not Ready.
 
-D20 provider execution:
-- Uses D20-Dependencies-Integrations/prompt/dependencies-integrations.compiled.prompt.md.
-- Uses D20-Dependencies-Integrations/contracts/dependencies-integrations-output.schema.json.
-- Executes semantic task D20_DEPENDENCIES_INTEGRATIONS.
-- Requires exactly DI-001..DI-102 checklist dispositions.
+D25 provider execution:
+- Uses D25-Backend/prompt/backend.compiled.prompt.md.
+- Uses D25-Backend/contracts/backend-output.schema.json.
+- Executes semantic task D25_BACKEND.
+- Requires exactly BE-001..BE-134 checklist dispositions.
+- Validates canonical BE-F### / BE-S### / BE-U### / BE-C### records.
 
-D20 local persistence:
-  <project>/.ai-factory/020-Discovery/audits/<AUD-ID>/stages/D20-Dependencies-Integrations.json
+D25 local persistence:
+  <project>/.ai-factory/020-Discovery/audits/<AUD-ID>/stages/D25-Backend.json
 
 Discovery evidence authority:
-- D05/D10/D15/D20 repository evidence must resolve to the sealed 010-Startup workspace manifest or an approved virtual authority path.
+- D05/D10/D15/D20/D25 repository evidence must resolve to the sealed 010-Startup workspace manifest or an approved virtual authority path.
 - Excluded/unapproved paths are rejected before persistence and do not complete the stage.
 - Provider generation and deterministic stage completion remain separate Activity states.
 
-The workflow server reads the authoritative AI Factory STAGE-EXECUTION-MANIFEST.json; stage dependency relationships are not hard-coded into the renderer.
+Workflow catalog:
+- The workflow server reads the authoritative AI Factory STAGE-EXECUTION-MANIFEST.json.
+- Stage dependency relationships are not hard-coded into the renderer.
 
-Claude final-output parser recovery (0.5.5):
-- Large Claude stream-json runs may emit a truncated tail in the terminal `type=result` event while the preceding final assistant event contains the complete JSON document.
-- ForgePilot now evaluates both provider result and assistant-text candidates against the stage output contract and selects the complete contract-valid root envelope.
-- Nested tail objects such as `{ recommended_next_substages, cautions }` can no longer win over a valid D05/D10/D15/D20 audit envelope.
-- Provider Console `Final Raw Output` prefers the larger final assistant payload when Claude's terminal result is truncated.
+Claude final-output parser recovery (preserved from 0.5.5):
+- Large Claude stream-json runs may emit a truncated tail in the terminal type=result event while the preceding final assistant event contains the complete JSON document.
+- ForgePilot evaluates both provider result and assistant-text candidates against the stage output contract and selects the complete contract-valid root envelope.
+- Nested tail objects such as { recommended_next_substages, cautions } cannot win over a valid D05/D10/D15/D20/D25 audit envelope.
+- Provider Console Final Raw Output prefers the larger final assistant payload when Claude's terminal result is truncated.

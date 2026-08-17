@@ -1,24 +1,23 @@
 # Discovery Stage Execution
 
-ForgePilot treats the workflow server as the runtime stage-catalog authority. The server loads AI Factory runtime `020-Discovery/STAGE-EXECUTION-MANIFEST.json` and publishes Startup plus all 14 Discovery substages through `/workflows/current`.
+ForgePilot does not hard-code the Discovery dependency graph. The workflow server loads the AI Factory runtime `020-Discovery/STAGE-EXECUTION-MANIFEST.json`, publishes the catalog through `/workflows/current`, and exposes execution directives only for stage packages that are both marked `available` and supported by the server runtime.
 
-## Availability and dependencies
+Current executable Discovery stages are D05 Project Overview, D10 Architecture, D15 Database, D20 Dependencies / Integrations, and D25 Backend. All 14 Discovery substages remain visible; later packages remain `Not Ready` until implemented.
 
-- `implementation_status: available` is necessary but not sufficient: the stage package must exist and the server must expose an execution directive.
-- HARD requirements block execution until satisfied.
-- SOFT requirements remain supported but do not block execution. The current canonical manifest has no approved SOFT relationships.
-- D05, D10, D15 and D20 are executable in the current runtime. D15 and D20 each require D05 + D10.
+## Dependency enforcement
+
+HARD requirements block execution. The renderer and backend execution directives use the same server-published requirements. A completed downstream stage is invalidated when one of its HARD prerequisites is restarted, so stale results cannot silently become current again.
+
+For the currently executable graph:
+
+- D05 requires Startup.
+- D10 requires D05.
+- D15 requires D05 + D10.
+- D20 requires D05 + D10.
+- D25 requires D05 + D10 + D15 + D20.
+
+D15 and D20 are siblings. Restarting D20 does not invalidate D15, and restarting D15 does not invalidate D20. Either restart invalidates D25. Restarting D10 invalidates D15, D20, and D25; restarting D05 invalidates D10, D15, D20, and D25.
 
 ## Evidence authority
 
-The sealed 010-Startup workspace manifest is the deterministic repository-evidence authority for Discovery. D05/D10/D15/D20 save operations validate all nested `evidence[]` entries before writing stage state.
-
-Allowed evidence paths are:
-
-- an exact file in the sealed Startup workspace manifest;
-- a repository-relative directory that contains at least one manifest-authorized file;
-- one of the virtual authority paths: `@startup/scope`, `@startup/seal`, `@startup/workspace-manifest`, `@discovery/context`.
-
-Absolute paths, path traversal, and repository paths outside the resolved Startup authority are rejected. An excluded child path cannot become valid because a Discovery checklist asks for it.
-
-A provider process finishing is only **AI generation complete**. The stage becomes completed only after schema validation, checklist/canonical validation, evidence-authority validation, successful local persistence, and the terminal workflow directive.
+Provider JSON is never persisted solely because it parses. D05/D10/D15/D20/D25 outputs are validated against their stage schema, canonical checklist/record IDs, and sealed Startup workspace authority. An excluded or unapproved repository path in any nested `evidence[]` record rejects the save operation. The approved virtual evidence roots are `@startup/scope`, `@startup/seal`, `@startup/workspace-manifest`, and `@discovery/context`.

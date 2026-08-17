@@ -131,6 +131,20 @@ if (parsedD20.result.summary !== "dependencies fixture") {
   throw new Error("D20 full-envelope compatibility failed.");
 }
 
+const d25Envelope = {
+  ...validEnvelope,
+  result: { substage: "D25-Backend", result: "PASS", summary: "backend fixture", checklist: [] },
+  substage: "D25-Backend"
+};
+const parsedD25 = discovery.parseAuthorizedDiscoveryStageEnvelope(d25Envelope, {
+  ...expected,
+  label: "D25",
+  substage: "D25-Backend"
+});
+if (parsedD25.result.summary !== "backend fixture") {
+  throw new Error("D25 full-envelope compatibility failed.");
+}
+
 const evidenceSource = `${extractDeclarations(
   path.join(__dirname, "..", "src", "services", "discovery", "discoverySubstageService.ts"),
   [
@@ -167,6 +181,11 @@ evidenceGuard.validateEvidence(
   { checklist: [{ evidence: [{ path: "website/public/js/app.js" }] }] },
   manifestPaths,
   "D20"
+);
+evidenceGuard.validateEvidence(
+  { checklist: [{ evidence: [{ path: "website/public/js/app.js" }] }] },
+  manifestPaths,
+  "D25"
 );
 
 let excludedEvidenceRejected = false;
@@ -207,7 +226,8 @@ for (const [functionName, validationNeedle] of [
   ["runSaveD05ResultJob", "validateEvidence(result, manifestPaths, \"D05\")"],
   ["runSaveD10ResultJob", "validateD10Evidence(result, manifestPaths)"],
   ["runSaveD15ResultJob", "validateD15Evidence(result, manifestPaths)"],
-  ["runSaveD20ResultJob", "validateD20Evidence(result, manifestPaths)"]
+  ["runSaveD20ResultJob", "validateD20Evidence(result, manifestPaths)"],
+  ["runSaveD25ResultJob", "validateD25Evidence(result, manifestPaths)"]
 ]) {
   const start = discoveryServiceSource.indexOf(`export const ${functionName}`);
   if (start < 0) throw new Error(`${functionName} is missing.`);
@@ -233,7 +253,7 @@ const mockCloudSource = fs.readFileSync(
   path.join(__dirname, "mock-cloud", "mock-cloud.cjs"),
   "utf8"
 );
-if (/D(?:05|10|15|20).*AI audit completed\./.test(mockCloudSource)) {
+if (/D(?:05|10|15|20|25).*AI audit completed\./.test(mockCloudSource)) {
   throw new Error("Mock cloud still reports provider generation as a completed audit before deterministic validation.");
 }
 if (!mockCloudSource.includes("deterministic evidence/checklist validation is pending")) {
@@ -290,6 +310,40 @@ if (!errors.some((error) => error.includes("valid date-time"))) {
   throw new Error("JSON Schema date-time format is not enforced.");
 }
 
+const fullDiscoveryRuntimeSource = fs.readFileSync(
+  path.join(__dirname, "..", "src", "services", "discovery", "discoverySubstageService.ts"),
+  "utf8"
+);
+const resetRegion = (resetName, nextMarker) => {
+  const start = fullDiscoveryRuntimeSource.indexOf(`const ${resetName} =`);
+  const end = fullDiscoveryRuntimeSource.indexOf(nextMarker, start);
+  if (start < 0 || end < 0) throw new Error(`Could not locate ${resetName} invalidation region.`);
+  return fullDiscoveryRuntimeSource.slice(start, end);
+};
+const expectInvalidation = (region, stageConstant, resetName) => {
+  if (!region.includes(`stageName: ${stageConstant}`)) {
+    throw new Error(`${resetName} does not invalidate downstream ${stageConstant}.`);
+  }
+};
+const d05ResetRegion = resetRegion("resetD05", "export type D05StatusResult");
+expectInvalidation(d05ResetRegion, "D10_NAME", "resetD05");
+expectInvalidation(d05ResetRegion, "D15_NAME", "resetD05");
+expectInvalidation(d05ResetRegion, "D20_NAME", "resetD05");
+expectInvalidation(d05ResetRegion, "D25_NAME", "resetD05");
+const d10ResetRegion = resetRegion("resetD10", "const buildD10DiscoveryContext");
+expectInvalidation(d10ResetRegion, "D15_NAME", "resetD10");
+expectInvalidation(d10ResetRegion, "D20_NAME", "resetD10");
+expectInvalidation(d10ResetRegion, "D25_NAME", "resetD10");
+const d15ResetRegion = resetRegion("resetD15", "const buildD15DiscoveryContext");
+expectInvalidation(d15ResetRegion, "D25_NAME", "resetD15");
+const d20ResetRegion = resetRegion("resetD20", "const buildD20DiscoveryContext");
+expectInvalidation(d20ResetRegion, "D25_NAME", "resetD20");
+
+const mockCloudRuntimeSource = fs.readFileSync(path.join(__dirname, "mock-cloud", "mock-cloud.cjs"), "utf8");
+if (!mockCloudRuntimeSource.includes("const unmarkStageAndHardDependents")) {
+  throw new Error("Mock cloud does not publish dependency-aware downstream restart invalidation.");
+}
+
 console.log(
-  "Discovery D05/D10/D15/D20 compatibility verification passed (full envelopes, scope-evidence authority guard, validation-before-persist, explicit local failure activity, const + date-time enforcement)."
+  "Discovery D05/D10/D15/D20/D25 compatibility verification passed (full envelopes, scope-evidence authority guard, validation-before-persist, HARD downstream restart invalidation, explicit local failure activity, const + date-time enforcement)."
 );

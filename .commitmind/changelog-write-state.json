@@ -1,5 +1,5 @@
 {
-  "lastFingerprint": "0ce9340cdc1a0768335eda8aecf2e4e1d66e8963",
+  "lastFingerprint": "a037b19c9688f950410a8393bb42376e94a6867e",
   "lastDate": "2026-08-17",
-  "lastContent": "- Added recovery logic for truncated Claude stream-json result events by evaluating assistant-text candidates against the stage output contract.\n- Updated provider output parser to select the largest contract-valid root envelope, preventing nested tail objects from winning over complete audit envelopes.\n- Enhanced Provider Console to display the larger final assistant payload when Claude's terminal result is truncated.\n- Added regression test script `verify-provider-output-parser.cjs` covering truncated result tails, complete assistant events, and direct result parsing.\n- Bumped application version to 0.5.5 across desktop, job service, and mock cloud handshake."
+  "lastContent": "- Added D25 Backend as an executable Discovery stage with full schema, checklist, and evidence validation.\n- Implemented dependency-aware restart invalidation that resets downstream stages when HARD prerequisites are rerun.\n- Extended the discovery context builder to aggregate D05, D10, D15, and D20 results for D25 provider execution.\n- Updated documentation and manifests to reflect D25 availability and the new dependency invalidation rules.\n- Bumped package version to 0.5.6 with updated release notes."
 }

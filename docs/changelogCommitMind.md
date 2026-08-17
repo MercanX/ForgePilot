@@ -6,6 +6,12 @@ ForgePilot Discovery stage görünürlüğü AI Factory runtime içindeki `STAGE
 
 ## 2026-08-17
 
+- Added D25 Backend as an executable Discovery stage with full schema, checklist, and evidence validation.
+- Implemented dependency-aware restart invalidation that resets downstream stages when HARD prerequisites are rerun.
+- Extended the discovery context builder to aggregate D05, D10, D15, and D20 results for D25 provider execution.
+- Updated documentation and manifests to reflect D25 availability and the new dependency invalidation rules.
+- Bumped package version to 0.5.6 with updated release notes.
+
 - Added recovery logic for truncated Claude stream-json result events by evaluating assistant-text candidates against the stage output contract.
 - Updated provider output parser to select the largest contract-valid root envelope, preventing nested tail objects from winning over complete audit envelopes.
 - Enhanced Provider Console to display the larger final assistant payload when Claude's terminal result is truncated.

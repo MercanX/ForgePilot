@@ -19,6 +19,8 @@ const D15_NAME = "D15-Database";
 const D15_STAGE_FILE = "D15-Database.json";
 const D20_NAME = "D20-Dependencies-Integrations";
 const D20_STAGE_FILE = "D20-Dependencies-Integrations.json";
+const D25_NAME = "D25-Backend";
+const D25_STAGE_FILE = "D25-Backend.json";
 const CHECK_IDS = Array.from({ length: 82 }, (_, index) => `OV-${String(index + 1).padStart(3, "0")}`);
 const CHECK_ID_SET = new Set(CHECK_IDS);
 const D10_CHECK_IDS = Array.from({ length: 82 }, (_, index) => `AR-${String(index + 1).padStart(3, "0")}`);
@@ -27,6 +29,8 @@ const D15_CHECK_IDS = Array.from({ length: 116 }, (_, index) => `DB-${String(ind
 const D15_CHECK_ID_SET = new Set(D15_CHECK_IDS);
 const D20_CHECK_IDS = Array.from({ length: 102 }, (_, index) => `DI-${String(index + 1).padStart(3, "0")}`);
 const D20_CHECK_ID_SET = new Set(D20_CHECK_IDS);
+const D25_CHECK_IDS = Array.from({ length: 134 }, (_, index) => `BE-${String(index + 1).padStart(3, "0")}`);
+const D25_CHECK_ID_SET = new Set(D25_CHECK_IDS);
 
 const stableJson = (value: unknown): string => `${JSON.stringify(value, null, 2)}\n`;
 const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -42,7 +46,7 @@ type AuthorizedDiscoveryStageEnvelope = {
 
 export const parseAuthorizedDiscoveryStageEnvelope = (
   resultInput: unknown,
-  expected: { auditId: string; label: "D05" | "D10" | "D15" | "D20"; substage: string; workspaceHash: string }
+  expected: { auditId: string; label: "D05" | "D10" | "D15" | "D20" | "D25"; substage: string; workspaceHash: string }
 ): AuthorizedDiscoveryStageEnvelope => {
   if (!isObject(resultInput)) {
     throw new Error(`${expected.label} provider result must be a JSON object.`);
@@ -298,7 +302,8 @@ const ensureAudit = async (
       [D05_NAME]: { completed_at: null, result: null, status: "READY" },
       [D10_NAME]: { completed_at: null, result: null, status: "WAITING_FOR_D05" },
       [D15_NAME]: { completed_at: null, result: null, status: "WAITING_FOR_D05_D10" },
-      [D20_NAME]: { completed_at: null, result: null, status: "WAITING_FOR_D05_D10" }
+      [D20_NAME]: { completed_at: null, result: null, status: "WAITING_FOR_D05_D10" },
+      [D25_NAME]: { completed_at: null, result: null, status: "WAITING_FOR_D05_D10_D15_D20" }
     },
     updated_at: now,
     workspace_hash: workspaceHash
@@ -320,6 +325,53 @@ const ensureAudit = async (
     sub_stages: {}
   });
   return auditId;
+};
+
+const invalidateDependentStage = async (
+  projectRootPath: string,
+  auditId: string,
+  options: {
+    stageName: string;
+    stageFileName: string;
+    profileKey: string;
+    waitingStatus: string;
+  }
+): Promise<void> => {
+  await rm(stageFile(projectRootPath, auditId, options.stageFileName), { force: true });
+
+  const profile = (await readJsonIfPresent(auditFile(projectRootPath, auditId, "PROJECT_PROFILE.json"))) ?? {};
+  const nextProfile = { ...profile };
+  delete nextProfile[options.profileKey];
+  await writeJson(auditFile(projectRootPath, auditId, "PROJECT_PROFILE.json"), nextProfile);
+
+  const findings = (await readJsonIfPresent(auditFile(projectRootPath, auditId, "FINDINGS.json"))) ?? {};
+  const withoutStage = (value: unknown): unknown[] =>
+    Array.isArray(value)
+      ? value.filter((item) => !isObject(item) || item.origin_substage !== options.stageName)
+      : [];
+  await writeJson(auditFile(projectRootPath, auditId, "FINDINGS.json"), {
+    ...findings,
+    findings: withoutStage(findings.findings),
+    strengths: withoutStage(findings.strengths)
+  });
+
+  const coverage = (await readJsonIfPresent(auditFile(projectRootPath, auditId, "AUDIT_COVERAGE.json"))) ?? {};
+  const subStages = isObject(coverage.sub_stages) ? { ...coverage.sub_stages } : {};
+  delete subStages[options.stageName];
+  await writeJson(auditFile(projectRootPath, auditId, "AUDIT_COVERAGE.json"), {
+    ...coverage,
+    sub_stages: subStages
+  });
+
+  const meta = (await readJsonIfPresent(auditFile(projectRootPath, auditId, "AUDIT_META.json"))) ?? {};
+  const metaStages = isObject(meta.sub_stages) ? { ...meta.sub_stages } : {};
+  metaStages[options.stageName] = { completed_at: null, result: null, status: options.waitingStatus };
+  await writeJson(auditFile(projectRootPath, auditId, "AUDIT_META.json"), {
+    ...meta,
+    final_state: "RUNNING",
+    sub_stages: metaStages,
+    updated_at: new Date().toISOString()
+  });
 };
 
 const resetD05 = async (projectRootPath: string, auditId: string): Promise<void> => {
@@ -358,6 +410,31 @@ const resetD05 = async (projectRootPath: string, auditId: string): Promise<void>
     final_state: "RUNNING",
     sub_stages: metaStages,
     updated_at: new Date().toISOString()
+  });
+
+  await invalidateDependentStage(projectRootPath, auditId, {
+    stageName: D10_NAME,
+    stageFileName: D10_STAGE_FILE,
+    profileKey: "architecture",
+    waitingStatus: "WAITING_FOR_D05"
+  });
+  await invalidateDependentStage(projectRootPath, auditId, {
+    stageName: D15_NAME,
+    stageFileName: D15_STAGE_FILE,
+    profileKey: "database",
+    waitingStatus: "WAITING_FOR_D05_D10"
+  });
+  await invalidateDependentStage(projectRootPath, auditId, {
+    stageName: D20_NAME,
+    stageFileName: D20_STAGE_FILE,
+    profileKey: "dependencies_integrations",
+    waitingStatus: "WAITING_FOR_D05_D10"
+  });
+  await invalidateDependentStage(projectRootPath, auditId, {
+    stageName: D25_NAME,
+    stageFileName: D25_STAGE_FILE,
+    profileKey: "backend",
+    waitingStatus: "WAITING_FOR_D05_D10_D15_D20"
   });
 };
 
@@ -766,6 +843,25 @@ const resetD10 = async (projectRootPath: string, auditId: string): Promise<void>
     sub_stages: metaStages,
     updated_at: new Date().toISOString()
   });
+
+  await invalidateDependentStage(projectRootPath, auditId, {
+    stageName: D15_NAME,
+    stageFileName: D15_STAGE_FILE,
+    profileKey: "database",
+    waitingStatus: "WAITING_FOR_D05_D10"
+  });
+  await invalidateDependentStage(projectRootPath, auditId, {
+    stageName: D20_NAME,
+    stageFileName: D20_STAGE_FILE,
+    profileKey: "dependencies_integrations",
+    waitingStatus: "WAITING_FOR_D05_D10"
+  });
+  await invalidateDependentStage(projectRootPath, auditId, {
+    stageName: D25_NAME,
+    stageFileName: D25_STAGE_FILE,
+    profileKey: "backend",
+    waitingStatus: "WAITING_FOR_D05_D10_D15_D20"
+  });
 };
 
 const buildD10DiscoveryContext = (d05Result: Record<string, unknown>, auditId: string) => ({
@@ -1134,6 +1230,13 @@ const resetD15 = async (projectRootPath: string, auditId: string): Promise<void>
     sub_stages: metaStages,
     updated_at: new Date().toISOString()
   });
+
+  await invalidateDependentStage(projectRootPath, auditId, {
+    stageName: D25_NAME,
+    stageFileName: D25_STAGE_FILE,
+    profileKey: "backend",
+    waitingStatus: "WAITING_FOR_D05_D10_D15_D20"
+  });
 };
 
 const buildD15DiscoveryContext = (
@@ -1436,6 +1539,13 @@ const resetD20 = async (projectRootPath: string, auditId: string): Promise<void>
     sub_stages: metaStages,
     updated_at: new Date().toISOString()
   });
+
+  await invalidateDependentStage(projectRootPath, auditId, {
+    stageName: D25_NAME,
+    stageFileName: D25_STAGE_FILE,
+    profileKey: "backend",
+    waitingStatus: "WAITING_FOR_D05_D10_D15_D20"
+  });
 };
 
 const buildD20DiscoveryContext = (
@@ -1684,6 +1794,333 @@ export const runSaveD20ResultJob = async (
     result: result.result,
     saved: true,
     stage_file: `.ai-factory/020-Discovery/audits/${auditId}/stages/${D20_STAGE_FILE}`,
+    unknown_count: asArray(result.unknowns).length
+  };
+};
+
+const resetD25 = async (projectRootPath: string, auditId: string): Promise<void> => {
+  await rm(stageFile(projectRootPath, auditId, D25_STAGE_FILE), { force: true });
+
+  const profile = (await readJsonIfPresent(auditFile(projectRootPath, auditId, "PROJECT_PROFILE.json"))) ?? {};
+  const nextProfile = { ...profile };
+  delete nextProfile.backend;
+  await writeJson(auditFile(projectRootPath, auditId, "PROJECT_PROFILE.json"), nextProfile);
+
+  const findings = (await readJsonIfPresent(auditFile(projectRootPath, auditId, "FINDINGS.json"))) ?? {};
+  const filterOrigin = (value: unknown): unknown[] =>
+    Array.isArray(value)
+      ? value.filter((item) => !isObject(item) || item.origin_substage !== D25_NAME)
+      : [];
+  await writeJson(auditFile(projectRootPath, auditId, "FINDINGS.json"), {
+    ...findings,
+    findings: filterOrigin(findings.findings),
+    strengths: filterOrigin(findings.strengths)
+  });
+
+  const coverage = (await readJsonIfPresent(auditFile(projectRootPath, auditId, "AUDIT_COVERAGE.json"))) ?? {};
+  const subStages = isObject(coverage.sub_stages) ? { ...coverage.sub_stages } : {};
+  delete subStages[D25_NAME];
+  await writeJson(auditFile(projectRootPath, auditId, "AUDIT_COVERAGE.json"), { ...coverage, sub_stages: subStages });
+
+  const meta = (await readJsonIfPresent(auditFile(projectRootPath, auditId, "AUDIT_META.json"))) ?? {};
+  const metaStages = isObject(meta.sub_stages) ? { ...meta.sub_stages } : {};
+  metaStages[D25_NAME] = { completed_at: null, result: null, status: "READY" };
+  await writeJson(auditFile(projectRootPath, auditId, "AUDIT_META.json"), {
+    ...meta,
+    final_state: "RUNNING",
+    sub_stages: metaStages,
+    updated_at: new Date().toISOString()
+  });
+};
+
+const buildD25DiscoveryContext = (
+  d05Result: Record<string, unknown>,
+  d10Result: Record<string, unknown>,
+  d15Result: Record<string, unknown>,
+  d20Result: Record<string, unknown>,
+  auditId: string
+) => ({
+  audit_id: auditId,
+  completed_substages: [D05_NAME, D10_NAME, D15_NAME, D20_NAME],
+  prior_d05: {
+    substage: d05Result.substage,
+    result: d05Result.result,
+    summary: d05Result.summary,
+    runtime_entry_points: d05Result.runtime_entry_points,
+    components: d05Result.components,
+    configuration_model: d05Result.configuration_model,
+    actors_and_interfaces: d05Result.actors_and_interfaces,
+    scope_assessment: d05Result.scope_assessment,
+    findings: d05Result.findings,
+    unknowns: d05Result.unknowns,
+    contradictions: d05Result.contradictions
+  },
+  prior_d10: {
+    substage: d10Result.substage,
+    result: d10Result.result,
+    summary: d10Result.summary,
+    architecture_model: d10Result.architecture_model,
+    dependency_model: d10Result.dependency_model,
+    state_and_communication: d10Result.state_and_communication,
+    cross_cutting_concerns: d10Result.cross_cutting_concerns,
+    architecture_quality: d10Result.architecture_quality,
+    scope_assessment: d10Result.scope_assessment,
+    findings: d10Result.findings,
+    unknowns: d10Result.unknowns,
+    contradictions: d10Result.contradictions
+  },
+  prior_d15: {
+    substage: d15Result.substage,
+    result: d15Result.result,
+    summary: d15Result.summary,
+    database_model: d15Result.database_model,
+    schema_model: d15Result.schema_model,
+    migration_model: d15Result.migration_model,
+    access_model: d15Result.access_model,
+    consistency_and_transactions: d15Result.consistency_and_transactions,
+    data_lifecycle: d15Result.data_lifecycle,
+    scope_assessment: d15Result.scope_assessment,
+    findings: d15Result.findings,
+    unknowns: d15Result.unknowns,
+    contradictions: d15Result.contradictions
+  },
+  prior_d20: {
+    substage: d20Result.substage,
+    result: d20Result.result,
+    summary: d20Result.summary,
+    dependency_model: d20Result.dependency_model,
+    integration_model: d20Result.integration_model,
+    usage_model: d20Result.usage_model,
+    failure_and_resilience: d20Result.failure_and_resilience,
+    coupling_model: d20Result.coupling_model,
+    scope_assessment: d20Result.scope_assessment,
+    findings: d20Result.findings,
+    unknowns: d20Result.unknowns,
+    contradictions: d20Result.contradictions
+  }
+});
+
+export type D25StatusResult = {
+  audit_id: string;
+  discovery_context: Record<string, unknown>;
+  prerequisite_d05: "completed";
+  prerequisite_d10: "completed";
+  prerequisite_d15: "completed";
+  prerequisite_d20: "completed";
+  scope_hash: string;
+  startup_scope: Record<string, unknown>;
+  startup_seal: Record<string, unknown>;
+  state: "completed" | "ready";
+  workspace_hash: string;
+};
+
+export const runD25StatusJob = async (
+  projectRootPath: string,
+  reset: boolean
+): Promise<D25StatusResult> => {
+  const { scope, seal } = await readStartupAuthority(projectRootPath);
+  const auditId = await ensureAudit(projectRootPath, seal.scope_hash, seal.workspace_hash);
+
+  const readCompleted = async (file: string, label: string): Promise<Record<string, unknown>> => {
+    const saved = await readJsonIfPresent(stageFile(projectRootPath, auditId, file));
+    const result = saved && isObject(saved.result) ? saved.result : null;
+    if (!result || result.result === "BLOCKED") {
+      throw new Error(`D25 Backend requires completed ${label} for the same sealed workspace.`);
+    }
+    return result;
+  };
+  const d05Result = await readCompleted(D05_STAGE_FILE, "D05 Project Overview");
+  const d10Result = await readCompleted(D10_STAGE_FILE, "D10 Architecture");
+  const d15Result = await readCompleted(D15_STAGE_FILE, "D15 Database");
+  const d20Result = await readCompleted(D20_STAGE_FILE, "D20 Dependencies / Integrations");
+
+  if (reset) await resetD25(projectRootPath, auditId);
+
+  const saved = await readJsonIfPresent(stageFile(projectRootPath, auditId, D25_STAGE_FILE));
+  const result = saved && isObject(saved.result) ? saved.result : null;
+  const completed = Boolean(result && result.result !== "BLOCKED");
+
+  return {
+    audit_id: auditId,
+    discovery_context: {
+      ...buildD25DiscoveryContext(d05Result, d10Result, d15Result, d20Result, auditId),
+      completed_substages: completed
+        ? [D05_NAME, D10_NAME, D15_NAME, D20_NAME, D25_NAME]
+        : [D05_NAME, D10_NAME, D15_NAME, D20_NAME]
+    },
+    prerequisite_d05: "completed",
+    prerequisite_d10: "completed",
+    prerequisite_d15: "completed",
+    prerequisite_d20: "completed",
+    scope_hash: scope.scope_hash ?? seal.scope_hash,
+    startup_scope: { approved: scope.approved, scope_hash: scope.scope_hash },
+    startup_seal: {
+      file_count: seal.file_count,
+      manifest_hash: seal.manifest_hash,
+      scope_hash: seal.scope_hash,
+      status: seal.status,
+      workspace_hash: seal.workspace_hash
+    },
+    state: completed ? "completed" : "ready",
+    workspace_hash: seal.workspace_hash
+  };
+};
+
+const validateD25Checklist = (result: Record<string, unknown>): void => {
+  const checklist = asArray(result.checklist);
+  const seen = new Set<string>();
+  const canonicalIds = {
+    findings: new Set(asArray(result.findings).filter(isObject).map((x) => x.id).filter((id): id is string => typeof id === "string")),
+    unknowns: new Set(asArray(result.unknowns).filter(isObject).map((x) => x.id).filter((id): id is string => typeof id === "string")),
+    contradictions: new Set(asArray(result.contradictions).filter(isObject).map((x) => x.id).filter((id): id is string => typeof id === "string")),
+    strengths: new Set(asArray(result.strengths).filter(isObject).map((x) => x.id).filter((id): id is string => typeof id === "string"))
+  };
+  const validateReferenceArray = (checkId: string, fieldName: string, value: unknown, validIds: Set<string>): string[] => {
+    const ids = asArray(value).filter((id): id is string => typeof id === "string");
+    const invalid = ids.find((id) => !validIds.has(id));
+    if (invalid) throw new Error(`${checkId} ${fieldName} references unknown canonical id: ${invalid}`);
+    return ids;
+  };
+
+  for (const item of checklist) {
+    if (!isObject(item) || typeof item.check_id !== "string" || typeof item.status !== "string") {
+      throw new Error("D25 checklist contains an invalid disposition record.");
+    }
+    if (!D25_CHECK_ID_SET.has(item.check_id)) throw new Error(`D25 checklist contains an unknown check id: ${item.check_id}`);
+    if (seen.has(item.check_id)) throw new Error(`D25 checklist contains a duplicate check id: ${item.check_id}`);
+    seen.add(item.check_id);
+    const evidence = asArray(item.evidence);
+    const findingIds = validateReferenceArray(item.check_id, "finding_ids", item.finding_ids, canonicalIds.findings);
+    validateReferenceArray(item.check_id, "unknown_ids", item.unknown_ids, canonicalIds.unknowns);
+    validateReferenceArray(item.check_id, "contradiction_ids", item.contradiction_ids, canonicalIds.contradictions);
+    validateReferenceArray(item.check_id, "strength_ids", item.strength_ids, canonicalIds.strengths);
+    const notes = typeof item.notes === "string" ? item.notes.trim() : "";
+    if (item.status === "CHECKED_OK" && evidence.length === 0) throw new Error(`${item.check_id} cannot be CHECKED_OK without evidence.`);
+    if (item.status === "FINDING" && findingIds.length === 0) throw new Error(`${item.check_id} is FINDING but is not linked to a valid finding id.`);
+    if (["UNKNOWN", "NOT_INSPECTED_WITH_REASON"].includes(item.status) && !notes) throw new Error(`${item.check_id} requires an explicit note for status ${item.status}.`);
+  }
+  const missing = D25_CHECK_IDS.filter((id) => !seen.has(id));
+  if (missing.length > 0) throw new Error(`D25 checklist is incomplete; missing ${missing.slice(0, 8).join(", ")}${missing.length > 8 ? "..." : ""}`);
+};
+
+const validateD25CanonicalRecords = (result: Record<string, unknown>): void => {
+  const findingIds = new Set<string>();
+  const findingKeys = new Set<string>();
+  for (const raw of asArray(result.findings)) {
+    if (!isObject(raw)) throw new Error("D25 finding is not an object.");
+    const id = typeof raw.id === "string" ? raw.id.trim() : "";
+    const findingKey = typeof raw.finding_key === "string" ? raw.finding_key.trim() : "";
+    if (!/^BE-F\d{3}$/.test(id)) throw new Error(`D25 finding id must match BE-F###: ${id || "<missing>"}`);
+    if (!findingKey) throw new Error(`D25 finding ${id} is missing finding_key.`);
+    if (findingIds.has(id)) throw new Error(`D25 contains duplicate finding id: ${id}`);
+    if (findingKeys.has(findingKey)) throw new Error(`D25 contains duplicate finding_key: ${findingKey}`);
+    findingIds.add(id); findingKeys.add(findingKey);
+    if (asArray(raw.evidence).length === 0) throw new Error(`D25 finding ${id} has no evidence.`);
+  }
+  const validateUniqueRecords = (field: string, pattern: RegExp): void => {
+    const ids = new Set<string>();
+    for (const raw of asArray(result[field])) {
+      if (!isObject(raw)) throw new Error(`D25 ${field} record is not an object.`);
+      const id = typeof raw.id === "string" ? raw.id.trim() : "";
+      if (!pattern.test(id)) throw new Error(`D25 ${field} id has an invalid format: ${id || "<missing>"}`);
+      if (ids.has(id)) throw new Error(`D25 contains duplicate ${field} id: ${id}`);
+      ids.add(id);
+      if (field === "strengths" && asArray(raw.evidence).length === 0) throw new Error(`D25 ${field} ${id} has no evidence.`);
+    }
+  };
+  validateUniqueRecords("strengths", /^BE-S\d{3}$/);
+  validateUniqueRecords("unknowns", /^BE-U\d{3}$/);
+  validateUniqueRecords("contradictions", /^BE-C\d{3}$/);
+};
+
+const validateD25Evidence = (result: Record<string, unknown>, manifestPaths: Set<string>): void => {
+  validateEvidence(result, manifestPaths, "D25");
+};
+
+export const runSaveD25ResultJob = async (
+  projectRootPath: string,
+  resultInput: unknown
+): Promise<Record<string, unknown>> => {
+  const { manifest, seal } = await readStartupAuthority(projectRootPath);
+  const auditId = await ensureAudit(projectRootPath, seal.scope_hash, seal.workspace_hash);
+  for (const [file, label] of [
+    [D05_STAGE_FILE, "D05 Project Overview"],
+    [D10_STAGE_FILE, "D10 Architecture"],
+    [D15_STAGE_FILE, "D15 Database"],
+    [D20_STAGE_FILE, "D20 Dependencies / Integrations"]
+  ] as const) {
+    const saved = await readJsonIfPresent(stageFile(projectRootPath, auditId, file));
+    const prior = saved && isObject(saved.result) ? saved.result : null;
+    if (!prior || prior.result === "BLOCKED") throw new Error(`D25 Backend cannot be saved before ${label} is completed.`);
+  }
+
+  const manifestPaths = new Set(manifest.files.map((file) => file.path.replaceAll("\\", "/")));
+  const { completedAt, result, stageDocument } = parseAuthorizedDiscoveryStageEnvelope(resultInput, {
+    auditId,
+    label: "D25",
+    substage: D25_NAME,
+    workspaceHash: seal.workspace_hash
+  });
+  validateD25Checklist(result);
+  validateD25CanonicalRecords(result);
+  validateD25Evidence(result, manifestPaths);
+
+  const now = new Date().toISOString();
+  await writeJson(stageFile(projectRootPath, auditId, D25_STAGE_FILE), stageDocument);
+
+  const profile = (await readJsonIfPresent(auditFile(projectRootPath, auditId, "PROJECT_PROFILE.json"))) ?? {};
+  await writeJson(auditFile(projectRootPath, auditId, "PROJECT_PROFILE.json"), {
+    ...profile,
+    backend: {
+      backend_surface: result.backend_surface,
+      request_handling_model: result.request_handling_model,
+      application_logic_model: result.application_logic_model,
+      validation_model: result.validation_model,
+      access_control_model: result.access_control_model,
+      data_interaction_model: result.data_interaction_model,
+      state_change_model: result.state_change_model,
+      error_and_result_model: result.error_and_result_model,
+      async_and_side_effect_model: result.async_and_side_effect_model,
+      backend_quality: result.backend_quality,
+      scope_assessment: result.scope_assessment,
+      summary: result.summary,
+      unknowns: result.unknowns,
+      contradictions: result.contradictions
+    }
+  });
+
+  const findingsDoc = (await readJsonIfPresent(auditFile(projectRootPath, auditId, "FINDINGS.json"))) ?? {};
+  const withoutD25 = (value: unknown): unknown[] => asArray(value).filter((item) => !isObject(item) || item.origin_substage !== D25_NAME);
+  const findings = asArray(result.findings).map((item) => isObject(item) ? { ...item, first_seen_audit: auditId, last_seen_audit: auditId, origin_substage: D25_NAME } : item);
+  const strengths = asArray(result.strengths).map((item) => isObject(item) ? { ...item, first_seen_audit: auditId, last_seen_audit: auditId, origin_substage: D25_NAME } : item);
+  await writeJson(auditFile(projectRootPath, auditId, "FINDINGS.json"), {
+    ...findingsDoc,
+    findings: [...withoutD25(findingsDoc.findings), ...findings],
+    strengths: [...withoutD25(findingsDoc.strengths), ...strengths]
+  });
+
+  const checklist = asArray(result.checklist);
+  const coverageDoc = (await readJsonIfPresent(auditFile(projectRootPath, auditId, "AUDIT_COVERAGE.json"))) ?? {};
+  const coverageStages = isObject(coverageDoc.sub_stages) ? { ...coverageDoc.sub_stages } : {};
+  coverageStages[D25_NAME] = { checklist, counts: summarizeCoverage(checklist), result: result.result, summary: result.summary, updated_at: now };
+  await writeJson(auditFile(projectRootPath, auditId, "AUDIT_COVERAGE.json"), { ...coverageDoc, sub_stages: coverageStages });
+
+  const meta = (await readJsonIfPresent(auditFile(projectRootPath, auditId, "AUDIT_META.json"))) ?? {};
+  const metaStages = isObject(meta.sub_stages) ? { ...meta.sub_stages } : {};
+  metaStages[D25_NAME] = { completed_at: completedAt, finding_count: findings.length, result: result.result, status: result.result === "BLOCKED" ? "BLOCKED" : "COMPLETED", unknown_count: asArray(result.unknowns).length };
+  await writeJson(auditFile(projectRootPath, auditId, "AUDIT_META.json"), { ...meta, sub_stages: metaStages, updated_at: now });
+
+  const index = parseAuditIndex(await readJsonIfPresent(auditsIndexPath(projectRootPath)));
+  const entry = index.audits.find((item) => item.audit_id === auditId);
+  if (entry) { entry.updated_at = now; entry.state = "RUNNING"; await writeJson(auditsIndexPath(projectRootPath), index); }
+
+  return {
+    audit_id: auditId,
+    checklist_count: checklist.length,
+    finding_count: findings.length,
+    result: result.result,
+    saved: true,
+    stage_file: `.ai-factory/020-Discovery/audits/${auditId}/stages/${D25_STAGE_FILE}`,
     unknown_count: asArray(result.unknowns).length
   };
 };

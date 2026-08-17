@@ -24,6 +24,9 @@ const d15SchemaPath = path.join(d15RuntimeRoot, "contracts", "database-output.sc
 const d20RuntimeRoot = path.join(discoveryRuntimeRoot, "D20-Dependencies-Integrations");
 const d20PromptPath = path.join(d20RuntimeRoot, "prompt", "dependencies-integrations.compiled.prompt.md");
 const d20SchemaPath = path.join(d20RuntimeRoot, "contracts", "dependencies-integrations-output.schema.json");
+const d25RuntimeRoot = path.join(discoveryRuntimeRoot, "D25-Backend");
+const d25PromptPath = path.join(d25RuntimeRoot, "prompt", "backend.compiled.prompt.md");
+const d25SchemaPath = path.join(d25RuntimeRoot, "contracts", "backend-output.schema.json");
 const port = 44317;
 const baseUrl = `http://127.0.0.1:${port}`;
 
@@ -37,6 +40,8 @@ mkdirSync(path.dirname(d15PromptPath), { recursive: true });
 mkdirSync(path.dirname(d15SchemaPath), { recursive: true });
 mkdirSync(path.dirname(d20PromptPath), { recursive: true });
 mkdirSync(path.dirname(d20SchemaPath), { recursive: true });
+mkdirSync(path.dirname(d25PromptPath), { recursive: true });
+mkdirSync(path.dirname(d25SchemaPath), { recursive: true });
 writeFileSync(
   discoveryManifestPath,
   readFileSync(path.join(__dirname, "..", "tests", "fixtures", "discovery-stage-execution-manifest.json"), "utf8"),
@@ -276,6 +281,62 @@ writeFileSync(
 );
 
 
+writeFileSync(
+  d25PromptPath,
+  [
+    "# D25 compiled fixture",
+    "PROJECT_ROOT={{PROJECT_ROOT}}",
+    "SCOPE={{STARTUP_SCOPE_JSON}}",
+    "SEAL={{STARTUP_SEAL_JSON}}",
+    "CONTEXT={{DISCOVERY_CONTEXT_JSON}}",
+    "LANG={{OUTPUT_LANGUAGE}}",
+    "D05 prior context",
+    "D10 prior context",
+    "D15 prior context",
+    "D20 prior context",
+    "BE-001",
+    "BE-134",
+    "@startup/scope",
+    "**Excluded evidence is a hard failure.** Unauthorized evidence must not be treated as completed."
+  ].join("\n"),
+  "utf8"
+);
+writeFileSync(
+  d25SchemaPath,
+  JSON.stringify({
+    type: "object",
+    properties: {
+      audit_id: { type: "string", minLength: 1 },
+      completed_at: { type: "string", format: "date-time" },
+      result: {
+        type: "object",
+        properties: {
+          substage: { type: "string", const: "D25-Backend" },
+          result: { type: "string", enum: ["PASS", "PASS_WITH_FINDINGS", "PARTIAL", "BLOCKED"] },
+          summary: { type: "string" },
+          checklist: { type: "array", minItems: 134, maxItems: 134 }
+        },
+        required: ["substage", "result", "summary", "checklist"],
+        additionalProperties: false
+      },
+      schema_version: { type: "string", const: "1.0" },
+      substage: { type: "string", const: "D25-Backend" },
+      workspace_hash: { type: "string", pattern: "^[a-f0-9]{64}$" }
+    },
+    required: ["audit_id", "completed_at", "result", "schema_version", "substage", "workspace_hash"],
+    additionalProperties: false,
+    $defs: {
+      checkDisposition: {
+        type: "object",
+        properties: { check_id: { type: "string", pattern: "^BE-(00[1-9]|0[1-9][0-9]|1[0-2][0-9]|13[0-4])$" } },
+        required: ["check_id", "status", "evidence", "finding_ids", "unknown_ids", "contradiction_ids", "strength_ids", "notes", "confidence"]
+      }
+    }
+  }),
+  "utf8"
+);
+
+
 const child = spawn(process.execPath, [path.join(__dirname, "mock-cloud", "mock-cloud.cjs")], {
   env: {
     ...process.env,
@@ -290,7 +351,9 @@ const child = spawn(process.execPath, [path.join(__dirname, "mock-cloud", "mock-
     FORGEPILOT_DISCOVERY_D15_PROMPT: d15PromptPath,
     FORGEPILOT_DISCOVERY_D15_SCHEMA: d15SchemaPath,
     FORGEPILOT_DISCOVERY_D20_PROMPT: d20PromptPath,
-    FORGEPILOT_DISCOVERY_D20_SCHEMA: d20SchemaPath
+    FORGEPILOT_DISCOVERY_D20_SCHEMA: d20SchemaPath,
+    FORGEPILOT_DISCOVERY_D25_PROMPT: d25PromptPath,
+    FORGEPILOT_DISCOVERY_D25_SCHEMA: d25SchemaPath
   },
   stdio: ["ignore", "pipe", "pipe"]
 });
@@ -344,7 +407,9 @@ const LOCAL_OPERATIONS = [
   "discovery.d15-status",
   "discovery.save-d15-result",
   "discovery.d20-status",
-  "discovery.save-d20-result"
+  "discovery.save-d20-result",
+  "discovery.d25-status",
+  "discovery.save-d25-result"
 ];
 
 let startupScopeApproved = false;
@@ -352,6 +417,7 @@ let d05Completed = false;
 let d10Completed = false;
 let d15Completed = false;
 let d20Completed = false;
+let d25Completed = false;
 
 const localOutputFor = (operation, inputs = {}) => {
   if (operation === "startup.scope-status") {
@@ -367,7 +433,7 @@ const localOutputFor = (operation, inputs = {}) => {
     return { file_count: 1, manifest_hash: "a".repeat(64), scope_hash: "b".repeat(64), workspace_hash: "c".repeat(64), status: "READY_FOR_DISCOVERY" };
   }
   if (operation === "discovery.d05-status") {
-    if (inputs.reset === true) d05Completed = false;
+    if (inputs.reset === true) { d05Completed = false; d10Completed = false; d15Completed = false; d20Completed = false; d25Completed = false; }
     return {
       audit_id: "AUD-001",
       state: d05Completed ? "completed" : "ready",
@@ -384,7 +450,7 @@ const localOutputFor = (operation, inputs = {}) => {
   }
   if (operation === "discovery.d10-status") {
     if (!d05Completed) throw new Error("D10 fixture requires D05 first.");
-    if (inputs.reset === true) d10Completed = false;
+    if (inputs.reset === true) { d10Completed = false; d15Completed = false; d20Completed = false; d25Completed = false; }
     return {
       audit_id: "AUD-001",
       state: d10Completed ? "completed" : "ready",
@@ -402,7 +468,7 @@ const localOutputFor = (operation, inputs = {}) => {
   }
   if (operation === "discovery.d15-status") {
     if (!d05Completed || !d10Completed) throw new Error("D15 fixture requires D05 + D10 first.");
-    if (inputs.reset === true) d15Completed = false;
+    if (inputs.reset === true) { d15Completed = false; d25Completed = false; }
     return {
       audit_id: "AUD-001",
       state: d15Completed ? "completed" : "ready",
@@ -421,7 +487,7 @@ const localOutputFor = (operation, inputs = {}) => {
   }
   if (operation === "discovery.d20-status") {
     if (!d05Completed || !d10Completed) throw new Error("D20 fixture requires D05 + D10 first.");
-    if (inputs.reset === true) d20Completed = false;
+    if (inputs.reset === true) { d20Completed = false; d25Completed = false; }
     return {
       audit_id: "AUD-001",
       state: d20Completed ? "completed" : "ready",
@@ -437,6 +503,27 @@ const localOutputFor = (operation, inputs = {}) => {
   if (operation === "discovery.save-d20-result") {
     d20Completed = true;
     return { audit_id: "AUD-001", result: "PASS", finding_count: 0, unknown_count: 0, checklist_count: 102, saved: true };
+  }
+  if (operation === "discovery.d25-status") {
+    if (!d05Completed || !d10Completed || !d15Completed || !d20Completed) throw new Error("D25 fixture requires D05 + D10 + D15 + D20 first.");
+    if (inputs.reset === true) d25Completed = false;
+    return {
+      audit_id: "AUD-001",
+      state: d25Completed ? "completed" : "ready",
+      prerequisite_d05: "completed",
+      prerequisite_d10: "completed",
+      prerequisite_d15: "completed",
+      prerequisite_d20: "completed",
+      scope_hash: "b".repeat(64),
+      workspace_hash: "c".repeat(64),
+      startup_scope: { approved: { include: ["src"], exclude: [], explicit_files: [] }, scope_hash: "b".repeat(64) },
+      startup_seal: { status: "READY_FOR_DISCOVERY", scope_hash: "b".repeat(64), workspace_hash: "c".repeat(64), manifest_hash: "a".repeat(64), file_count: 1 },
+      discovery_context: { audit_id: "AUD-001", completed_substages: ["D05-Project-Overview", "D10-Architecture", "D15-Database", "D20-Dependencies-Integrations"], prior_d05: { summary: "fixture overview" }, prior_d10: { summary: "fixture architecture" }, prior_d15: { summary: "fixture database" }, prior_d20: { summary: "fixture dependencies" } }
+    };
+  }
+  if (operation === "discovery.save-d25-result") {
+    d25Completed = true;
+    return { audit_id: "AUD-001", result: "PASS", finding_count: 0, unknown_count: 0, checklist_count: 134, saved: true };
   }
   throw new Error(`No fixture output for local operation ${operation}`);
 };
@@ -531,6 +618,30 @@ const providerOutputFor = (directive) => {
       workspace_hash: "c".repeat(64)
     };
   }
+  if (task?.semantic_task_id === "D25_BACKEND") {
+    const prompt = directive.job.task.instructions.body;
+    if (
+      !prompt.includes("BE-001") ||
+      !prompt.includes("BE-134") ||
+      !prompt.includes("LANG=Turkish") ||
+      !prompt.includes("fixture overview") ||
+      !prompt.includes("fixture architecture") ||
+      !prompt.includes("fixture database") ||
+      !prompt.includes("fixture dependencies") ||
+      prompt.includes("{{DISCOVERY_CONTEXT_JSON}}") ||
+      prompt.includes("{{OUTPUT_LANGUAGE}}")
+    ) {
+      throw new Error("D25 compiled prompt/context was not loaded/substituted correctly.");
+    }
+    return {
+      audit_id: "AUD-001",
+      completed_at: new Date().toISOString(),
+      result: { substage: "D25-Backend", result: "PASS", summary: "fixture backend", checklist: Array.from({ length: 134 }, (_, i) => ({ check_id: `BE-${String(i + 1).padStart(3, "0")}` })) },
+      schema_version: "1.0",
+      substage: "D25-Backend",
+      workspace_hash: "c".repeat(64)
+    };
+  }
   throw new Error(`Unexpected provider task ${String(task?.semantic_task_id)}`);
 };
 
@@ -607,7 +718,7 @@ const runStage = async (stageId, expectedOutcome = "completed", newRun = false) 
   try {
     await waitForServer();
     const handshake = await requestJson("POST", "/session/handshake", {
-      desktopVersion: "0.5.5",
+      desktopVersion: "0.5.6",
       protocolVersion: "2",
       supportedCapabilities: ["stage-execution:directives-v1", "contract:010-startup@2.1.0", "contract:020-discovery@2.0.0"]
     });
@@ -626,6 +737,8 @@ const runStage = async (stageId, expectedOutcome = "completed", newRun = false) 
     if (initialD15.status !== "waiting") throw new Error("D15 must wait for D05 + D10.");
     const initialD20 = await workflowStage("020-d20-dependencies-integrations");
     if (initialD20.status !== "waiting") throw new Error("D20 must wait for D05 + D10.");
+    const initialD25 = await workflowStage("020-d25-backend");
+    if (initialD25.status !== "waiting") throw new Error("D25 must wait for D05 + D10 + D15 + D20.");
 
     const startupProposal = await runStage("010-startup", "blocked");
     if (startupProposal.providerTasks[0] !== "SCOPE_PROPOSAL") throw new Error("Startup scope proposal task missing.");
@@ -682,19 +795,54 @@ const runStage = async (stageId, expectedOutcome = "completed", newRun = false) 
     }
     const d20After = await workflowStage("020-d20-dependencies-integrations");
     if (d20After.status !== "completed") throw new Error("D20 completion was not persisted by Cloud.");
+    const d25Ready = await workflowStage("020-d25-backend");
+    if (d25Ready.status !== "ready") throw new Error("D25 did not become ready after D05 + D10 + D15 + D20.");
+    const d25 = await runStage("020-d25-backend");
+    if (JSON.stringify(d25.providerTasks) !== JSON.stringify(["D25_BACKEND"])) {
+      throw new Error(`D25 should use exactly one AI task, saw ${d25.providerTasks.join(", ")}.`);
+    }
+    for (const operation of ["discovery.d25-status", "discovery.save-d25-result"]) {
+      if (!d25.localOperations.includes(operation)) throw new Error(`D25 missed ${operation}.`);
+    }
+    const d25After = await workflowStage("020-d25-backend");
+    if (d25After.status !== "completed") throw new Error("D25 completion was not persisted by Cloud.");
+    const d25Restart = await runStage("020-d25-backend", "completed", true);
+    if (d25Restart.providerTasks[0] !== "D25_BACKEND") throw new Error("D25 Restart did not rerun D25 AI task.");
+
     const d20Restart = await runStage("020-d20-dependencies-integrations", "completed", true);
-    if (d20Restart.providerTasks[0] !== "D20_DEPENDENCIES_INTEGRATIONS") throw new Error("D20 Restart did not rerun only D20 AI task.");
+    if (d20Restart.providerTasks[0] !== "D20_DEPENDENCIES_INTEGRATIONS") throw new Error("D20 Restart did not rerun D20 AI task.");
+    const d25AfterD20Restart = await workflowStage("020-d25-backend");
+    if (d25AfterD20Restart.status !== "ready") {
+      throw new Error("Restarting D20 must invalidate completed D25 and leave D25 ready after D20 completes again.");
+    }
 
     const d15Restart = await runStage("020-d15-database", "completed", true);
-    if (d15Restart.providerTasks[0] !== "D15_DATABASE") throw new Error("D15 Restart did not rerun only D15 AI task.");
+    if (d15Restart.providerTasks[0] !== "D15_DATABASE") throw new Error("D15 Restart did not rerun D15 AI task.");
+    const d25AfterD15Restart = await workflowStage("020-d25-backend");
+    if (d25AfterD15Restart.status !== "ready") {
+      throw new Error("Restarting D15 must keep invalidated D25 ready once D15 has completed again.");
+    }
 
     const d10Restart = await runStage("020-d10-architecture", "completed", true);
-    if (d10Restart.providerTasks[0] !== "D10_ARCHITECTURE") throw new Error("D10 Restart did not rerun only D10 AI task.");
+    if (d10Restart.providerTasks[0] !== "D10_ARCHITECTURE") throw new Error("D10 Restart did not rerun D10 AI task.");
+    const d15AfterD10Restart = await workflowStage("020-d15-database");
+    const d20AfterD10Restart = await workflowStage("020-d20-dependencies-integrations");
+    const d25AfterD10Restart = await workflowStage("020-d25-backend");
+    if (d15AfterD10Restart.status !== "ready" || d20AfterD10Restart.status !== "ready" || d25AfterD10Restart.status !== "waiting") {
+      throw new Error("Restarting D10 must invalidate D15, D20, and D25 according to the HARD graph.");
+    }
 
     const d05Restart = await runStage("020-d05-project-overview", "completed", true);
-    if (d05Restart.providerTasks[0] !== "D05_PROJECT_OVERVIEW") throw new Error("D05 Restart did not rerun only D05 AI task.");
+    if (d05Restart.providerTasks[0] !== "D05_PROJECT_OVERVIEW") throw new Error("D05 Restart did not rerun D05 AI task.");
+    const d10AfterD05Restart = await workflowStage("020-d10-architecture");
+    const d15AfterD05Restart = await workflowStage("020-d15-database");
+    const d20AfterD05Restart = await workflowStage("020-d20-dependencies-integrations");
+    const d25AfterD05Restart = await workflowStage("020-d25-backend");
+    if (d10AfterD05Restart.status !== "ready" || d15AfterD05Restart.status !== "waiting" || d20AfterD05Restart.status !== "waiting" || d25AfterD05Restart.status !== "waiting") {
+      throw new Error("Restarting D05 must invalidate every currently implemented downstream Discovery stage.");
+    }
 
-    console.log("Execution protocol verification passed (Startup -> D05 -> D10 -> D15 + D20 -> independent D20/D15/D10/D05 restarts; compiled prompts + schemas loaded from AI Factory)." );
+    console.log("Execution protocol verification passed (Startup -> D05 -> D10 -> D15 + D20 -> D25; restart invalidation follows the HARD dependency graph; compiled prompts + schemas loaded from AI Factory)." );
   } finally {
     child.kill("SIGTERM");
     rmSync(tempRoot, { recursive: true, force: true });

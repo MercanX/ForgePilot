@@ -11,6 +11,7 @@ const DISCOVERY_D05_STAGE_ID = "020-d05-project-overview";
 const DISCOVERY_D10_STAGE_ID = "020-d10-architecture";
 const DISCOVERY_D15_STAGE_ID = "020-d15-database";
 const DISCOVERY_D20_STAGE_ID = "020-d20-dependencies-integrations";
+const DISCOVERY_D25_STAGE_ID = "020-d25-backend";
 const executions = new Map();
 
 const DISCOVERY_MANIFEST_PATH =
@@ -33,7 +34,8 @@ const DISCOVERY_EXECUTABLE_STAGE_IDS = new Set([
   DISCOVERY_D05_STAGE_ID,
   DISCOVERY_D10_STAGE_ID,
   DISCOVERY_D15_STAGE_ID,
-  DISCOVERY_D20_STAGE_ID
+  DISCOVERY_D20_STAGE_ID,
+  DISCOVERY_D25_STAGE_ID
 ]);
 
 const discoveryRuntimeRoot = () => path.dirname(DISCOVERY_MANIFEST_PATH);
@@ -89,6 +91,34 @@ const markStagePassed = (projectId, stageId) => {
 const unmarkStagePassed = (projectId, stageId) => {
   if (!projectId || !stageId) return;
   passedStagesByProject.get(projectId)?.delete(stageId);
+  persistPassedStagesByProject();
+};
+
+const unmarkStageAndHardDependents = (projectId, stageId) => {
+  if (!projectId || !stageId) return;
+
+  const manifest = loadDiscoveryManifest();
+  const downstream = new Map();
+  for (const stage of manifest.stages) {
+    for (const requirement of stage.hard ?? []) {
+      if (!downstream.has(requirement)) downstream.set(requirement, []);
+      downstream.get(requirement).push(stage.id);
+    }
+  }
+
+  const queue = [stageId];
+  const invalidated = new Set();
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current || invalidated.has(current)) continue;
+    invalidated.add(current);
+    for (const dependent of downstream.get(current) ?? []) queue.push(dependent);
+  }
+
+  const passed = passedStagesByProject.get(projectId);
+  if (passed) {
+    for (const invalidStageId of invalidated) passed.delete(invalidStageId);
+  }
   persistPassedStagesByProject();
 };
 const STARTUP_CONTRACT_PATH =
@@ -148,6 +178,16 @@ const DISCOVERY_D20_SCHEMA_PATH =
 
 const loadDiscoveryD20Prompt = () => readFileSync(DISCOVERY_D20_PROMPT_PATH, "utf8");
 const loadDiscoveryD20Schema = () => JSON.parse(readFileSync(DISCOVERY_D20_SCHEMA_PATH, "utf8"));
+
+const DISCOVERY_D25_PROMPT_PATH =
+  process.env.FORGEPILOT_DISCOVERY_D25_PROMPT ??
+  "C:\\Github\\aiFactory\\.ai-factory\\020-Discovery\\D25-Backend\\prompt\\backend.compiled.prompt.md";
+const DISCOVERY_D25_SCHEMA_PATH =
+  process.env.FORGEPILOT_DISCOVERY_D25_SCHEMA ??
+  "C:\\Github\\aiFactory\\.ai-factory\\020-Discovery\\D25-Backend\\contracts\\backend-output.schema.json";
+
+const loadDiscoveryD25Prompt = () => readFileSync(DISCOVERY_D25_PROMPT_PATH, "utf8");
+const loadDiscoveryD25Schema = () => JSON.parse(readFileSync(DISCOVERY_D25_SCHEMA_PATH, "utf8"));
 
 const hasDiscoveryScopeEvidenceGuard = (prompt) =>
   prompt.includes("@startup/scope") &&
@@ -426,6 +466,19 @@ const createDiscoveryD20Prompt = (requestBody) => {
     .replaceAll("{{DISCOVERY_CONTEXT_JSON}}", JSON.stringify(runtimeInputs.discovery_context ?? {}));
 };
 
+const createDiscoveryD25Prompt = (requestBody) => {
+  const task = requestBody.localExecution?.semantic_task ?? {};
+  const runtimeInputs = task.runtime_inputs ?? {};
+  const template = loadDiscoveryD25Prompt();
+
+  return template
+    .replaceAll("{{PROJECT_ROOT}}", requestBody.project.rootPath)
+    .replaceAll("{{OUTPUT_LANGUAGE}}", requestBody.outputLanguage ?? "Turkish")
+    .replaceAll("{{STARTUP_SCOPE_JSON}}", JSON.stringify(runtimeInputs.startup_scope ?? {}))
+    .replaceAll("{{STARTUP_SEAL_JSON}}", JSON.stringify(runtimeInputs.startup_seal ?? {}))
+    .replaceAll("{{DISCOVERY_CONTEXT_JSON}}", JSON.stringify(runtimeInputs.discovery_context ?? {}));
+};
+
 const createPrompt = (requestBody) => {
   const semanticTask = requestBody.localExecution?.semantic_task?.semantic_task_id;
 
@@ -447,6 +500,10 @@ const createPrompt = (requestBody) => {
 
   if (semanticTask === "D20_DEPENDENCIES_INTEGRATIONS") {
     return createDiscoveryD20Prompt(requestBody);
+  }
+
+  if (semanticTask === "D25_BACKEND") {
+    return createDiscoveryD25Prompt(requestBody);
   }
 
   if (typeof semanticTask === "string") {
@@ -475,6 +532,10 @@ const getStageId = (requestBody) => {
 
   if (semanticTask === "D20_DEPENDENCIES_INTEGRATIONS") {
     return DISCOVERY_D20_STAGE_ID;
+  }
+
+  if (semanticTask === "D25_BACKEND") {
+    return DISCOVERY_D25_STAGE_ID;
   }
 
   if (typeof semanticTask === "string") {
@@ -572,6 +633,9 @@ const semanticOutputSchema = (localExecution) => {
   }
   if (taskId === "D20_DEPENDENCIES_INTEGRATIONS") {
     return loadDiscoveryD20Schema();
+  }
+  if (taskId === "D25_BACKEND") {
+    return loadDiscoveryD25Schema();
   }
   return discoverySemanticOutputSchema(localExecution);
 };
@@ -1173,6 +1237,84 @@ const discoveryD20DirectiveFor = (session) => {
   );
 };
 
+
+const discoveryD25DirectiveFor = (session) => {
+  if (!hasOutput(session, "d25Status")) {
+    return localDirective(
+      "discovery.d25-status",
+      { reset: session.newRun === true },
+      "d25Status",
+      [
+        session.newRun ? "Resetting only D25 Backend state." : "Checking D25 Backend prerequisites.",
+        session.newRun ? "D25 Backend state reset." : "D25 Backend prerequisites verified."
+      ],
+      [12, 18]
+    );
+  }
+
+  const status = outputObject(session, "d25Status");
+  if (status.state === "completed") {
+    return terminalDirective(
+      "completed",
+      "D25 Backend is already completed for this sealed workspace. Use Restart to run D25 again.",
+      100
+    );
+  }
+
+  if (!hasOutput(session, "d25Result")) {
+    return providerDirective(
+      session,
+      {
+        semantic_task: {
+          semantic_task_id: "D25_BACKEND",
+          runtime_inputs: {
+            audit_id: status.audit_id ?? null,
+            discovery_context: status.discovery_context ?? {},
+            startup_scope: status.startup_scope ?? {},
+            startup_seal: status.startup_seal ?? {}
+          }
+        }
+      },
+      "semantic",
+      false,
+      "d25Result",
+      [
+        "AI is auditing D25 Backend using D05 + D10 + D15 + D20 context and direct repository backend evidence.",
+        "D25 AI generation finished; deterministic evidence/checklist validation is pending."
+      ],
+      [20, 90]
+    );
+  }
+
+  if (!hasOutput(session, "d25Saved")) {
+    return localDirective(
+      "discovery.save-d25-result",
+      { result: session.context.d25Result },
+      "d25Saved",
+      [
+        "Validating D25 backend evidence, 134 checklist dispositions, and canonical records.",
+        "D25 Backend result saved to the active audit snapshot."
+      ],
+      [92, 99]
+    );
+  }
+
+  const saved = outputObject(session, "d25Saved");
+  if (saved.result === "BLOCKED") {
+    return terminalDirective(
+      "blocked",
+      "D25 Backend returned BLOCKED. Review the recorded unknowns/limitations before retrying.",
+      99
+    );
+  }
+
+  return terminalDirective(
+    "completed",
+    `D25 Backend completed (${String(saved.result ?? "UNKNOWN")}); ${String(saved.finding_count ?? 0)} findings, ${String(saved.unknown_count ?? 0)} unknowns, ${String(saved.checklist_count ?? 0)} checklist dispositions.`,
+    100
+  );
+};
+
 const nextDirectiveFor = (session) => {
   if (session.failure) {
     return terminalDirective("failed", session.failure, session.lastProgress ?? 0);
@@ -1196,6 +1338,10 @@ const nextDirectiveFor = (session) => {
 
   if (session.stageId === DISCOVERY_D20_STAGE_ID) {
     return discoveryD20DirectiveFor(session);
+  }
+
+  if (session.stageId === DISCOVERY_D25_STAGE_ID) {
+    return discoveryD25DirectiveFor(session);
   }
 
   return terminalDirective(
@@ -1256,17 +1402,8 @@ const createExecution = (body) => {
 };
 
 const handleExecutionNext = (body) => {
-  if (!body.executionId && body.newRun === true && body.stageId === DISCOVERY_D05_STAGE_ID) {
-    unmarkStagePassed(body.project?.id, DISCOVERY_D05_STAGE_ID);
-  }
-  if (!body.executionId && body.newRun === true && body.stageId === DISCOVERY_D10_STAGE_ID) {
-    unmarkStagePassed(body.project?.id, DISCOVERY_D10_STAGE_ID);
-  }
-  if (!body.executionId && body.newRun === true && body.stageId === DISCOVERY_D15_STAGE_ID) {
-    unmarkStagePassed(body.project?.id, DISCOVERY_D15_STAGE_ID);
-  }
-  if (!body.executionId && body.newRun === true && body.stageId === DISCOVERY_D20_STAGE_ID) {
-    unmarkStagePassed(body.project?.id, DISCOVERY_D20_STAGE_ID);
+  if (!body.executionId && body.newRun === true) {
+    unmarkStageAndHardDependents(body.project?.id, body.stageId);
   }
   const session = body.executionId ? executions.get(body.executionId) : createExecution(body);
 
@@ -1338,7 +1475,8 @@ const server = http.createServer(async (request, response) => {
           discoveryManifest.stages.some((stage) => stage.id === DISCOVERY_D05_STAGE_ID) &&
           discoveryManifest.stages.some((stage) => stage.id === DISCOVERY_D10_STAGE_ID) &&
           discoveryManifest.stages.some((stage) => stage.id === DISCOVERY_D15_STAGE_ID) &&
-          discoveryManifest.stages.some((stage) => stage.id === DISCOVERY_D20_STAGE_ID);
+          discoveryManifest.stages.some((stage) => stage.id === DISCOVERY_D20_STAGE_ID) &&
+          discoveryManifest.stages.some((stage) => stage.id === DISCOVERY_D25_STAGE_ID);
       } catch {
         discoveryManifestCompatible = false;
       }
@@ -1448,6 +1586,39 @@ const server = http.createServer(async (request, response) => {
       } catch {
         d20RuntimeCompatible = false;
       }
+      let d25RuntimeCompatible = false;
+      try {
+        const d25Prompt = loadDiscoveryD25Prompt();
+        const d25Schema = loadDiscoveryD25Schema();
+        const d25CheckIdPattern = d25Schema?.$defs?.checkDisposition?.properties?.check_id?.pattern;
+        let d25CheckIdPatternCompatible = false;
+        if (typeof d25CheckIdPattern === "string") {
+          const checkIdRegex = new RegExp(d25CheckIdPattern);
+          d25CheckIdPatternCompatible =
+            checkIdRegex.test("BE-001") &&
+            checkIdRegex.test("BE-134") &&
+            !checkIdRegex.test("BE-135") &&
+            !checkIdRegex.test("DI-001");
+        }
+        d25RuntimeCompatible =
+          d25Prompt.includes("BE-001") &&
+          d25Prompt.includes("BE-134") &&
+          d25Prompt.includes("{{OUTPUT_LANGUAGE}}") &&
+          d25Prompt.includes("D05") &&
+          d25Prompt.includes("D10") &&
+          d25Prompt.includes("D15") &&
+          d25Prompt.includes("D20") &&
+          hasDiscoveryScopeEvidenceGuard(d25Prompt) &&
+          d25Schema?.properties?.substage?.const === "D25-Backend" &&
+          d25Schema?.properties?.result?.properties?.substage?.const === "D25-Backend" &&
+          d25Schema?.properties?.result?.properties?.checklist?.minItems === 134 &&
+          d25Schema?.properties?.result?.properties?.checklist?.maxItems === 134 &&
+          d25CheckIdPatternCompatible &&
+          Array.isArray(d25Schema?.$defs?.checkDisposition?.required) &&
+          d25Schema.$defs.checkDisposition.required.includes("unknown_ids");
+      } catch {
+        d25RuntimeCompatible = false;
+      }
 
       const compatible =
         protocolCompatible &&
@@ -1458,13 +1629,14 @@ const server = http.createServer(async (request, response) => {
         d05RuntimeCompatible &&
         d10RuntimeCompatible &&
         d15RuntimeCompatible &&
-        d20RuntimeCompatible;
+        d20RuntimeCompatible &&
+        d25RuntimeCompatible;
       sendJson(response, 200, {
         status: compatible ? "ok" : "update-required",
-        serverVersion: "mock-0.5.5-d20-parser-fix",
+        serverVersion: "mock-0.5.6-d25-backend",
         protocolVersion: "2",
         message: compatible
-          ? "Mock cloud connected (Startup 2.1.0, Discovery D05 + D10 + D15 + D20, scope-evidence guard enforced)"
+          ? "Mock cloud connected (Startup 2.1.0, Discovery D05 + D10 + D15 + D20 + D25, scope-evidence guard enforced)"
           : !protocolCompatible
             ? "Desktop protocol v2 is required for server-driven execution directives."
             : !startupRuntimeCompatible
@@ -1481,7 +1653,9 @@ const server = http.createServer(async (request, response) => {
                       ? "AI Factory D10 runtime files are missing or invalid. Expected the approved compiled prompt, output schema, and scope-evidence guard."
                       : !d15RuntimeCompatible
                         ? "AI Factory D15 runtime files are missing or invalid. Expected the approved compiled prompt, output schema, and scope-evidence guard."
-                        : "AI Factory D20 runtime files are missing or invalid. Expected the approved compiled prompt, output schema, and scope-evidence guard."
+                        : !d20RuntimeCompatible
+                          ? "AI Factory D20 runtime files are missing or invalid. Expected the approved compiled prompt, output schema, and scope-evidence guard."
+                          : "AI Factory D25 runtime files are missing or invalid. Expected the approved compiled prompt, output schema, and scope-evidence guard."
       });
       return;
     }

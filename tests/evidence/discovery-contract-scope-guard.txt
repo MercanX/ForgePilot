@@ -1,1 +1,1 @@
-Discovery D05/D10/D15 compatibility verification passed (full envelopes, scope-evidence authority guard, validation-before-persist, explicit local failure activity, const + date-time enforcement).
+Discovery D05/D10/D15/D20 compatibility verification passed (full envelopes, scope-evidence authority guard, validation-before-persist, explicit local failure activity, const + date-time enforcement).

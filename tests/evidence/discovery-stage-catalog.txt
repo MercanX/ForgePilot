@@ -2,6 +2,6 @@ Discovery server-owned stage catalog verification: PASS
 AI Factory runtime manifest source: PASS
 Startup + 14/14 Discovery substages from workflow server: PASS
 Legacy 030/040/050 workflow stages absent: PASS
-D05/D10/D15 available and D20-D70 Not Ready model: PASS
+D05/D10/D15/D20 available and D25-D70 Not Ready model: PASS
 Renderer/backend requirement guards: PASS
 Modified TypeScript/TSX syntax diagnostics: 0

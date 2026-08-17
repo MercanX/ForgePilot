@@ -49,7 +49,7 @@
       "display_name": "020-D20-Dependencies-Integrations",
       "order": 20,
       "folder": "D20-Dependencies-Integrations",
-      "implementation_status": "not_ready",
+      "implementation_status": "available",
       "description": "Harici paketleri, servisleri, SDK'ları, sağlayıcıları ve entegrasyon sınırlarını denetler.",
       "hard": [
         "020-d05-project-overview",

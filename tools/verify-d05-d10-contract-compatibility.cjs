@@ -117,6 +117,20 @@ if (parsedD15.result.summary !== "database fixture") {
   throw new Error("D15 full-envelope compatibility failed.");
 }
 
+const d20Envelope = {
+  ...validEnvelope,
+  result: { substage: "D20-Dependencies-Integrations", result: "PASS", summary: "dependencies fixture", checklist: [] },
+  substage: "D20-Dependencies-Integrations"
+};
+const parsedD20 = discovery.parseAuthorizedDiscoveryStageEnvelope(d20Envelope, {
+  ...expected,
+  label: "D20",
+  substage: "D20-Dependencies-Integrations"
+});
+if (parsedD20.result.summary !== "dependencies fixture") {
+  throw new Error("D20 full-envelope compatibility failed.");
+}
+
 const evidenceSource = `${extractDeclarations(
   path.join(__dirname, "..", "src", "services", "discovery", "discoverySubstageService.ts"),
   [
@@ -148,6 +162,11 @@ evidenceGuard.validateEvidence(
   { unknowns: [{ evidence: [{ path: "@startup/scope" }] }] },
   manifestPaths,
   "D15"
+);
+evidenceGuard.validateEvidence(
+  { checklist: [{ evidence: [{ path: "website/public/js/app.js" }] }] },
+  manifestPaths,
+  "D20"
 );
 
 let excludedEvidenceRejected = false;
@@ -187,7 +206,8 @@ const discoveryServiceSource = fs.readFileSync(
 for (const [functionName, validationNeedle] of [
   ["runSaveD05ResultJob", "validateEvidence(result, manifestPaths, \"D05\")"],
   ["runSaveD10ResultJob", "validateD10Evidence(result, manifestPaths)"],
-  ["runSaveD15ResultJob", "validateD15Evidence(result, manifestPaths)"]
+  ["runSaveD15ResultJob", "validateD15Evidence(result, manifestPaths)"],
+  ["runSaveD20ResultJob", "validateD20Evidence(result, manifestPaths)"]
 ]) {
   const start = discoveryServiceSource.indexOf(`export const ${functionName}`);
   if (start < 0) throw new Error(`${functionName} is missing.`);
@@ -213,7 +233,7 @@ const mockCloudSource = fs.readFileSync(
   path.join(__dirname, "mock-cloud", "mock-cloud.cjs"),
   "utf8"
 );
-if (/D(?:05|10|15).*AI audit completed\./.test(mockCloudSource)) {
+if (/D(?:05|10|15|20).*AI audit completed\./.test(mockCloudSource)) {
   throw new Error("Mock cloud still reports provider generation as a completed audit before deterministic validation.");
 }
 if (!mockCloudSource.includes("deterministic evidence/checklist validation is pending")) {
@@ -271,5 +291,5 @@ if (!errors.some((error) => error.includes("valid date-time"))) {
 }
 
 console.log(
-  "Discovery D05/D10/D15 compatibility verification passed (full envelopes, scope-evidence authority guard, validation-before-persist, explicit local failure activity, const + date-time enforcement)."
+  "Discovery D05/D10/D15/D20 compatibility verification passed (full envelopes, scope-evidence authority guard, validation-before-persist, explicit local failure activity, const + date-time enforcement)."
 );

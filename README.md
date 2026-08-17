@@ -427,6 +427,15 @@ ForgePilot supports `020-d15-database` as an executable Discovery stage when the
 
 ## Discovery evidence authority
 
-D05, D10 and D15 provider output is not considered a completed audit merely because the AI process returned valid JSON. Before persistence, ForgePilot deterministically validates every nested `evidence[]` path against the sealed 010-Startup workspace manifest. Approved runtime virtual evidence is limited to `@startup/scope`, `@startup/seal`, `@startup/workspace-manifest`, and `@discovery/context`. An excluded/unapproved repository path causes the local save directive to fail, emits a failed Activity entry, and the stage is not marked completed.
+D05, D10, D15 and D20 provider output is not considered a completed audit merely because the AI process returned valid JSON. Before persistence, ForgePilot deterministically validates every nested `evidence[]` path against the sealed 010-Startup workspace manifest. Approved runtime virtual evidence is limited to `@startup/scope`, `@startup/seal`, `@startup/workspace-manifest`, and `@discovery/context`. An excluded/unapproved repository path causes the local save directive to fail, emits a failed Activity entry, and the stage is not marked completed.
 
-The mock workflow server also requires the loaded D05/D10/D15 compiled prompts to contain the current scope-evidence guard. This prevents an older AI Factory runtime package from silently running against the newer desktop contract.
+The mock workflow server also requires the loaded D05/D10/D15/D20 compiled prompts to contain the current scope-evidence guard. This prevents an older AI Factory runtime package from silently running against the newer desktop contract.
+
+
+## D20 Dependencies / Integrations runtime
+
+ForgePilot supports `020-d20-dependencies-integrations` as an executable Discovery stage when the AI Factory runtime manifest marks it `available` and the D20 package exists. D20 has HARD prerequisites `020-d05-project-overview` and `020-d10-architecture`, loads the D20 compiled prompt/schema from the AI Factory runtime, and persists the stage result under the active audit snapshot.
+
+D20 executes semantic task `D20_DEPENDENCIES_INTEGRATIONS`, validates the full metadata envelope, requires exactly `DI-001` through `DI-102`, validates canonical `DI-F###` / `DI-S###` / `DI-U###` / `DI-C###` records, then validates all nested evidence paths against the sealed Startup workspace authority **before persistence**.
+
+D20 restart resets only D20 stage artifacts/profile/coverage/findings for the active audit. D15 is not a D20 prerequisite; both D15 and D20 independently require D05 + D10 according to the server-published manifest.

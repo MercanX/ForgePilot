@@ -12,7 +12,7 @@ import type {
   WorkflowStage
 } from "@shared/schemas/run";
 
-import { runD05StatusJob, runD10StatusJob, runD15StatusJob } from "../discovery/discoverySubstageService";
+import { runD05StatusJob, runD10StatusJob, runD15StatusJob, runD20StatusJob } from "../discovery/discoverySubstageService";
 import { runScopeStatusJob } from "../startup/startupJobService";
 
 const STATE_RELATIVE_PATH = path.join(".forgepilot", "ai-factory-state.json");
@@ -258,6 +258,7 @@ export const createProjectWorkflowState = (projectRootPath: string): ProjectWork
       let d05Completed = false;
       let d10Completed = false;
       let d15Completed = false;
+      let d20Completed = false;
       if (startupSealed) {
         try {
           d05Completed = (await runD05StatusJob(projectRootPath, false)).state === "completed";
@@ -278,6 +279,13 @@ export const createProjectWorkflowState = (projectRootPath: string): ProjectWork
             d15Completed = false;
           }
         }
+        if (d05Completed && d10Completed) {
+          try {
+            d20Completed = (await runD20StatusJob(projectRootPath, false)).state === "completed";
+          } catch {
+            d20Completed = false;
+          }
+        }
       }
 
       const cloudById = new Map(workflow.stages.map((stage) => [stage.id, stage]));
@@ -287,6 +295,7 @@ export const createProjectWorkflowState = (projectRootPath: string): ProjectWork
       if (d05Completed) completedIds.add("020-d05-project-overview");
       if (d10Completed) completedIds.add("020-d10-architecture");
       if (d15Completed) completedIds.add("020-d15-database");
+      if (d20Completed) completedIds.add("020-d20-dependencies-integrations");
 
       for (const [stageId, state] of Object.entries(document.stages)) {
         if (state.status === "completed") completedIds.add(stageId);

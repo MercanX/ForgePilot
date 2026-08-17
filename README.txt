@@ -1,30 +1,30 @@
-ForgePilot 0.5.3 — D15 Database + Discovery scope-evidence guard
+ForgePilot 0.5.4 — D20 Dependencies / Integrations + Discovery scope-evidence guard
 
-This package extends the working D05/D10 Discovery runtime with D15 Database.
+This package extends the working D05/D10/D15 Discovery runtime with D20 Dependencies / Integrations.
 
 Executable Discovery stages:
 - 020-D05-Project-Overview
 - 020-D10-Architecture
 - 020-D15-Database
+- 020-D20-Dependencies-Integrations
 
-Rules:
-- D15 requires completed D05 + D10 results for the same sealed Startup workspace.
-- Stage dependencies come from the AI Factory runtime STAGE-EXECUTION-MANIFEST.json.
-- Restarting D15 resets only D15 artifacts/state.
-- The project-local audit artifacts are the readiness source of truth.
+Dependency rules:
+- D20 requires completed D05 + D10 results for the same sealed Startup workspace.
+- D25 remains Not Ready and, when implemented, requires D05 + D10 + D15 + D20.
+- Restarting D20 resets only D20 artifacts/state.
 
-D15 provider execution:
-- Uses D15-Database/prompt/database.compiled.prompt.md.
-- Uses D15-Database/contracts/database-output.schema.json.
-- Uses Settings -> AI Output Language for human-readable JSON values.
-- Claude Code remains read-only for repository exploration; mutating database commands are not part of D15.
+D20 provider execution:
+- Uses D20-Dependencies-Integrations/prompt/dependencies-integrations.compiled.prompt.md.
+- Uses D20-Dependencies-Integrations/contracts/dependencies-integrations-output.schema.json.
+- Executes semantic task D20_DEPENDENCIES_INTEGRATIONS.
+- Requires exactly DI-001..DI-102 checklist dispositions.
 
-D15 local persistence:
-  <project>/.ai-factory/020-Discovery/audits/<AUD-ID>/stages/D15-Database.json
+D20 local persistence:
+  <project>/.ai-factory/020-Discovery/audits/<AUD-ID>/stages/D20-Dependencies-Integrations.json
 
-Shared audit state is updated in PROJECT_PROFILE.json, FINDINGS.json, AUDIT_COVERAGE.json and AUDIT_META.json.
+Discovery evidence authority:
+- D05/D10/D15/D20 repository evidence must resolve to the sealed 010-Startup workspace manifest or an approved virtual authority path.
+- Excluded/unapproved paths are rejected before persistence and do not complete the stage.
+- Provider generation and deterministic stage completion remain separate Activity states.
 
-Evidence authority:
-- D05/D10/D15 repository evidence must resolve to the sealed Startup workspace manifest or an approved virtual authority path.
-- Unauthorized/excluded evidence fails deterministic local validation and is not persisted as a completed stage.
-- Provider generation completion is reported separately from deterministic stage validation.
+The workflow server reads the authoritative AI Factory STAGE-EXECUTION-MANIFEST.json; stage dependency relationships are not hard-coded into the renderer.

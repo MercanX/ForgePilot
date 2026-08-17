@@ -7,11 +7,11 @@ ForgePilot treats the workflow server as the runtime stage-catalog authority. Th
 - `implementation_status: available` is necessary but not sufficient: the stage package must exist and the server must expose an execution directive.
 - HARD requirements block execution until satisfied.
 - SOFT requirements remain supported but do not block execution. The current canonical manifest has no approved SOFT relationships.
-- D05, D10 and D15 are executable in the current runtime. D15 requires D05 + D10.
+- D05, D10, D15 and D20 are executable in the current runtime. D15 and D20 each require D05 + D10.
 
 ## Evidence authority
 
-The sealed 010-Startup workspace manifest is the deterministic repository-evidence authority for Discovery. D05/D10/D15 save operations validate all nested `evidence[]` entries before writing stage state.
+The sealed 010-Startup workspace manifest is the deterministic repository-evidence authority for Discovery. D05/D10/D15/D20 save operations validate all nested `evidence[]` entries before writing stage state.
 
 Allowed evidence paths are:
 

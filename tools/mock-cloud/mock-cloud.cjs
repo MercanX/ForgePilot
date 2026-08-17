@@ -1113,6 +1113,16 @@ const server = http.createServer(async (request, response) => {
       try {
         const d10Prompt = loadDiscoveryD10Prompt();
         const d10Schema = loadDiscoveryD10Schema();
+        const d10CheckIdPattern = d10Schema?.$defs?.checkDisposition?.properties?.check_id?.pattern;
+        let d10CheckIdPatternCompatible = false;
+        if (typeof d10CheckIdPattern === "string") {
+          const checkIdRegex = new RegExp(d10CheckIdPattern);
+          d10CheckIdPatternCompatible =
+            checkIdRegex.test("AR-001") &&
+            checkIdRegex.test("AR-082") &&
+            !checkIdRegex.test("OV-001") &&
+            !checkIdRegex.test("AR-ABC");
+        }
         d10RuntimeCompatible =
           d10Prompt.includes("AR-001") &&
           d10Prompt.includes("AR-082") &&
@@ -1120,7 +1130,7 @@ const server = http.createServer(async (request, response) => {
           d10Prompt.includes("D05") &&
           d10Schema?.properties?.substage?.const === "D10-Architecture" &&
           d10Schema?.properties?.result?.properties?.substage?.const === "D10-Architecture" &&
-          d10Schema?.$defs?.checkDisposition?.properties?.check_id?.pattern === "^AR-\\d{3}$" &&
+          d10CheckIdPatternCompatible &&
           Array.isArray(d10Schema?.$defs?.checkDisposition?.required) &&
           d10Schema.$defs.checkDisposition.required.includes("unknown_ids");
       } catch {

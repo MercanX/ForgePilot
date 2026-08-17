@@ -147,7 +147,7 @@ writeFileSync(
     $defs: {
       checkDisposition: {
         type: "object",
-        properties: { check_id: { type: "string", pattern: "^AR-\\d{3}$" } },
+        properties: { check_id: { type: "string", pattern: "^AR-(00[1-9]|0[1-7][0-9]|08[0-2])$" } },
         required: ["check_id", "status", "evidence", "finding_ids", "unknown_ids", "contradiction_ids", "strength_ids", "notes", "confidence"]
       }
     }

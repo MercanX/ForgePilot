@@ -1,5 +1,5 @@
 {
-  "lastFingerprint": "9a6e435e15ae8f37a25f27828f743f3169c3d9c2",
+  "lastFingerprint": "234277004a28b3bbf64e163f20e4710a465f9eaf",
   "lastDate": "2026-08-17",
-  "lastContent": "- Moved Discovery stage catalog authority from project-local manifests to the AI Factory runtime package, published via the workflow server.\n- Updated project workflow state to consume server-published stage metadata, removing project-local catalog loading.\n- Added support for `FORGEPILOT_DISCOVERY_MANIFEST` environment variable to override the runtime manifest location.\n- Clarified runtime versus project state ownership in documentation, separating stage catalog authority from project-specific artifacts.\n- Updated AGENTS.md and README to reflect the new server-driven Discovery stage execution model."
+  "lastContent": "- Relaxed D10 check ID pattern validation in mock-cloud to accept any regex matching the AR-001 to AR-082 range.\n- Updated the verify-execution-protocol schema to use a more precise check ID pattern that restricts IDs to the valid AR-001 through AR-082 range.\n- Improved compatibility detection by testing the pattern against sample IDs instead of requiring an exact regex string match."
 }

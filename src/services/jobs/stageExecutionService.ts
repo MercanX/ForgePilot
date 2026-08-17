@@ -532,6 +532,73 @@ export const validateOutputContract = (
   return validateJsonSchemaValue(value, schema, schema);
 };
 
+type StructuralOutputRepair = {
+  movedResultKeys: string[];
+  value: Record<string, unknown> | null;
+};
+
+/**
+ * A recurring provider formatting defect closes `result` too early and then
+ * emits fields that the schema requires inside `$.result` at the envelope
+ * root. This repair is deliberately structural only: it moves an existing
+ * value without inventing, deleting, or rewriting semantic content.
+ */
+export const repairProviderOutputStructure = (
+  value: Record<string, unknown> | null,
+  schema: Record<string, unknown> | null
+): StructuralOutputRepair => {
+  if (!value || !schema || !isJsonObject(value.result)) {
+    return { movedResultKeys: [], value };
+  }
+
+  const rootProperties = isJsonObject(schema.properties) ? schema.properties : null;
+  const resultSchema = rootProperties && isJsonObject(rootProperties.result)
+    ? rootProperties.result
+    : null;
+  const resultProperties = resultSchema && isJsonObject(resultSchema.properties)
+    ? resultSchema.properties
+    : null;
+
+  if (!rootProperties || !resultProperties) {
+    return { movedResultKeys: [], value };
+  }
+
+  const repairedRoot: Record<string, unknown> = { ...value };
+  const repairedResult: Record<string, unknown> = { ...(value.result as Record<string, unknown>) };
+  const movedResultKeys: string[] = [];
+
+  for (const key of Object.keys(resultProperties)) {
+    if (key in repairedResult || !(key in repairedRoot) || key in rootProperties) {
+      continue;
+    }
+
+    repairedResult[key] = repairedRoot[key];
+    delete repairedRoot[key];
+    movedResultKeys.push(key);
+  }
+
+  if (movedResultKeys.length === 0) {
+    return { movedResultKeys, value };
+  }
+
+  repairedRoot.result = repairedResult;
+  return { movedResultKeys, value: repairedRoot };
+};
+
+const CONTRACT_RECOVERY_MARKER = "forgepilot-contract-recovery-v1";
+
+const contractRecoveryPayload = (
+  candidate: Record<string, unknown> | null,
+  errors: string[]
+): Record<string, unknown> | null =>
+  candidate
+    ? {
+        marker: CONTRACT_RECOVERY_MARKER,
+        candidate,
+        contract_errors: errors
+      }
+    : null;
+
 /**
  * Providers occasionally wrap the requested semantic object even when the
  * prompt asks for raw JSON (for example `{ proposal: {...} }`).  Contract
@@ -932,7 +999,39 @@ export const createStageExecutionService = (
         request.providerId,
         directive.mode === "semantic" ? directive.outputSchema : null
       );
-      const rawParsedOutput = parsedSelection.value;
+      let rawParsedOutput = parsedSelection.value;
+      let movedResultKeys: string[] = [];
+
+      if (directive.mode === "semantic" && rawParsedOutput) {
+        const structuralRepair = repairProviderOutputStructure(
+          rawParsedOutput,
+          directive.outputSchema
+        );
+        rawParsedOutput = structuralRepair.value;
+        movedResultKeys = structuralRepair.movedResultKeys;
+
+        if (movedResultKeys.length > 0) {
+          const message =
+            `Provider output structural auto-repair applied: moved ${movedResultKeys.join(", ")} into $.result.`;
+          emitDebug(request, onDebug, {
+            kind: "contract",
+            taskId: started.handle.id,
+            processId: started.handle.processId,
+            message,
+            text: null,
+            exitCode: null,
+            signal: null,
+            timestamp: new Date().toISOString()
+          });
+          emit(request, onProgress, {
+            message,
+            progress: Math.max(directive.progressStarted, directive.progressCompleted - 1),
+            status: "started",
+            stepId: directive.id
+          });
+        }
+      }
+
       const parsedOutput =
         directive.mode === "semantic"
           ? selectContractOutput(rawParsedOutput, directive.outputSchema)
@@ -983,10 +1082,20 @@ export const createStageExecutionService = (
               ? `Provider output contract failed: ${outputContractErrors[0]} (${describeJsonShape(rawParsedOutput)})`
               : "Provider verification returned ok != true.";
 
+      const recoverableContractFailure =
+        result.status === "completed" &&
+        directive.mode === "semantic" &&
+        parsedOutput !== null &&
+        outputContractErrors.length > 0;
+
       emit(request, onProgress, {
-        message: directiveSucceeded ? directive.messageCompleted : failureMessage,
+        message: directiveSucceeded
+          ? directive.messageCompleted
+          : recoverableContractFailure
+            ? `Provider output contract needs repair: ${outputContractErrors[0]}`
+            : failureMessage,
         progress: directive.progressCompleted,
-        status: directiveSucceeded ? "completed" : "failed",
+        status: directiveSucceeded ? "completed" : recoverableContractFailure ? "started" : "failed",
         stepId: directive.id
       });
 
@@ -1205,9 +1314,12 @@ export const createStageExecutionService = (
               : !semanticOutputPresent
                 ? "Provider did not return a valid final JSON object."
                 : !outputContractPassed
-                  ? `Provider output contract failed: ${provider.outputContractErrors[0]}`
+                  ? `Provider output contract failed: ${provider.outputContractErrors.join(" | ")}`
                   : "Provider verification returned ok != true.",
-          output: provider.parsedOutput,
+          output:
+            !succeeded && processSucceeded && semanticOutputPresent && !outputContractPassed
+              ? contractRecoveryPayload(provider.parsedOutput, provider.outputContractErrors)
+              : provider.parsedOutput,
           status: succeeded ? "completed" : "failed"
         };
       } catch (error) {

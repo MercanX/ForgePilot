@@ -59,9 +59,9 @@ const mockRequire = (id) => {
 const evaluator = new Function('require', 'module', 'exports', '__filename', '__dirname', compiled.outputText);
 evaluator(mockRequire, runtimeModule, runtimeModule.exports, sourcePath, path.dirname(sourcePath));
 
-const { parseLastJsonObject, validateOutputContract } = runtimeModule.exports;
-if (typeof parseLastJsonObject !== 'function' || typeof validateOutputContract !== 'function') {
-  throw new Error('Expected parser exports were not found.');
+const { parseLastJsonObject, validateOutputContract, repairProviderOutputStructure } = runtimeModule.exports;
+if (typeof parseLastJsonObject !== 'function' || typeof validateOutputContract !== 'function' || typeof repairProviderOutputStructure !== 'function') {
+  throw new Error('Expected parser/repair exports were not found.');
 }
 
 const schema = {
@@ -151,3 +151,42 @@ console.log('PASS provider-output parser regression');
 console.log('- truncated Claude result tail: rejected as contract root');
 console.log('- complete Claude assistant event: recovered and selected');
 console.log('- complete Claude result event: still accepted');
+
+const structuralSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['audit_id', 'result'],
+  properties: {
+    audit_id: { type: 'string' },
+    result: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['substage', 'summary', 'repository_identity'],
+      properties: {
+        substage: { type: 'string' },
+        summary: { type: 'string' },
+        repository_identity: { type: 'object' }
+      }
+    }
+  }
+};
+const misplaced = {
+  audit_id: 'AUD-002',
+  result: { substage: 'D05-Project-Overview', summary: 'kept exactly' },
+  repository_identity: { software_type: 'web app' }
+};
+const structuralRepair = repairProviderOutputStructure(misplaced, structuralSchema);
+if (JSON.stringify(structuralRepair.movedResultKeys) !== JSON.stringify(['repository_identity'])) {
+  throw new Error(`Structural repair did not move the misplaced result field: ${JSON.stringify(structuralRepair)}`);
+}
+if (structuralRepair.value.repository_identity !== undefined) {
+  throw new Error('Structural repair left the misplaced field at top level.');
+}
+if (structuralRepair.value.result.repository_identity.software_type !== 'web app') {
+  throw new Error('Structural repair changed/lost the semantic value.');
+}
+if (validateOutputContract(structuralRepair.value, structuralSchema).length !== 0) {
+  throw new Error(`Structural repair did not satisfy the schema: ${validateOutputContract(structuralRepair.value, structuralSchema).join('; ')}`);
+}
+
+console.log('- misplaced $.result properties: deterministically moved without semantic rewrite');

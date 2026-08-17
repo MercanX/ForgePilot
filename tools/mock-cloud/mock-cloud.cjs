@@ -189,6 +189,16 @@ const DISCOVERY_D25_SCHEMA_PATH =
 const loadDiscoveryD25Prompt = () => readFileSync(DISCOVERY_D25_PROMPT_PATH, "utf8");
 const loadDiscoveryD25Schema = () => JSON.parse(readFileSync(DISCOVERY_D25_SCHEMA_PATH, "utf8"));
 
+const DISCOVERY_CONTRACT_REPAIR_TASK = "DISCOVERY_CONTRACT_REPAIR";
+const CONTRACT_RECOVERY_MARKER = "forgepilot-contract-recovery-v1";
+const DISCOVERY_REPAIRABLE_TASK_IDS = new Set([
+  "D05_PROJECT_OVERVIEW",
+  "D10_ARCHITECTURE",
+  "D15_DATABASE",
+  "D20_DEPENDENCIES_INTEGRATIONS",
+  "D25_BACKEND"
+]);
+
 const hasDiscoveryScopeEvidenceGuard = (prompt) =>
   prompt.includes("@startup/scope") &&
   prompt.includes("default proactive scanning") &&
@@ -480,8 +490,38 @@ const createDiscoveryD25Prompt = (requestBody) => {
     .replaceAll("{{DISCOVERY_CONTEXT_JSON}}", JSON.stringify(runtimeInputs.discovery_context ?? {}));
 };
 
+const createDiscoveryContractRepairPrompt = (requestBody) => {
+  const task = requestBody.localExecution?.semantic_task ?? {};
+  const runtimeInputs = task.runtime_inputs ?? {};
+  const targetTaskId = runtimeInputs.target_semantic_task_id;
+  if (!DISCOVERY_REPAIRABLE_TASK_IDS.has(targetTaskId)) {
+    throw new Error(`Unsupported Discovery contract-repair target: ${String(targetTaskId)}`);
+  }
+
+  const targetSchema = semanticOutputSchema({ semantic_task: { semantic_task_id: targetTaskId } });
+  return [
+    "ForgePilot Discovery provider-output CONTRACT REPAIR pass.",
+    "This is NOT a new repository audit and NOT a discovery scan.",
+    "Repository rescan is forbidden. Do not call Read, Glob, Grep, Agent, PowerShell, Bash, web, or any other exploration tool.",
+    "Use only the supplied candidate JSON, contract errors, and target schema.",
+    "Preserve every existing semantic fact, evidence path, finding, strength, unknown, contradiction, checklist disposition, and narrative value unless the contract itself requires a structural change.",
+    "When a required value already exists at the wrong JSON level/path, move it to the schema-required location rather than recreating it.",
+    "When a required field is truly absent, populate it only from information already present elsewhere in the candidate JSON. Never invent repository facts and never add new evidence.",
+    "Return the FULL corrected JSON envelope, not a patch, diff, explanation, or partial object.",
+    "Return exactly one raw JSON object. No Markdown fences and no prose before/after JSON.",
+    `target_semantic_task_id: ${String(targetTaskId)}`,
+    `contract_errors: ${JSON.stringify(runtimeInputs.contract_errors ?? [])}`,
+    `candidate_output: ${JSON.stringify(runtimeInputs.candidate_output ?? {})}`,
+    `target_schema: ${JSON.stringify(targetSchema)}`
+  ].join("\n");
+};
+
 const createPrompt = (requestBody) => {
   const semanticTask = requestBody.localExecution?.semantic_task?.semantic_task_id;
+
+  if (semanticTask === DISCOVERY_CONTRACT_REPAIR_TASK) {
+    return createDiscoveryContractRepairPrompt(requestBody);
+  }
 
   if (semanticTask === "SCOPE_PROPOSAL") {
     return createStartupScopePrompt(requestBody);
@@ -515,6 +555,14 @@ const createPrompt = (requestBody) => {
 };
 const getStageId = (requestBody) => {
   const semanticTask = requestBody.localExecution?.semantic_task?.semantic_task_id;
+  if (semanticTask === DISCOVERY_CONTRACT_REPAIR_TASK) {
+    const targetTaskId = requestBody.localExecution?.semantic_task?.runtime_inputs?.target_semantic_task_id;
+    if (targetTaskId === "D05_PROJECT_OVERVIEW") return DISCOVERY_D05_STAGE_ID;
+    if (targetTaskId === "D10_ARCHITECTURE") return DISCOVERY_D10_STAGE_ID;
+    if (targetTaskId === "D15_DATABASE") return DISCOVERY_D15_STAGE_ID;
+    if (targetTaskId === "D20_DEPENDENCIES_INTEGRATIONS") return DISCOVERY_D20_STAGE_ID;
+    if (targetTaskId === "D25_BACKEND") return DISCOVERY_D25_STAGE_ID;
+  }
   if (semanticTask === "SCOPE_PROPOSAL") {
     return "010-startup:scope-proposal";
   }
@@ -547,6 +595,7 @@ const getStageId = (requestBody) => {
 };
 const createTask = (jobId, requestBody) => {
   const stageId = getStageId(requestBody);
+  const semanticTaskId = requestBody.localExecution?.semantic_task?.semantic_task_id;
   return {
     id: randomUUID(),
     jobId,
@@ -558,6 +607,10 @@ const createTask = (jobId, requestBody) => {
         outputLanguage: requestBody.outputLanguage ?? "Turkish",
         source: "mock-cloud",
         stageId,
+        toolPolicy:
+          semanticTaskId === DISCOVERY_CONTRACT_REPAIR_TASK
+            ? "no-repository-tools"
+            : "read-only-repository",
         timeoutMs: Math.min(10_800_000, Math.max(300_000, Number(requestBody.timeoutMs) || 5_400_000))
       }
     },
@@ -637,6 +690,13 @@ const semanticOutputSchema = (localExecution) => {
   }
   if (taskId === "D25_BACKEND") {
     return loadDiscoveryD25Schema();
+  }
+  if (taskId === DISCOVERY_CONTRACT_REPAIR_TASK) {
+    const targetTaskId = localExecution?.semantic_task?.runtime_inputs?.target_semantic_task_id;
+    if (!DISCOVERY_REPAIRABLE_TASK_IDS.has(targetTaskId)) {
+      throw new Error(`Unsupported Discovery contract-repair target: ${String(targetTaskId)}`);
+    }
+    return semanticOutputSchema({ semantic_task: { semantic_task_id: targetTaskId } });
   }
   return discoverySemanticOutputSchema(localExecution);
 };
@@ -1316,9 +1376,51 @@ const discoveryD25DirectiveFor = (session) => {
   );
 };
 
+const contractRecoveryPayloadFrom = (value) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  if (value.marker !== CONTRACT_RECOVERY_MARKER) return null;
+  if (!value.candidate || typeof value.candidate !== "object" || Array.isArray(value.candidate)) return null;
+  const contractErrors = Array.isArray(value.contract_errors)
+    ? value.contract_errors.filter((item) => typeof item === "string")
+    : [];
+  return { candidate: value.candidate, contractErrors };
+};
+
+const pendingSemanticTaskId = (directive) =>
+  directive?.job?.task?.instructions?.metadata?.localExecution?.semantic_task?.semantic_task_id ?? null;
+
+const contractRepairDirectiveFor = (session) => {
+  const repair = session.contractRepair;
+  return providerDirective(
+    session,
+    {
+      semantic_task: {
+        semantic_task_id: DISCOVERY_CONTRACT_REPAIR_TASK,
+        runtime_inputs: {
+          target_semantic_task_id: repair.targetSemanticTaskId,
+          candidate_output: repair.candidateOutput,
+          contract_errors: repair.contractErrors
+        }
+      }
+    },
+    "semantic",
+    false,
+    repair.targetSaveAs,
+    [
+      "Repairing the existing provider JSON contract; repository rescan is disabled.",
+      "Provider JSON contract repair finished; validating the repaired output."
+    ],
+    [90, 92]
+  );
+};
+
 const nextDirectiveFor = (session) => {
   if (session.failure) {
     return terminalDirective("failed", session.failure, session.lastProgress ?? 0);
+  }
+
+  if (session.contractRepair) {
+    return contractRepairDirectiveFor(session);
   }
 
   if (session.stageId === STARTUP_STAGE_ID) {
@@ -1367,7 +1469,35 @@ const applyPreviousResult = (session, previous) => {
   session.lastProgress = session.pending.progressCompleted ?? session.lastProgress ?? 0;
 
   if (previous.status !== "completed") {
-    session.failure = previous.message || `Directive ${session.pending.id} failed.`;
+    const recovery = contractRecoveryPayloadFrom(previous.output);
+    const semanticTaskId = pendingSemanticTaskId(session.pending);
+    const isRepairDirective = semanticTaskId === DISCOVERY_CONTRACT_REPAIR_TASK;
+
+    if (
+      !isRepairDirective &&
+      recovery &&
+      session.pending.kind === "provider" &&
+      session.pending.mode === "semantic" &&
+      session.pending.saveAs &&
+      DISCOVERY_REPAIRABLE_TASK_IDS.has(semanticTaskId) &&
+      session.contractRepairAttempts < 1
+    ) {
+      session.contractRepair = {
+        candidateOutput: recovery.candidate,
+        contractErrors: recovery.contractErrors,
+        targetSaveAs: session.pending.saveAs,
+        targetSemanticTaskId: semanticTaskId
+      };
+      session.contractRepairAttempts += 1;
+      session.lastAppliedDirectiveId = session.pending.id;
+      session.step += 1;
+      session.pending = null;
+      return;
+    }
+
+    session.failure = isRepairDirective
+      ? `Provider JSON contract repair failed: ${previous.message || "repair output is still invalid."}`
+      : previous.message || `Directive ${session.pending.id} failed.`;
     session.lastAppliedDirectiveId = session.pending.id;
     session.pending = null;
     return;
@@ -1375,6 +1505,10 @@ const applyPreviousResult = (session, previous) => {
 
   if (session.pending.saveAs) {
     session.context[session.pending.saveAs] = previous.output;
+  }
+
+  if (pendingSemanticTaskId(session.pending) === DISCOVERY_CONTRACT_REPAIR_TASK) {
+    session.contractRepair = null;
   }
 
   session.lastAppliedDirectiveId = session.pending.id;
@@ -1385,6 +1519,8 @@ const applyPreviousResult = (session, previous) => {
 const createExecution = (body) => {
   const session = {
     context: {},
+    contractRepair: null,
+    contractRepairAttempts: 0,
     failure: null,
     id: randomUUID(),
     lastAppliedDirectiveId: null,
@@ -1490,6 +1626,8 @@ const server = http.createServer(async (request, response) => {
           d05Prompt.includes("OV-082") &&
           d05Prompt.includes("{{OUTPUT_LANGUAGE}}") &&
           hasDiscoveryScopeEvidenceGuard(d05Prompt) &&
+          d05Prompt.includes("Do not run project-root Glob") &&
+          d05Prompt.includes("APPROVED_STARTUP_SCOPE` is the execution scan plan") &&
           d05Schema?.properties?.substage?.const === "D05-Project-Overview" &&
           d05Schema?.properties?.result?.properties?.substage?.const === "D05-Project-Overview" &&
           Array.isArray(d05Schema?.$defs?.checkDisposition?.required) &&
@@ -1634,10 +1772,10 @@ const server = http.createServer(async (request, response) => {
         d25RuntimeCompatible;
       sendJson(response, 200, {
         status: compatible ? "ok" : "update-required",
-        serverVersion: "mock-0.5.7-scan-evidence-autorepair",
+        serverVersion: "mock-0.5.8-contract-recovery",
         protocolVersion: "2",
         message: compatible
-          ? "Mock cloud connected (Startup 2.1.0, Discovery D05 + D10 + D15 + D20 + D25, scan/evidence separation + checklist auto-repair contract enforced)"
+          ? "Mock cloud connected (Startup 2.1.0, Discovery D05 + D10 + D15 + D20 + D25, targeted scan + structural/contract recovery + checklist auto-repair enforced)"
           : !protocolCompatible
             ? "Desktop protocol v2 is required for server-driven execution directives."
             : !startupRuntimeCompatible

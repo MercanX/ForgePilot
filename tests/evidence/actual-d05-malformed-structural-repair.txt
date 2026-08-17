@@ -1,0 +1,22 @@
+Exact regression input: /mnt/data/Pasted markdown(20260817-191133).md
+Observed contract errors before repair: 32
+Observed structural repair: moved 16 existing top-level fields into $.result
+Moved keys:
+repository_identity
+technologies
+runtime_entry_points
+components
+configuration_model
+documentation_assessment
+data_and_integrations
+actors_and_interfaces
+scope_assessment
+audit_applicability
+findings
+strengths
+unknowns
+contradictions
+checklist
+handoff
+Contract errors after repair: 0
+No semantic values were regenerated; existing values were moved only.

@@ -1,6 +1,6 @@
 {
   "name": "forgepilot",
-  "version": "0.5.7",
+  "version": "0.5.8",
   "description": "Open-source desktop execution client for AI Factory.",
   "private": true,
   "type": "module",

@@ -83,7 +83,9 @@ writeFileSync(
     "OV-001",
     "OV-082",
     "@startup/scope",
-    "**Startup scan scope and evidence lookup are separate.** Startup manifest membership is not required for targeted evidence lookup. Keep default proactive scanning inside Startup scope."
+    "**Startup scan scope and evidence lookup are separate.** Startup manifest membership is not required for targeted evidence lookup. Keep default proactive scanning inside Startup scope.",
+    "`APPROVED_STARTUP_SCOPE` is the execution scan plan for D05.",
+    "Do not run project-root Glob or equivalent repository-wide traversal."
   ].join("\n"),
   "utf8"
 );
@@ -642,6 +644,24 @@ const providerOutputFor = (directive) => {
       workspace_hash: "c".repeat(64)
     };
   }
+  if (task?.semantic_task_id === "DISCOVERY_CONTRACT_REPAIR") {
+    const prompt = directive.job.task.instructions.body;
+    if (directive.job.task.instructions.metadata.toolPolicy !== "no-repository-tools") {
+      throw new Error("Contract repair must disable repository tools.");
+    }
+    if (!prompt.includes("Repository rescan is forbidden") || !prompt.includes("FULL corrected JSON envelope")) {
+      throw new Error("Contract repair prompt does not enforce no-rescan/full-envelope behavior.");
+    }
+    const targetTaskId = task.runtime_inputs?.target_semantic_task_id;
+    if (targetTaskId !== "D05_PROJECT_OVERVIEW") {
+      throw new Error(`Unexpected repair target ${String(targetTaskId)}`);
+    }
+    const candidate = JSON.parse(JSON.stringify(task.runtime_inputs?.candidate_output ?? {}));
+    candidate.result = candidate.result ?? {};
+    candidate.result.checklist = candidate.result.checklist ?? [];
+    candidate.result.summary = candidate.result.summary ?? "fixture overview recovered from existing candidate context";
+    return candidate;
+  }
   throw new Error(`Unexpected provider task ${String(task?.semantic_task_id)}`);
 };
 
@@ -665,11 +685,12 @@ const workflowStage = async (stageId) => {
   return workflow.stages.find((stage) => stage.id === stageId);
 };
 
-const runStage = async (stageId, expectedOutcome = "completed", newRun = false) => {
+const runStage = async (stageId, expectedOutcome = "completed", newRun = false, forceContractRepair = false) => {
   let executionId = null;
   let previous = null;
   const providerTasks = [];
   const localOperations = [];
+  let injectedContractFailure = false;
 
   for (let index = 0; index < 20; index += 1) {
     const next = await requestJson("POST", "/executions/next", {
@@ -706,6 +727,23 @@ const runStage = async (stageId, expectedOutcome = "completed", newRun = false) 
       }
       output = providerOutputFor(directive);
       await submitFakeProviderResult(directive, output);
+
+      if (forceContractRepair && !injectedContractFailure && taskId === "D05_PROJECT_OVERVIEW") {
+        injectedContractFailure = true;
+        const candidate = JSON.parse(JSON.stringify(output));
+        delete candidate.result.checklist;
+        previous = {
+          directiveId: directive.id,
+          message: "Provider output contract failed: $.result.checklist: required property is missing",
+          output: {
+            marker: "forgepilot-contract-recovery-v1",
+            candidate,
+            contract_errors: ["$.result.checklist: required property is missing"]
+          },
+          status: "failed"
+        };
+        continue;
+      }
     }
 
     previous = { directiveId: directive.id, message: null, output, status: "completed" };
@@ -718,7 +756,7 @@ const runStage = async (stageId, expectedOutcome = "completed", newRun = false) 
   try {
     await waitForServer();
     const handshake = await requestJson("POST", "/session/handshake", {
-      desktopVersion: "0.5.7",
+      desktopVersion: "0.5.8",
       protocolVersion: "2",
       supportedCapabilities: ["stage-execution:directives-v1", "contract:010-startup@2.1.0", "contract:020-discovery@2.0.0"]
     });
@@ -832,8 +870,13 @@ const runStage = async (stageId, expectedOutcome = "completed", newRun = false) 
       throw new Error("Restarting D10 must invalidate D15, D20, and D25 according to the HARD graph.");
     }
 
-    const d05Restart = await runStage("020-d05-project-overview", "completed", true);
-    if (d05Restart.providerTasks[0] !== "D05_PROJECT_OVERVIEW") throw new Error("D05 Restart did not rerun D05 AI task.");
+    const d05Restart = await runStage("020-d05-project-overview", "completed", true, true);
+    if (
+      JSON.stringify(d05Restart.providerTasks) !==
+      JSON.stringify(["D05_PROJECT_OVERVIEW", "DISCOVERY_CONTRACT_REPAIR"])
+    ) {
+      throw new Error(`D05 contract recovery sequence was wrong: ${d05Restart.providerTasks.join(", ")}`);
+    }
     const d10AfterD05Restart = await workflowStage("020-d10-architecture");
     const d15AfterD05Restart = await workflowStage("020-d15-database");
     const d20AfterD05Restart = await workflowStage("020-d20-dependencies-integrations");
@@ -842,7 +885,7 @@ const runStage = async (stageId, expectedOutcome = "completed", newRun = false) 
       throw new Error("Restarting D05 must invalidate every currently implemented downstream Discovery stage.");
     }
 
-    console.log("Execution protocol verification passed (Startup -> D05 -> D10 -> D15 + D20 -> D25; restart invalidation follows the HARD dependency graph; compiled prompts + schemas loaded from AI Factory)." );
+    console.log("Execution protocol verification passed (Startup -> D05 -> D10 -> D15 + D20 -> D25; D05 contract failure -> no-rescan repair -> save; restart invalidation follows the HARD dependency graph; compiled prompts + schemas loaded from AI Factory)." );
   } finally {
     child.kill("SIGTERM");
     rmSync(tempRoot, { recursive: true, force: true });

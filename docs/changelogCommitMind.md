@@ -6,6 +6,12 @@ ForgePilot Discovery stage görünürlüğü AI Factory runtime içindeki `STAGE
 
 ## 2026-08-17
 
+- Added structural output repair that moves misplaced fields into `$.result` without semantic regeneration
+- Implemented contract recovery workflow with no-repository-tools policy for repair passes
+- Extended mock cloud to simulate contract repair across all Discovery stages
+- Added regression evidence for structural repair and contract recovery scenarios
+- Updated provider adapter to conditionally disable repository tools during repair passes
+
 - Separated Startup proactive scan scope from targeted evidence validation, allowing real project-contained evidence paths outside the manifest to be accepted.
 - Added deterministic checklist-only auto-repair that downgrades unverifiable CHECKED_OK rows to NOT_INSPECTED_WITH_REASON without altering canonical semantic records.
 - Implemented hard failure for unsafe evidence defects tied to findings, strengths, unknowns, or contradictions, preventing silent semantic rewrites.

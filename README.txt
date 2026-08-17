@@ -1,4 +1,4 @@
-ForgePilot 0.5.7 — Startup scan/evidence separation + checklist auto-repair + D25 Backend
+ForgePilot 0.5.8 — D05 hard Startup scan plan + structural/contract recovery + checklist auto-repair + D25 Backend
 
 This package preserves the D25-ready runtime and Claude final-output parser fix, separates Startup proactive scan scope from targeted evidence lookup, and adds deterministic safe checklist-only auto-repair before persistence.
 

@@ -1,4 +1,4 @@
-src/services/discovery/discoverySubstageService.ts: 0 diagnostics
-src/services/jobs/stageExecutionService.ts: 0 diagnostics
-src/services/jobs/localOperationRegistry.ts: 0 diagnostics
-src/services/jobs/projectWorkflowState.ts: 0 diagnostics
+stageExecutionService.ts diagnostics: 0
+claudeCodeAdapter.ts diagnostics: 0
+mock-cloud.cjs node --check: PASS
+verify-execution-protocol.cjs node --check: PASS

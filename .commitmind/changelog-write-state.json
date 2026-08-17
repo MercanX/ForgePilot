@@ -1,5 +1,5 @@
 {
-  "lastFingerprint": "69ee6c9ea7360c373987be1d547a24aacf3d2880",
+  "lastFingerprint": "ea2a1407f15eda8b696ca753a610dc431645c025",
   "lastDate": "2026-08-17",
-  "lastContent": "- Separated Startup proactive scan scope from targeted evidence validation, allowing real project-contained evidence paths outside the manifest to be accepted.\n- Added deterministic checklist-only auto-repair that downgrades unverifiable CHECKED_OK rows to NOT_INSPECTED_WITH_REASON without altering canonical semantic records.\n- Implemented hard failure for unsafe evidence defects tied to findings, strengths, unknowns, or contradictions, preventing silent semantic rewrites.\n- Updated all Discovery save jobs (D05-D25) to return auto_repair_count and surface repair activity in workflow completion messages.\n- Documented the new evidence authority model and auto-repair behavior in README, discovery execution docs, and a new scan-evidence-autorepair guide."
+  "lastContent": "- Added structural output repair that moves misplaced fields into `$.result` without semantic regeneration\n- Implemented contract recovery workflow with no-repository-tools policy for repair passes\n- Extended mock cloud to simulate contract repair across all Discovery stages\n- Added regression evidence for structural repair and contract recovery scenarios\n- Updated provider adapter to conditionally disable repository tools during repair passes"
 }

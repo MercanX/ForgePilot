@@ -103,6 +103,123 @@ try {
 }
 if (!authorityRejected) throw new Error("Workspace authority mismatch was not rejected.");
 
+const d15Envelope = {
+  ...validEnvelope,
+  result: { substage: "D15-Database", result: "PASS", summary: "database fixture", checklist: [] },
+  substage: "D15-Database"
+};
+const parsedD15 = discovery.parseAuthorizedDiscoveryStageEnvelope(d15Envelope, {
+  ...expected,
+  label: "D15",
+  substage: "D15-Database"
+});
+if (parsedD15.result.summary !== "database fixture") {
+  throw new Error("D15 full-envelope compatibility failed.");
+}
+
+const evidenceSource = `${extractDeclarations(
+  path.join(__dirname, "..", "src", "services", "discovery", "discoverySubstageService.ts"),
+  [
+    "isObject",
+    "normalizeRelativePath",
+    "evidenceArraysFromResult",
+    "D05_RUNTIME_EVIDENCE_PATHS",
+    "validateEvidence"
+  ]
+)}
+export { validateEvidence };`;
+const evidenceGuard = compileAndLoad(evidenceSource, "discovery-evidence-guard");
+const manifestPaths = new Set([
+  "website/public/js/app.js",
+  "website/public/sitethem/clinicmaster/assets/js/theme.js"
+]);
+
+evidenceGuard.validateEvidence(
+  { checklist: [{ evidence: [{ path: "website/public/js/app.js" }] }] },
+  manifestPaths,
+  "D05"
+);
+evidenceGuard.validateEvidence(
+  { checklist: [{ evidence: [{ path: "website/public/js" }] }] },
+  manifestPaths,
+  "D10"
+);
+evidenceGuard.validateEvidence(
+  { unknowns: [{ evidence: [{ path: "@startup/scope" }] }] },
+  manifestPaths,
+  "D15"
+);
+
+let excludedEvidenceRejected = false;
+try {
+  evidenceGuard.validateEvidence(
+    { checklist: [{ evidence: [{ path: "website/public/sitethem/clinicmaster/assets/vendor/wow" }] }] },
+    manifestPaths,
+    "D05"
+  );
+} catch (error) {
+  excludedEvidenceRejected = String(error?.message ?? error).includes(
+    "D05 evidence is outside the approved Startup manifest/runtime authority"
+  );
+}
+if (!excludedEvidenceRejected) {
+  throw new Error("Excluded/unapproved child evidence was not rejected by the deterministic Discovery guard.");
+}
+
+let absoluteEvidenceRejected = false;
+try {
+  evidenceGuard.validateEvidence(
+    { findings: [{ evidence: [{ path: "C:/repo/secret.env" }] }] },
+    manifestPaths,
+    "D15"
+  );
+} catch {
+  absoluteEvidenceRejected = true;
+}
+if (!absoluteEvidenceRejected) {
+  throw new Error("Absolute Discovery evidence path was not rejected.");
+}
+
+const discoveryServiceSource = fs.readFileSync(
+  path.join(__dirname, "..", "src", "services", "discovery", "discoverySubstageService.ts"),
+  "utf8"
+);
+for (const [functionName, validationNeedle] of [
+  ["runSaveD05ResultJob", "validateEvidence(result, manifestPaths, \"D05\")"],
+  ["runSaveD10ResultJob", "validateD10Evidence(result, manifestPaths)"],
+  ["runSaveD15ResultJob", "validateD15Evidence(result, manifestPaths)"]
+]) {
+  const start = discoveryServiceSource.indexOf(`export const ${functionName}`);
+  if (start < 0) throw new Error(`${functionName} is missing.`);
+  const nextExport = discoveryServiceSource.indexOf("\nexport const ", start + 20);
+  const body = discoveryServiceSource.slice(start, nextExport < 0 ? undefined : nextExport);
+  const validationIndex = body.indexOf(validationNeedle);
+  const persistIndex = body.indexOf("await writeJson(stageFile(projectRootPath, auditId");
+  if (validationIndex < 0 || persistIndex < 0 || validationIndex > persistIndex) {
+    throw new Error(`${functionName} does not validate evidence before persisting the stage result.`);
+  }
+}
+
+const executionSource = fs.readFileSync(
+  path.join(__dirname, "..", "src", "services", "jobs", "stageExecutionService.ts"),
+  "utf8"
+);
+if (!executionSource.includes('const message = error instanceof Error ? error.message : "Local operation failed.";') ||
+    !executionSource.includes('status: "failed",\n            stepId: directive.id')) {
+  throw new Error("Local validation failures are not surfaced as failed progress events.");
+}
+
+const mockCloudSource = fs.readFileSync(
+  path.join(__dirname, "mock-cloud", "mock-cloud.cjs"),
+  "utf8"
+);
+if (/D(?:05|10|15).*AI audit completed\./.test(mockCloudSource)) {
+  throw new Error("Mock cloud still reports provider generation as a completed audit before deterministic validation.");
+}
+if (!mockCloudSource.includes("deterministic evidence/checklist validation is pending")) {
+  throw new Error("Pending deterministic validation activity wording is missing.");
+}
+
 const validatorSource = extractDeclarations(
   path.join(__dirname, "..", "src", "services", "jobs", "stageExecutionService.ts"),
   ["isJsonObject", "JsonSchema", "resolveLocalSchemaRef", "jsonValuesEqual", "validateJsonSchemaValue", "validateOutputContract"]
@@ -154,5 +271,5 @@ if (!errors.some((error) => error.includes("valid date-time"))) {
 }
 
 console.log(
-  "D05/D10 contract compatibility verification passed (full envelope, authority checks, no double wrapping, const + date-time enforcement)."
+  "Discovery D05/D10/D15 compatibility verification passed (full envelopes, scope-evidence authority guard, validation-before-persist, explicit local failure activity, const + date-time enforcement)."
 );

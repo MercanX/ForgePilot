@@ -1,37 +1,24 @@
 # Discovery Stage Execution
 
-ForgePilot, `020-Discovery` runtime paketini seçili yazılım projesinin içinde aramaz. Stage catalog ve HARD/SOFT dependency sözleşmesinin authority'si AI Factory runtime paketidir. Yerel geliştirme düzeninde varsayılan konum:
+ForgePilot treats the workflow server as the runtime stage-catalog authority. The server loads AI Factory runtime `020-Discovery/STAGE-EXECUTION-MANIFEST.json` and publishes Startup plus all 14 Discovery substages through `/workflows/current`.
 
-```text
-C:\\Github\\aiFactory\\.ai-factory\\020-Discovery\\STAGE-EXECUTION-MANIFEST.json
-```
+## Availability and dependencies
 
-`FORGEPILOT_DISCOVERY_MANIFEST` environment variable ile workflow server farklı bir runtime manifest konumuna yönlendirilebilir. Workflow server manifesti yükler ve stage listesini `/workflows/current` cevabında ForgePilot desktop'a yayınlar. Desktop seçili proje altında runtime manifest aramaz.
+- `implementation_status: available` is necessary but not sufficient: the stage package must exist and the server must expose an execution directive.
+- HARD requirements block execution until satisfied.
+- SOFT requirements remain supported but do not block execution. The current canonical manifest has no approved SOFT relationships.
+- D05, D10 and D15 are executable in the current runtime. D15 requires D05 + D10.
 
-## Runtime ve project state ayrımı
+## Evidence authority
 
-AI Factory runtime tarafı şunların authority'sidir:
+The sealed 010-Startup workspace manifest is the deterministic repository-evidence authority for Discovery. D05/D10/D15 save operations validate all nested `evidence[]` entries before writing stage state.
 
-- D05-D70 stage catalog,
-- stage açıklamaları,
-- `available` / `not_ready` implementation durumu,
-- HARD/SOFT dependency contract,
-- executable provider/local directives,
-- prompt ve output schema dosyaları.
+Allowed evidence paths are:
 
-Seçili proje tarafı ise yalnız o projeye ait state/artifact authority'sidir; örneğin Startup seal, audit snapshot, stage outputs ve ForgePilot local state. Runtime stage paketinin her hedef projeye kopyalanması gerekmez.
+- an exact file in the sealed Startup workspace manifest;
+- a repository-relative directory that contains at least one manifest-authorized file;
+- one of the virtual authority paths: `@startup/scope`, `@startup/seal`, `@startup/workspace-manifest`, `@discovery/context`.
 
-## UI davranışı
+Absolute paths, path traversal, and repository paths outside the resolved Startup authority are rejected. An excluded child path cannot become valid because a Discovery checklist asks for it.
 
-Bir stage seçildiğinde audit otomatik başlamaz. ForgePilot server'ın yayınladığı metadata üzerinden description ve requirements gösterir.
-
-- Stage executable ve bütün HARD gereksinimler satisfied ise `Start stage`.
-- HARD dependency eksik ama runnable ise `Run requirement`.
-- SOFT dependency eksikse hedef stage bloklanmaz.
-- Stage katalogda var ama runtime package veya execution directive hazır değilse `Not Ready`.
-
-`Run requirement` renderer tarafında recursive olarak en yakın çalıştırılabilir prerequisite'i bulur. Backend `runOnce` aynı availability/HARD kurallarını tekrar doğrular; doğrudan IPC çağrısı UI guard'ını bypass edemez.
-
-## Stage ekleme
-
-Yeni bir stage tamamlandığında ForgePilot'a Dxx ilişkisi hard-code edilmez. İlgili stage paketi AI Factory runtime'a eklenir, workflow server execution directive'i hazırlanır ve `STAGE-EXECUTION-MANIFEST.json` availability/dependency contractı güncellenir. Desktop katalog bilgisini bir sonraki workflow yüklemesinde server'dan alır.
+A provider process finishing is only **AI generation complete**. The stage becomes completed only after schema validation, checklist/canonical validation, evidence-authority validation, successful local persistence, and the terminal workflow directive.

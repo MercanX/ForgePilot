@@ -9,6 +9,7 @@ const jobs = new Map();
 const STARTUP_STAGE_ID = "010-startup";
 const DISCOVERY_D05_STAGE_ID = "020-d05-project-overview";
 const DISCOVERY_D10_STAGE_ID = "020-d10-architecture";
+const DISCOVERY_D15_STAGE_ID = "020-d15-database";
 const executions = new Map();
 
 const DISCOVERY_MANIFEST_PATH =
@@ -29,7 +30,8 @@ const loadDiscoveryManifest = () => {
 
 const DISCOVERY_EXECUTABLE_STAGE_IDS = new Set([
   DISCOVERY_D05_STAGE_ID,
-  DISCOVERY_D10_STAGE_ID
+  DISCOVERY_D10_STAGE_ID,
+  DISCOVERY_D15_STAGE_ID
 ]);
 
 const discoveryRuntimeRoot = () => path.dirname(DISCOVERY_MANIFEST_PATH);
@@ -125,6 +127,20 @@ const DISCOVERY_D10_SCHEMA_PATH =
 const loadDiscoveryD10Prompt = () => readFileSync(DISCOVERY_D10_PROMPT_PATH, "utf8");
 const loadDiscoveryD10Schema = () => JSON.parse(readFileSync(DISCOVERY_D10_SCHEMA_PATH, "utf8"));
 
+const DISCOVERY_D15_PROMPT_PATH =
+  process.env.FORGEPILOT_DISCOVERY_D15_PROMPT ??
+  "C:\\Github\\aiFactory\\.ai-factory\\020-Discovery\\D15-Database\\prompt\\database.compiled.prompt.md";
+const DISCOVERY_D15_SCHEMA_PATH =
+  process.env.FORGEPILOT_DISCOVERY_D15_SCHEMA ??
+  "C:\\Github\\aiFactory\\.ai-factory\\020-Discovery\\D15-Database\\contracts\\database-output.schema.json";
+
+const loadDiscoveryD15Prompt = () => readFileSync(DISCOVERY_D15_PROMPT_PATH, "utf8");
+const loadDiscoveryD15Schema = () => JSON.parse(readFileSync(DISCOVERY_D15_SCHEMA_PATH, "utf8"));
+
+const hasDiscoveryScopeEvidenceGuard = (prompt) =>
+  prompt.includes("@startup/scope") &&
+  prompt.includes("Excluded evidence is a hard failure") &&
+  prompt.includes("must not be treated as completed");
 
 const sendJson = (response, statusCode, payload) => {
   response.writeHead(statusCode, {
@@ -371,6 +387,19 @@ const createDiscoveryD10Prompt = (requestBody) => {
     .replaceAll("{{DISCOVERY_CONTEXT_JSON}}", JSON.stringify(runtimeInputs.discovery_context ?? {}));
 };
 
+const createDiscoveryD15Prompt = (requestBody) => {
+  const task = requestBody.localExecution?.semantic_task ?? {};
+  const runtimeInputs = task.runtime_inputs ?? {};
+  const template = loadDiscoveryD15Prompt();
+
+  return template
+    .replaceAll("{{PROJECT_ROOT}}", requestBody.project.rootPath)
+    .replaceAll("{{OUTPUT_LANGUAGE}}", requestBody.outputLanguage ?? "Turkish")
+    .replaceAll("{{STARTUP_SCOPE_JSON}}", JSON.stringify(runtimeInputs.startup_scope ?? {}))
+    .replaceAll("{{STARTUP_SEAL_JSON}}", JSON.stringify(runtimeInputs.startup_seal ?? {}))
+    .replaceAll("{{DISCOVERY_CONTEXT_JSON}}", JSON.stringify(runtimeInputs.discovery_context ?? {}));
+};
+
 const createPrompt = (requestBody) => {
   const semanticTask = requestBody.localExecution?.semantic_task?.semantic_task_id;
 
@@ -384,6 +413,10 @@ const createPrompt = (requestBody) => {
 
   if (semanticTask === "D10_ARCHITECTURE") {
     return createDiscoveryD10Prompt(requestBody);
+  }
+
+  if (semanticTask === "D15_DATABASE") {
+    return createDiscoveryD15Prompt(requestBody);
   }
 
   if (typeof semanticTask === "string") {
@@ -404,6 +437,10 @@ const getStageId = (requestBody) => {
 
   if (semanticTask === "D10_ARCHITECTURE") {
     return DISCOVERY_D10_STAGE_ID;
+  }
+
+  if (semanticTask === "D15_DATABASE") {
+    return DISCOVERY_D15_STAGE_ID;
   }
 
   if (typeof semanticTask === "string") {
@@ -495,6 +532,9 @@ const semanticOutputSchema = (localExecution) => {
   }
   if (taskId === "D10_ARCHITECTURE") {
     return loadDiscoveryD10Schema();
+  }
+  if (taskId === "D15_DATABASE") {
+    return loadDiscoveryD15Schema();
   }
   return discoverySemanticOutputSchema(localExecution);
 };
@@ -829,7 +869,7 @@ const discoveryD05DirectiveFor = (session) => {
       "d05Result",
       [
         "AI is running D05 Project Overview against the approved Startup scope.",
-        "D05 Project Overview AI audit completed."
+        "D05 AI generation finished; deterministic evidence/checklist validation is pending."
       ],
       [20, 90]
     );
@@ -906,7 +946,7 @@ const discoveryD10DirectiveFor = (session) => {
       "d10Result",
       [
         "AI is reconstructing and auditing the implemented D10 Architecture using D05 context and repository evidence.",
-        "D10 Architecture AI audit completed."
+        "D10 AI generation finished; deterministic evidence/checklist validation is pending."
       ],
       [20, 90]
     );
@@ -941,6 +981,83 @@ const discoveryD10DirectiveFor = (session) => {
   );
 };
 
+const discoveryD15DirectiveFor = (session) => {
+  if (!hasOutput(session, "d15Status")) {
+    return localDirective(
+      "discovery.d15-status",
+      { reset: session.newRun === true },
+      "d15Status",
+      [
+        session.newRun ? "Resetting only D15 Database state." : "Checking D15 Database prerequisites.",
+        session.newRun ? "D15 Database state reset." : "D15 Database prerequisites verified."
+      ],
+      [12, 18]
+    );
+  }
+
+  const status = outputObject(session, "d15Status");
+  if (status.state === "completed") {
+    return terminalDirective(
+      "completed",
+      "D15 Database is already completed for this sealed workspace. Use Restart to run D15 again.",
+      100
+    );
+  }
+
+  if (!hasOutput(session, "d15Result")) {
+    return providerDirective(
+      session,
+      {
+        semantic_task: {
+          semantic_task_id: "D15_DATABASE",
+          runtime_inputs: {
+            audit_id: status.audit_id ?? null,
+            discovery_context: status.discovery_context ?? {},
+            startup_scope: status.startup_scope ?? {},
+            startup_seal: status.startup_seal ?? {}
+          }
+        }
+      },
+      "semantic",
+      false,
+      "d15Result",
+      [
+        "AI is auditing D15 Database using D05 + D10 context and direct repository database evidence.",
+        "D15 AI generation finished; deterministic evidence/checklist validation is pending."
+      ],
+      [20, 90]
+    );
+  }
+
+  if (!hasOutput(session, "d15Saved")) {
+    return localDirective(
+      "discovery.save-d15-result",
+      { result: session.context.d15Result },
+      "d15Saved",
+      [
+        "Validating D15 database evidence, 116 checklist dispositions, and canonical records.",
+        "D15 Database result saved to the active audit snapshot."
+      ],
+      [92, 99]
+    );
+  }
+
+  const saved = outputObject(session, "d15Saved");
+  if (saved.result === "BLOCKED") {
+    return terminalDirective(
+      "blocked",
+      "D15 Database returned BLOCKED. Review the recorded unknowns/limitations before retrying.",
+      99
+    );
+  }
+
+  return terminalDirective(
+    "completed",
+    `D15 Database completed (${String(saved.result ?? "UNKNOWN")}); ${String(saved.finding_count ?? 0)} findings, ${String(saved.unknown_count ?? 0)} unknowns, ${String(saved.checklist_count ?? 0)} checklist dispositions.`,
+    100
+  );
+};
+
 const nextDirectiveFor = (session) => {
   if (session.failure) {
     return terminalDirective("failed", session.failure, session.lastProgress ?? 0);
@@ -956,6 +1073,10 @@ const nextDirectiveFor = (session) => {
 
   if (session.stageId === DISCOVERY_D10_STAGE_ID) {
     return discoveryD10DirectiveFor(session);
+  }
+
+  if (session.stageId === DISCOVERY_D15_STAGE_ID) {
+    return discoveryD15DirectiveFor(session);
   }
 
   return terminalDirective(
@@ -1021,6 +1142,9 @@ const handleExecutionNext = (body) => {
   }
   if (!body.executionId && body.newRun === true && body.stageId === DISCOVERY_D10_STAGE_ID) {
     unmarkStagePassed(body.project?.id, DISCOVERY_D10_STAGE_ID);
+  }
+  if (!body.executionId && body.newRun === true && body.stageId === DISCOVERY_D15_STAGE_ID) {
+    unmarkStagePassed(body.project?.id, DISCOVERY_D15_STAGE_ID);
   }
   const session = body.executionId ? executions.get(body.executionId) : createExecution(body);
 
@@ -1090,7 +1214,8 @@ const server = http.createServer(async (request, response) => {
         discoveryManifestCompatible =
           discoveryManifest.stages.length === 14 &&
           discoveryManifest.stages.some((stage) => stage.id === DISCOVERY_D05_STAGE_ID) &&
-          discoveryManifest.stages.some((stage) => stage.id === DISCOVERY_D10_STAGE_ID);
+          discoveryManifest.stages.some((stage) => stage.id === DISCOVERY_D10_STAGE_ID) &&
+          discoveryManifest.stages.some((stage) => stage.id === DISCOVERY_D15_STAGE_ID);
       } catch {
         discoveryManifestCompatible = false;
       }
@@ -1102,6 +1227,7 @@ const server = http.createServer(async (request, response) => {
           d05Prompt.includes("OV-001") &&
           d05Prompt.includes("OV-082") &&
           d05Prompt.includes("{{OUTPUT_LANGUAGE}}") &&
+          hasDiscoveryScopeEvidenceGuard(d05Prompt) &&
           d05Schema?.properties?.substage?.const === "D05-Project-Overview" &&
           d05Schema?.properties?.result?.properties?.substage?.const === "D05-Project-Overview" &&
           Array.isArray(d05Schema?.$defs?.checkDisposition?.required) &&
@@ -1128,6 +1254,7 @@ const server = http.createServer(async (request, response) => {
           d10Prompt.includes("AR-082") &&
           d10Prompt.includes("{{OUTPUT_LANGUAGE}}") &&
           d10Prompt.includes("D05") &&
+          hasDiscoveryScopeEvidenceGuard(d10Prompt) &&
           d10Schema?.properties?.substage?.const === "D10-Architecture" &&
           d10Schema?.properties?.result?.properties?.substage?.const === "D10-Architecture" &&
           d10CheckIdPatternCompatible &&
@@ -1136,6 +1263,37 @@ const server = http.createServer(async (request, response) => {
       } catch {
         d10RuntimeCompatible = false;
       }
+      let d15RuntimeCompatible = false;
+      try {
+        const d15Prompt = loadDiscoveryD15Prompt();
+        const d15Schema = loadDiscoveryD15Schema();
+        const d15CheckIdPattern = d15Schema?.$defs?.checkDisposition?.properties?.check_id?.pattern;
+        let d15CheckIdPatternCompatible = false;
+        if (typeof d15CheckIdPattern === "string") {
+          const checkIdRegex = new RegExp(d15CheckIdPattern);
+          d15CheckIdPatternCompatible =
+            checkIdRegex.test("DB-001") &&
+            checkIdRegex.test("DB-116") &&
+            !checkIdRegex.test("DB-117") &&
+            !checkIdRegex.test("AR-001");
+        }
+        d15RuntimeCompatible =
+          d15Prompt.includes("DB-001") &&
+          d15Prompt.includes("DB-116") &&
+          d15Prompt.includes("{{OUTPUT_LANGUAGE}}") &&
+          d15Prompt.includes("D05") &&
+          d15Prompt.includes("D10") &&
+          hasDiscoveryScopeEvidenceGuard(d15Prompt) &&
+          d15Schema?.properties?.substage?.const === "D15-Database" &&
+          d15Schema?.properties?.result?.properties?.substage?.const === "D15-Database" &&
+          d15Schema?.properties?.result?.properties?.checklist?.minItems === 116 &&
+          d15Schema?.properties?.result?.properties?.checklist?.maxItems === 116 &&
+          d15CheckIdPatternCompatible &&
+          Array.isArray(d15Schema?.$defs?.checkDisposition?.required) &&
+          d15Schema.$defs.checkDisposition.required.includes("unknown_ids");
+      } catch {
+        d15RuntimeCompatible = false;
+      }
       const compatible =
         protocolCompatible &&
         startupRuntimeCompatible &&
@@ -1143,13 +1301,14 @@ const server = http.createServer(async (request, response) => {
         discoveryContractCompatible &&
         discoveryManifestCompatible &&
         d05RuntimeCompatible &&
-        d10RuntimeCompatible;
+        d10RuntimeCompatible &&
+        d15RuntimeCompatible;
       sendJson(response, 200, {
         status: compatible ? "ok" : "update-required",
-        serverVersion: "mock-0.5.1-d10-debug",
+        serverVersion: "mock-0.5.3-d15-scope-guard",
         protocolVersion: "2",
         message: compatible
-          ? "Mock cloud connected (Startup 2.1.0, Discovery D05 + D10)"
+          ? "Mock cloud connected (Startup 2.1.0, Discovery D05 + D10 + D15, scope-evidence guard enforced)"
           : !protocolCompatible
             ? "Desktop protocol v2 is required for server-driven execution directives."
             : !startupRuntimeCompatible
@@ -1161,8 +1320,10 @@ const server = http.createServer(async (request, response) => {
                   : !discoveryManifestCompatible
                   ? "AI Factory Discovery stage manifest is missing or invalid in the runtime package."
                   : !d05RuntimeCompatible
-                    ? "AI Factory D05 runtime files are missing or invalid. Expected the approved D05 compiled prompt and output schema."
-                    : "AI Factory D10 runtime files are missing or invalid. Expected the approved D10 compiled prompt and output schema."
+                    ? "AI Factory D05 runtime files are missing or invalid. Expected the approved compiled prompt, output schema, and scope-evidence guard."
+                    : !d10RuntimeCompatible
+                      ? "AI Factory D10 runtime files are missing or invalid. Expected the approved compiled prompt, output schema, and scope-evidence guard."
+                      : "AI Factory D15 runtime files are missing or invalid. Expected the approved compiled prompt, output schema, and scope-evidence guard."
       });
       return;
     }

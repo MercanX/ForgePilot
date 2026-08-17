@@ -36,6 +36,10 @@ const waitForServer = async (url, attempts = 50) => {
     manifest.stages.find((stage) => stage.id === '020-d10-architecture').hard,
     ['020-d05-project-overview']
   );
+  assert.deepEqual(
+    manifest.stages.find((stage) => stage.id === '020-d15-database').hard,
+    ['020-d05-project-overview', '020-d10-architecture']
+  );
 
   const workflowStatePath = path.join(repoRoot, 'src/services/jobs/projectWorkflowState.ts');
   const workflowStateSource = await fs.readFile(workflowStatePath, 'utf8');
@@ -67,6 +71,7 @@ const waitForServer = async (url, attempts = 50) => {
   );
   await fs.mkdir(path.join(runtimeRoot, 'D05-Project-Overview'), { recursive: true });
   await fs.mkdir(path.join(runtimeRoot, 'D10-Architecture'), { recursive: true });
+  await fs.mkdir(path.join(runtimeRoot, 'D15-Database'), { recursive: true });
 
   const port = 46000 + Math.floor(Math.random() * 1000);
   const stateFile = path.join(runtimeRoot, 'mock-state.json');
@@ -94,7 +99,8 @@ const waitForServer = async (url, attempts = 50) => {
     const d15 = workflow.stages.find((stage) => stage.id === '020-d15-database');
     assert.equal(d05.availability, 'available');
     assert.equal(d10.availability, 'available');
-    assert.equal(d15.availability, 'not_ready');
+    assert.equal(d15.availability, 'available');
+    assert.deepEqual(d15.requirements.map((r) => r.stageId), ['020-d05-project-overview', '020-d10-architecture']);
     assert.equal(d10.requirements[0].stageId, '020-d05-project-overview');
     assert.equal(d10.requirements[0].type, 'hard');
   } finally {
@@ -136,7 +142,7 @@ const waitForServer = async (url, attempts = 50) => {
   console.log('AI Factory runtime manifest source: PASS');
   console.log('Startup + 14/14 Discovery substages from workflow server: PASS');
   console.log('Legacy 030/040/050 workflow stages absent: PASS');
-  console.log('D05/D10 available and D15-D70 Not Ready model: PASS');
+  console.log('D05/D10/D15 available and D20-D70 Not Ready model: PASS');
   console.log('Renderer/backend requirement guards: PASS');
   console.log('Modified TypeScript/TSX syntax diagnostics: 0');
 })().catch((error) => {

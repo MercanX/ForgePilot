@@ -1079,9 +1079,16 @@ export const createStageExecutionService = (
             status: "completed"
           };
         } catch (error) {
+          const message = error instanceof Error ? error.message : "Local operation failed.";
+          emit(request, onProgress, {
+            message,
+            progress: directive.progressCompleted,
+            status: "failed",
+            stepId: directive.id
+          });
           previous = {
             directiveId: directive.id,
-            message: error instanceof Error ? error.message : "Local operation failed.",
+            message,
             output: null,
             status: "failed"
           };

@@ -1,27 +1,30 @@
-ForgePilot 0.5.1 — D10 Architecture stage
+ForgePilot 0.5.3 — D15 Database + Discovery scope-evidence guard
 
-This package extends the working 0.5.0 D05 runtime without changing the established Startup/D05 semantics.
+This package extends the working D05/D10 Discovery runtime with D15 Database.
 
-Discovery execution stages now include:
+Executable Discovery stages:
 - 020-D05-Project-Overview
 - 020-D10-Architecture
+- 020-D15-Database
 
 Rules:
-- 020-Discovery is not an executable container stage.
-- D10 is started manually by the user.
-- D10 requires a completed D05 result for the same sealed Startup workspace.
-- ForgePilot never auto-runs D05 when D10 is requested.
-- Restarting D10 resets only D10 artifacts/state.
-- Restarting D05 resets only D05 artifacts/state; it does not automatically erase D10.
-- The project-local audit artifacts are the readiness source of truth, not mock-cloud process memory.
+- D15 requires completed D05 + D10 results for the same sealed Startup workspace.
+- Stage dependencies come from the AI Factory runtime STAGE-EXECUTION-MANIFEST.json.
+- Restarting D15 resets only D15 artifacts/state.
+- The project-local audit artifacts are the readiness source of truth.
 
-D10 provider execution:
-- Uses the D10 compiled prompt and JSON schema from AI Factory.
-- Uses Settings -> AI Output Language for human-readable JSON values only.
-- Uses Settings -> Provider Stage Timeout (default 90 minutes).
-- Claude Code remains read-only with Read/Glob/Grep allowed and Edit/Write/Bash blocked.
+D15 provider execution:
+- Uses D15-Database/prompt/database.compiled.prompt.md.
+- Uses D15-Database/contracts/database-output.schema.json.
+- Uses Settings -> AI Output Language for human-readable JSON values.
+- Claude Code remains read-only for repository exploration; mutating database commands are not part of D15.
 
-D10 local persistence:
-  <project>/.ai-factory/020-Discovery/audits/<AUD-ID>/stages/D10-Architecture.json
+D15 local persistence:
+  <project>/.ai-factory/020-Discovery/audits/<AUD-ID>/stages/D15-Database.json
 
 Shared audit state is updated in PROJECT_PROFILE.json, FINDINGS.json, AUDIT_COVERAGE.json and AUDIT_META.json.
+
+Evidence authority:
+- D05/D10/D15 repository evidence must resolve to the sealed Startup workspace manifest or an approved virtual authority path.
+- Unauthorized/excluded evidence fails deterministic local validation and is not persisted as a completed stage.
+- Provider generation completion is reported separately from deterministic stage validation.

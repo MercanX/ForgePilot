@@ -418,3 +418,15 @@ Open-source desktop execution client for AI Factory.
 ## Discovery stage catalog
 
 ForgePilot, `020-Discovery` stage listesini ve HARD/SOFT gereksinimlerini seçili projeden okumaz. Workflow server bu kataloğu AI Factory runtime paketindeki `.ai-factory/020-Discovery/STAGE-EXECUTION-MANIFEST.json` dosyasından yükler ve desktop'a `/workflows/current` üzerinden yayınlar. Tüm substages görünür; hazır olmayanlar `Not Ready`, eksik HARD gereksinimi olanlar `Run requirement`, çalıştırılabilir olanlar `Start stage` olarak sunulur. Ayrıntı: `docs/DISCOVERY-STAGE-EXECUTION.md`.
+
+
+## D15 Database runtime
+
+ForgePilot supports `020-d15-database` as an executable Discovery stage when the AI Factory runtime manifest marks it `available` and the D15 package exists. D15 has HARD prerequisites `020-d05-project-overview` and `020-d10-architecture`, loads the D15 compiled prompt/schema from the AI Factory runtime, and persists the stage result under the active audit snapshot.
+
+
+## Discovery evidence authority
+
+D05, D10 and D15 provider output is not considered a completed audit merely because the AI process returned valid JSON. Before persistence, ForgePilot deterministically validates every nested `evidence[]` path against the sealed 010-Startup workspace manifest. Approved runtime virtual evidence is limited to `@startup/scope`, `@startup/seal`, `@startup/workspace-manifest`, and `@discovery/context`. An excluded/unapproved repository path causes the local save directive to fail, emits a failed Activity entry, and the stage is not marked completed.
+
+The mock workflow server also requires the loaded D05/D10/D15 compiled prompts to contain the current scope-evidence guard. This prevents an older AI Factory runtime package from silently running against the newer desktop contract.

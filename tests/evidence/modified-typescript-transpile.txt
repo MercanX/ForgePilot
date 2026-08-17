@@ -1,0 +1,4 @@
+src/services/discovery/discoverySubstageService.ts: 0 syntax diagnostics
+src/services/jobs/localOperationRegistry.ts: 0 syntax diagnostics
+src/services/jobs/projectWorkflowState.ts: 0 syntax diagnostics
+src/services/jobs/stageExecutionService.ts: 0 syntax diagnostics

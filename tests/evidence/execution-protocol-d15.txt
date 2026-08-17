@@ -1,0 +1,1 @@
+Execution protocol verification passed (Startup -> D05 -> D10 -> D15 -> independent D15/D10/D05 restarts; compiled prompts + schemas loaded from AI Factory).

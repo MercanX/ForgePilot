@@ -1,0 +1,4 @@
+Actual AI Factory runtime handshake: PASS
+Runtime: 020-Discovery-SCOPE-EVIDENCE-GUARD
+Server: mock-0.5.3-d15-scope-guard
+D05/D10/D15 compiled prompt + schema + scope-evidence guard: compatible

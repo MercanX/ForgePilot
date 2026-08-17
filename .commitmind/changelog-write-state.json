@@ -1,5 +1,5 @@
 {
-  "lastFingerprint": "234277004a28b3bbf64e163f20e4710a465f9eaf",
+  "lastFingerprint": "14c278eef7f0394c40a99d688ad5ef8d28dfc6a4",
   "lastDate": "2026-08-17",
-  "lastContent": "- Relaxed D10 check ID pattern validation in mock-cloud to accept any regex matching the AR-001 to AR-082 range.\n- Updated the verify-execution-protocol schema to use a more precise check ID pattern that restricts IDs to the valid AR-001 through AR-082 range.\n- Improved compatibility detection by testing the pattern against sample IDs instead of requiring an exact regex string match."
+  "lastContent": "- Added D15 Database as an executable Discovery stage with HARD prerequisites on D05 and D10.\n- Introduced deterministic evidence validation that verifies all repository evidence paths against the sealed Startup workspace manifest before stage persistence.\n- Enforced scope-evidence guard on loaded compiled prompts in the mock workflow server to prevent incompatible runtime packages.\n- Updated stage execution manifest to mark D15 as available and restructured dependency relationships across all stages.\n- Bumped ForgePilot version to 0.5.3 and updated documentation for stage execution and evidence authority rules."
 }

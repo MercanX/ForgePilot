@@ -6,6 +6,12 @@ ForgePilot Discovery stage görünürlüğü AI Factory runtime içindeki `STAGE
 
 ## 2026-08-17
 
+- Added D15 Database as an executable Discovery stage with HARD prerequisites on D05 and D10.
+- Introduced deterministic evidence validation that verifies all repository evidence paths against the sealed Startup workspace manifest before stage persistence.
+- Enforced scope-evidence guard on loaded compiled prompts in the mock workflow server to prevent incompatible runtime packages.
+- Updated stage execution manifest to mark D15 as available and restructured dependency relationships across all stages.
+- Bumped ForgePilot version to 0.5.3 and updated documentation for stage execution and evidence authority rules.
+
 - Relaxed D10 check ID pattern validation in mock-cloud to accept any regex matching the AR-001 to AR-082 range.
 - Updated the verify-execution-protocol schema to use a more precise check ID pattern that restricts IDs to the valid AR-001 through AR-082 range.
 - Improved compatibility detection by testing the pattern against sample IDs instead of requiring an exact regex string match.

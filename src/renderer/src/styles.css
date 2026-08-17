@@ -120,6 +120,7 @@ h1 {
 }
 
 .primary-action,
+.provider-retry-action,
 .project-actions button,
 .provider-panel-heading button,
 .task-runner-actions button {
@@ -138,6 +139,7 @@ h1 {
 }
 
 .primary-action:hover:not(:disabled),
+.provider-retry-action:hover:not(:disabled),
 .project-actions button:hover:not(:disabled),
 .provider-panel-heading button:hover:not(:disabled),
 .task-runner-actions button:hover:not(:disabled) {
@@ -145,6 +147,7 @@ h1 {
 }
 
 .primary-action:disabled,
+.provider-retry-action:disabled,
 .project-actions button:disabled,
 .provider-panel-heading button:disabled,
 .task-runner-actions button:disabled {
@@ -527,6 +530,17 @@ h1 {
 
 .stage-panel-heading .section-title {
   margin-bottom: 16px;
+}
+
+.stage-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.provider-retry-action {
+  border-color: #f59e0b;
+  background: #6b3f08;
 }
 
 .progress-track {

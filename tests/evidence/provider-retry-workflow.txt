@@ -1,0 +1,12 @@
+ForgePilot 0.5.10 provider retry/watch verification
+
+Policy (generic for every provider-backed stage):
+- Fast transient retries: 5s, 15s, 30s, 60s, 120s
+- After fast retries are exhausted: keep stage running and retry every 300s (5 minutes)
+- Manual "Retry provider now" wakes the current wait immediately
+- Transient failed provider attempts are NOT submitted as final job results
+- Successful retry continues the same stage execution
+- Permanent provider errors remain normal failures
+
+Verifier: node tools/verify-provider-retry-workflow.cjs
+Result: PASS

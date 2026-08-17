@@ -36,6 +36,8 @@ export const DashboardPage = (): ReactElement => {
   const isRunning = useJobStore((state) => state.isRunning);
   const lastRun = useJobStore((state) => state.lastRun);
   const loadWorkflow = useJobStore((state) => state.loadWorkflow);
+  const providerRetryWaiting = useJobStore((state) => state.providerRetryWaiting);
+  const retryProviderNow = useJobStore((state) => state.retryProviderNow);
   const runProgress = useJobStore((state) => state.runProgress);
   const runningStageId = useJobStore((state) => state.runningStageId);
   const runCloudJob = useJobStore((state) => state.runCloudJob);
@@ -441,47 +443,60 @@ export const DashboardPage = (): ReactElement => {
               <p className="eyebrow">Stage</p>
               <h2>{selectedStage?.name ?? "Waiting for workflow"}</h2>
             </div>
-            {selectedStage ? (
-              <button
-                className="primary-action"
-                type="button"
-                disabled={!canRunSelectedStage}
-                onClick={() => {
-                  if (!activeProject || !selectedProvider || !selectedStage) {
-                    return;
-                  }
+            <div className="stage-heading-actions">
+              {selectedStageIsRunning && providerRetryWaiting && activeProject && selectedStage ? (
+                <button
+                  className="provider-retry-action"
+                  type="button"
+                  onClick={() => void retryProviderNow(activeProject.id, selectedStage.id)}
+                >
+                  Retry provider now
+                </button>
+              ) : null}
+              {selectedStage ? (
+                <button
+                  className="primary-action"
+                  type="button"
+                  disabled={!canRunSelectedStage}
+                  onClick={() => {
+                    if (!activeProject || !selectedProvider || !selectedStage) {
+                      return;
+                    }
 
-                  const restart =
-                    selectedStage.status === "completed" || selectedStage.status === "failed";
-                  setFollowRunnableStage(true);
-                  void runCloudJob(
-                    activeProject,
-                    selectedProvider,
-                    selectedModel,
-                    selectedStage.id,
-                    restart
-                  );
-                }}
-              >
-                {selectedStageIsRunning
-                  ? "Running"
-                  : activeRepair
-                    ? "Repair pending"
-                  : selectedStageNotReady
-                    ? "Not Ready"
-                    : startupAwaitingApproval
-                      ? "Approve scope below"
-                      : selectedMissingHardRequirements.length > 0
-                        ? "Requirements missing"
-                        : selectedStage.status === "completed"
-                          ? "Restart stage"
-                          : selectedStage.status === "failed"
+                    const restart =
+                      selectedStage.status === "completed" || selectedStage.status === "failed";
+                    setFollowRunnableStage(true);
+                    void runCloudJob(
+                      activeProject,
+                      selectedProvider,
+                      selectedModel,
+                      selectedStage.id,
+                      restart
+                    );
+                  }}
+                >
+                  {selectedStageIsRunning
+                    ? providerRetryWaiting
+                      ? "Waiting for provider"
+                      : "Running"
+                    : activeRepair
+                      ? "Repair pending"
+                    : selectedStageNotReady
+                      ? "Not Ready"
+                      : startupAwaitingApproval
+                        ? "Approve scope below"
+                        : selectedMissingHardRequirements.length > 0
+                          ? "Requirements missing"
+                          : selectedStage.status === "completed"
                             ? "Restart stage"
-                            : selectedStage.status === "waiting"
-                              ? "Waiting"
-                              : "Start stage"}
-              </button>
-            ) : null}
+                            : selectedStage.status === "failed"
+                              ? "Restart stage"
+                              : selectedStage.status === "waiting"
+                                ? "Waiting"
+                                : "Start stage"}
+                </button>
+              ) : null}
+            </div>
           </div>
           <div
             className={`progress-track${selectedStageIsRunning ? " is-running" : ""}`}

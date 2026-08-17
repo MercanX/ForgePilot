@@ -11,6 +11,7 @@ import type {
 } from "@shared/schemas/cloud-api";
 import type {
   AppPingResponse,
+  ProviderRetryNowResponse,
   StartupApproveScopeRequest,
   StartupApproveScopeResponse,
   StartupGetStateRequest
@@ -84,6 +85,8 @@ const forgepilotApi = {
       ipcRenderer.invoke(IPC_CHANNELS.jobs.workflow, { projectId, rootPath }),
     runOnce: (request: JobRunRequest): Promise<JobRunResponse> =>
       ipcRenderer.invoke(IPC_CHANNELS.jobs.runOnce, request),
+    retryProviderNow: (projectId: string, stageId: string): Promise<ProviderRetryNowResponse> =>
+      ipcRenderer.invoke(IPC_CHANNELS.jobs.retryProviderNow, { projectId, stageId }),
     repairState: (projectRootPath: string, stageId: string): Promise<StageRepairState> =>
       ipcRenderer.invoke(IPC_CHANNELS.jobs.repairState, { projectRootPath, stageId }),
     repairImport: (request: StageRepairImportRequest): Promise<StageRepairState> =>

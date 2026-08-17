@@ -1,6 +1,6 @@
 {
   "name": "forgepilot",
-  "version": "0.5.9",
+  "version": "0.5.10",
   "description": "Open-source desktop execution client for AI Factory.",
   "private": true,
   "type": "module",
@@ -19,7 +19,8 @@
     "test:contract-compat": "node tools/verify-d05-d10-contract-compatibility.cjs",
     "test:stage-catalog": "node tools/verify-discovery-stage-catalog.cjs",
     "test:provider-parser": "node tools/verify-provider-output-parser.cjs",
-    "test:repair": "node tools/verify-patch-repair-workflow.cjs"
+    "test:repair": "node tools/verify-patch-repair-workflow.cjs",
+    "test:provider-retry": "node tools/verify-provider-retry-workflow.cjs"
   },
   "build": {
     "appId": "com.aifactory.forgepilot",

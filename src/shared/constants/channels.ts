@@ -30,6 +30,7 @@ export const IPC_CHANNELS = {
   jobs: {
     status: "jobs:status",
     runOnce: "jobs:run-once",
+    retryProviderNow: "jobs:retry-provider-now",
     repairState: "jobs:repair-state",
     repairImport: "jobs:repair-import",
     repairValidate: "jobs:repair-validate",

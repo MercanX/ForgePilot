@@ -27,6 +27,7 @@ type JobStoreState = {
   errorMessage: string | null;
   isRunning: boolean;
   lastRun: JobRunResponse | null;
+  providerRetryWaiting: boolean;
   runProgress: number;
   runningStageId: string | null;
   workflow: WorkflowResponse | null;
@@ -58,6 +59,7 @@ type JobStoreState = {
   ) => Promise<void>;
   checkCloud: (serverUrl?: string) => Promise<void>;
   loadWorkflow: (projectId: string, rootPath: string) => Promise<void>;
+  retryProviderNow: (projectId: string, stageId: string) => Promise<void>;
   runCloudJob: (
     project: Project,
     provider: ProviderDetectionResult,
@@ -91,6 +93,20 @@ const createActivityEntry = (
   stepId
 });
 
+const providerRetryWaitingFromProgress = (
+  current: boolean,
+  event: JobRunProgressEvent
+): boolean => {
+  if (event.stepId.startsWith("provider-retry-wait:")) return true;
+  if (
+    event.stepId.startsWith("provider-retry-attempt:") ||
+    event.stepId.startsWith("provider-retry-recovered:")
+  ) {
+    return false;
+  }
+  return current;
+};
+
 const applyProgressEvent = (
   activityEntries: ActivityEntry[],
   event: JobRunProgressEvent
@@ -114,6 +130,7 @@ export const useJobStore = create<JobStoreState>((set) => ({
   errorMessage: null,
   isRunning: false,
   lastRun: null,
+  providerRetryWaiting: false,
   runProgress: 0,
   runningStageId: null,
   workflow: null,
@@ -334,6 +351,7 @@ export const useJobStore = create<JobStoreState>((set) => ({
         currentOperation: finalOperation.message,
         isRunning: false,
         lastRun,
+        providerRetryWaiting: false,
         runProgress: finalOperation.progress,
         runningStageId: null
       });
@@ -349,6 +367,18 @@ export const useJobStore = create<JobStoreState>((set) => ({
     } finally {
       removeProgressListener();
       removeDebugListener();
+    }
+  },
+
+  retryProviderNow: async (projectId, stageId) => {
+    try {
+      const response = await window.forgepilot.jobs.retryProviderNow(projectId, stageId);
+      set({
+        currentOperation: response.message,
+        errorMessage: response.accepted ? null : response.message
+      });
+    } catch (error) {
+      set({ errorMessage: getErrorMessage(error) });
     }
   },
 
@@ -402,6 +432,7 @@ export const useJobStore = create<JobStoreState>((set) => ({
         debugEvents: [],
         isRunning: true,
         lastRun: null,
+        providerRetryWaiting: false,
         runProgress: 2,
         runningStageId: stageId,
         workflow
@@ -420,6 +451,10 @@ export const useJobStore = create<JobStoreState>((set) => ({
         set((state) => ({
           activityEntries: applyProgressEvent(state.activityEntries, event),
           currentOperation: event.status === "completed" ? state.currentOperation : event.message,
+          providerRetryWaiting: providerRetryWaitingFromProgress(
+            state.providerRetryWaiting,
+            event
+          ),
           runProgress: Math.max(state.runProgress, event.progress)
         }));
       }
@@ -466,6 +501,7 @@ export const useJobStore = create<JobStoreState>((set) => ({
         currentOperation: finalOperation.message,
         isRunning: false,
         lastRun,
+        providerRetryWaiting: false,
         runProgress: finalOperation.progress,
         runningStageId: null
       });
@@ -483,6 +519,7 @@ export const useJobStore = create<JobStoreState>((set) => ({
         currentOperation: "Stage failed",
         errorMessage: getErrorMessage(error),
         isRunning: false,
+        providerRetryWaiting: false,
         runProgress: 0,
         runningStageId: null
       });

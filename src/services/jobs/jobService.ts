@@ -70,6 +70,10 @@ export type JobService = {
     onProgress?: JobRunProgressListener,
     onDebug?: JobRunDebugListener
   ) => Promise<JobRunResponse>;
+  retryProviderNow: (
+    projectId: string,
+    stageId: string
+  ) => Promise<{ accepted: boolean; message: string }>;
   submitResult: (result: TaskResult, serverUrl: string) => Promise<SubmitResultResponse>;
   syncFindings: (
     runId: string,
@@ -91,7 +95,7 @@ const createClientFactory =
 
 export const createJobService = (options: JobServiceOptions = {}): JobService => {
   const createClient = createClientFactory(options);
-  const desktopVersion = options.desktopVersion ?? "0.5.9";
+  const desktopVersion = options.desktopVersion ?? "0.5.10";
   const stageExecutionService =
     options.stageExecutionService ?? createStageExecutionService({ createClient });
 
@@ -311,6 +315,12 @@ export const createJobService = (options: JobServiceOptions = {}): JobService =>
   const getRepairState = async (projectRootPath: string, stageId: string): Promise<StageRepairState> =>
     stageExecutionService.getRepairState(projectRootPath, stageId);
 
+  const retryProviderNow = async (
+    projectId: string,
+    stageId: string
+  ): Promise<{ accepted: boolean; message: string }> =>
+    stageExecutionService.retryProviderNow(projectId, stageId);
+
   const validateRepairJson = async (
     projectRootPath: string,
     stageId: string,
@@ -377,6 +387,7 @@ export const createJobService = (options: JobServiceOptions = {}): JobService =>
     getWorkflow,
     manualRepair,
     requestJob,
+    retryProviderNow,
     runOnce,
     saveRepair,
     submitResult,

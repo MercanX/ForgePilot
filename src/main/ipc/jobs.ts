@@ -33,6 +33,13 @@ export const registerJobsIpc = (service: JobService = createJobService()): void 
   });
 
   defineIpcHandler({
+    channel: IPC_CHANNELS.jobs.retryProviderNow,
+    requestSchema: ipcSchemaMap.jobs.retryProviderNow.request,
+    responseSchema: ipcSchemaMap.jobs.retryProviderNow.response,
+    handler: ({ projectId, stageId }) => service.retryProviderNow(projectId, stageId)
+  });
+
+  defineIpcHandler({
     channel: IPC_CHANNELS.jobs.repairState,
     requestSchema: ipcSchemaMap.jobs.repairState.request,
     responseSchema: ipcSchemaMap.jobs.repairState.response,

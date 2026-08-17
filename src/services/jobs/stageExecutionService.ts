@@ -15,7 +15,13 @@ import {
   type StageExecutionNextRequest,
   type StageExecutionNextResponse
 } from "@shared/schemas/execution";
-import type { Job, JobProviderDebugEvent, ProviderOutputChunk, TaskResult } from "@shared/schemas/job";
+import type {
+  Job,
+  JobProviderDebugEvent,
+  ProviderOutputChunk,
+  TaskResult,
+  TaskStartResponse
+} from "@shared/schemas/job";
 import type { StageRepairState } from "@shared/schemas/repair";
 
 import { createHttpClient, type HttpClient } from "../api/httpClient";
@@ -34,6 +40,32 @@ import {
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const MAX_DIRECTIVES_PER_RUN = 100;
 
+export const PROVIDER_FAST_RETRY_DELAYS_MS = [5_000, 15_000, 30_000, 60_000, 120_000] as const;
+export const PROVIDER_WATCH_RETRY_INTERVAL_MS = 300_000;
+
+const RETRYABLE_PROVIDER_FAILURE_PATTERNS = [
+  "api error",
+  "connection lost",
+  "connection reset",
+  "econnreset",
+  "etimedout",
+  "eai_again",
+  "enetunreach",
+  "network error",
+  "network request failed",
+  "socket hang up",
+  "fetch failed",
+  "temporarily unavailable",
+  "service unavailable",
+  "overloaded",
+  "rate limit",
+  "too many requests",
+  "http 429",
+  "http 502",
+  "http 503",
+  "http 504"
+] as const;
+
 type ProgressListener = (event: JobRunProgressEvent) => void;
 type DebugListener = (event: JobProviderDebugEvent) => void;
 
@@ -43,10 +75,16 @@ type StageExecutionServiceOptions = {
   taskExecutionService?: TaskExecutionService;
   createJournal?: (projectRootPath: string) => StageExecutionJournal;
   createRepairStore?: (projectRootPath: string) => StageRepairStore;
+  providerRetryDelaysMs?: readonly number[];
+  providerWatchIntervalMs?: number;
 };
 
 export type StageExecutionService = {
   getRepairState: (projectRootPath: string, stageId: string) => Promise<StageRepairState>;
+  retryProviderNow: (
+    projectId: string,
+    stageId: string
+  ) => { accepted: boolean; message: string };
   importRepairJson: (
     request: JobRunRequest & { stageId: string; workingJson: string },
     onProgress?: ProgressListener,
@@ -1112,6 +1150,29 @@ const providerFailureDetail = (chunks: ProviderOutputChunk[]): string | null => 
   return lines.slice(-3).join(" | ").slice(0, 700) || null;
 };
 
+const providerFailureText = (chunks: ProviderOutputChunk[]): string =>
+  stripAnsi(chunks.map((chunk) => chunk.text).join("\n")).toLowerCase();
+
+export const isRetryableProviderFailure = (
+  result: Pick<TaskResult, "status" | "exitCode">,
+  chunks: ProviderOutputChunk[]
+): boolean => {
+  if (result.status === "timeout") return true;
+  if (result.status !== "failed") return false;
+
+  const text = providerFailureText(chunks);
+  return RETRYABLE_PROVIDER_FAILURE_PATTERNS.some((pattern) => text.includes(pattern));
+};
+
+const formatRetryDelay = (delayMs: number): string => {
+  if (delayMs % 60_000 === 0) {
+    const minutes = delayMs / 60_000;
+    return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+  }
+  const seconds = Math.max(1, Math.round(delayMs / 1000));
+  return `${seconds} second${seconds === 1 ? "" : "s"}`;
+};
+
 export const createStageExecutionService = (
   options: StageExecutionServiceOptions = {}
 ): StageExecutionService => {
@@ -1120,6 +1181,54 @@ export const createStageExecutionService = (
   const taskExecutionService = options.taskExecutionService ?? createTaskExecutionService();
   const createJournal = options.createJournal ?? createStageExecutionJournal;
   const createRepairStore = options.createRepairStore ?? createStageRepairStore;
+  const providerRetryDelaysMs = options.providerRetryDelaysMs ?? PROVIDER_FAST_RETRY_DELAYS_MS;
+  const providerWatchIntervalMs = options.providerWatchIntervalMs ?? PROVIDER_WATCH_RETRY_INTERVAL_MS;
+
+  type ProviderRetryWakeReason = "timer" | "manual";
+  type ProviderRetryWaiter = {
+    finish: (reason: ProviderRetryWakeReason) => void;
+    timer: NodeJS.Timeout;
+  };
+  const providerRetryWaiters = new Map<string, ProviderRetryWaiter>();
+  const providerRetryKey = (projectId: string, stageId: string): string => `${projectId}:${stageId}`;
+
+  const waitForProviderRetry = async (
+    projectId: string,
+    stageId: string,
+    delayMs: number
+  ): Promise<ProviderRetryWakeReason> =>
+    new Promise<ProviderRetryWakeReason>((resolve) => {
+      const key = providerRetryKey(projectId, stageId);
+      let settled = false;
+      const finish = (reason: ProviderRetryWakeReason): void => {
+        if (settled) return;
+        settled = true;
+        const waiter = providerRetryWaiters.get(key);
+        if (waiter) clearTimeout(waiter.timer);
+        providerRetryWaiters.delete(key);
+        resolve(reason);
+      };
+      const timer = setTimeout(() => finish("timer"), Math.max(0, delayMs));
+      providerRetryWaiters.set(key, { finish, timer });
+    });
+
+  const retryProviderNow = (
+    projectId: string,
+    stageId: string
+  ): { accepted: boolean; message: string } => {
+    const waiter = providerRetryWaiters.get(providerRetryKey(projectId, stageId));
+    if (!waiter) {
+      return {
+        accepted: false,
+        message: "Provider is not currently waiting between retry attempts."
+      };
+    }
+    waiter.finish("manual");
+    return {
+      accepted: true,
+      message: "Provider retry requested now."
+    };
+  };
 
   const runRepairProviderTask = async (
     request: JobRunRequest & { stageId: string },
@@ -1324,98 +1433,172 @@ export const createStageExecutionService = (
     });
 
     try {
-      const started = await taskExecutionService.start({
-        instructions: task.instructions,
-        mode: "provider",
-        model: request.model,
-        outputJsonSchema: directive.outputSchema,
-        projectRootPath: request.project.rootPath,
-        providerId: request.providerId,
-        timeoutMs: Math.min(request.timeoutMs, task.timeoutMs)
-      });
+      let started!: TaskStartResponse;
+      let exitInfo!: { exitCode: number | null; finishedAt: string; signal: string | null };
+      let outputChunks: ProviderOutputChunk[] = [];
+      let result!: TaskResult;
+      let fastRetryCount = 0;
+      let watchRetryCount = 0;
 
-      heartbeat = setInterval(() => {
-        void client
-          .post(
-            `/jobs/${encodeURIComponent(job.id)}/heartbeat`,
-            { jobId: job.id, timestamp: new Date().toISOString() },
-            syncFindingsResponseSchema
-          )
-          .catch(() => undefined);
-      }, HEARTBEAT_INTERVAL_MS);
+      while (true) {
+        started = await taskExecutionService.start({
+          instructions: task.instructions,
+          mode: "provider",
+          model: request.model,
+          outputJsonSchema: directive.outputSchema,
+          projectRootPath: request.project.rootPath,
+          providerId: request.providerId,
+          timeoutMs: Math.min(request.timeoutMs, task.timeoutMs)
+        });
 
-      expectedTaskId = started.handle.id;
-      const commandPreview = [started.command, ...started.args.map((arg) => JSON.stringify(arg))].join(" ");
-      emitDebug(request, onDebug, {
-        kind: "provider-start",
-        taskId: started.handle.id,
-        processId: started.handle.processId,
-        message: "Provider process started.",
-        text: commandPreview,
-        exitCode: null,
-        signal: null,
-        timestamp: started.startedAt
-      });
-      for (const entry of observedOutput) {
-        if (entry.taskId === started.handle.id && !entry.debugged) {
-          entry.debugged = true;
-          publishOutputDebug(entry.taskId, entry.chunk);
+        if (!heartbeat) {
+          heartbeat = setInterval(() => {
+            void client
+              .post(
+                `/jobs/${encodeURIComponent(job.id)}/heartbeat`,
+                { jobId: job.id, timestamp: new Date().toISOString() },
+                syncFindingsResponseSchema
+              )
+              .catch(() => undefined);
+          }, HEARTBEAT_INTERVAL_MS);
         }
-      }
-      const alreadyExited = observedExits.get(started.handle.id);
-      const exitInfo =
-        alreadyExited ??
-        (await new Promise<{ exitCode: number | null; finishedAt: string; signal: string | null }>(
-          (resolve) => {
-            resolveExpectedExit = resolve;
+
+        expectedTaskId = started.handle.id;
+        const commandPreview = [started.command, ...started.args.map((arg) => JSON.stringify(arg))].join(" ");
+        emitDebug(request, onDebug, {
+          kind: "provider-start",
+          taskId: started.handle.id,
+          processId: started.handle.processId,
+          message:
+            fastRetryCount > 0 || watchRetryCount > 0
+              ? `Provider retry process started (fast=${fastRetryCount}/${providerRetryDelaysMs.length}, watch=${watchRetryCount}).`
+              : "Provider process started.",
+          text: commandPreview,
+          exitCode: null,
+          signal: null,
+          timestamp: started.startedAt
+        });
+        for (const entry of observedOutput) {
+          if (entry.taskId === started.handle.id && !entry.debugged) {
+            entry.debugged = true;
+            publishOutputDebug(entry.taskId, entry.chunk);
           }
-        ));
-      const trailingStreamLine = streamLineBuffers.get(started.handle.id)?.trim();
-      if (trailingStreamLine) {
-        const parsed = publishStreamEventDebug(started.handle.id, trailingStreamLine, exitInfo.finishedAt);
-        if (!parsed && request.providerId === PROVIDER_IDS.claudeCode) {
-          emitDebug(request, onDebug, {
-            kind: "stdout",
-            taskId: started.handle.id,
-            processId: started.handle.processId,
-            message: "Provider STDOUT (non-JSON trailing line)",
-            text: trailingStreamLine,
-            exitCode: null,
-            signal: null,
-            timestamp: exitInfo.finishedAt
-          });
         }
+        const alreadyExited = observedExits.get(started.handle.id);
+        exitInfo =
+          alreadyExited ??
+          (await new Promise<{ exitCode: number | null; finishedAt: string; signal: string | null }>(
+            (resolve) => {
+              resolveExpectedExit = resolve;
+            }
+          ));
+        const trailingStreamLine = streamLineBuffers.get(started.handle.id)?.trim();
+        if (trailingStreamLine) {
+          const parsed = publishStreamEventDebug(started.handle.id, trailingStreamLine, exitInfo.finishedAt);
+          if (!parsed && request.providerId === PROVIDER_IDS.claudeCode) {
+            emitDebug(request, onDebug, {
+              kind: "stdout",
+              taskId: started.handle.id,
+              processId: started.handle.processId,
+              message: "Provider STDOUT (non-JSON trailing line)",
+              text: trailingStreamLine,
+              exitCode: null,
+              signal: null,
+              timestamp: exitInfo.finishedAt
+            });
+          }
+        }
+        streamLineBuffers.delete(started.handle.id);
+        emitDebug(request, onDebug, {
+          kind: "provider-exit",
+          taskId: started.handle.id,
+          processId: started.handle.processId,
+          message: "Provider process exited.",
+          text: null,
+          exitCode: exitInfo.exitCode,
+          signal: exitInfo.signal,
+          timestamp: exitInfo.finishedAt
+        });
+        outputChunks = observedOutput
+          .filter((entry) => entry.taskId === started.handle.id)
+          .map((entry) => entry.chunk);
+        result = {
+          exitCode: exitInfo.exitCode,
+          findings: [],
+          finishedAt: exitInfo.finishedAt,
+          jobId: job.id,
+          outputChunks,
+          providerId: request.providerId,
+          startedAt: started.startedAt,
+          status:
+            exitInfo.signal === "timeout"
+              ? "timeout"
+              : exitInfo.exitCode === 0
+                ? "completed"
+                : "failed",
+          taskId: started.handle.id
+        };
+
+        if (result.status === "completed" || !isRetryableProviderFailure(result, outputChunks)) {
+          break;
+        }
+
+        const isFastRetry = fastRetryCount < providerRetryDelaysMs.length;
+        const retryNumber = isFastRetry ? fastRetryCount + 1 : watchRetryCount + 1;
+        const retryDelayMs = isFastRetry
+          ? providerRetryDelaysMs[fastRetryCount]!
+          : providerWatchIntervalMs;
+        if (isFastRetry) {
+          fastRetryCount += 1;
+        } else {
+          watchRetryCount += 1;
+        }
+        const failureDetail = providerFailureDetail(outputChunks);
+        const waitMessage = isFastRetry
+          ? `Provider connection/API failure detected${failureDetail ? `: ${failureDetail}` : "."} Retry ${retryNumber}/${providerRetryDelaysMs.length} in ${formatRetryDelay(retryDelayMs)}. The stage stays running; Retry provider now can run it immediately.`
+          : `Provider is still unavailable after ${providerRetryDelaysMs.length} fast retries. The stage stays running and will retry every ${formatRetryDelay(providerWatchIntervalMs)} until the provider returns. Next background retry in ${formatRetryDelay(retryDelayMs)}; Retry provider now is available.`;
+        emitDebug(request, onDebug, {
+          kind: "parser",
+          taskId: started.handle.id,
+          processId: started.handle.processId,
+          message: waitMessage,
+          text: null,
+          exitCode: result.exitCode,
+          signal: exitInfo.signal,
+          timestamp: new Date().toISOString()
+        });
+        const retryWake = waitForProviderRetry(
+          request.project.id,
+          request.stageId,
+          retryDelayMs
+        );
+        emit(request, onProgress, {
+          message: waitMessage,
+          progress: Math.max(directive.progressStarted, directive.progressCompleted - 3),
+          status: "started",
+          stepId: `provider-retry-wait:${directive.id}`
+        });
+
+        const wakeReason = await retryWake;
+        emit(request, onProgress, {
+          message:
+            wakeReason === "manual"
+              ? `Retry provider now requested. Starting provider ${isFastRetry ? `retry ${retryNumber}/${providerRetryDelaysMs.length}` : `background retry ${retryNumber}`} immediately.`
+              : `Provider ${isFastRetry ? `retry ${retryNumber}/${providerRetryDelaysMs.length}` : `background retry ${retryNumber}`} starting now.`,
+          progress: Math.max(directive.progressStarted, directive.progressCompleted - 3),
+          status: "started",
+          stepId: `provider-retry-attempt:${directive.id}`
+        });
       }
-      streamLineBuffers.delete(started.handle.id);
-      emitDebug(request, onDebug, {
-        kind: "provider-exit",
-        taskId: started.handle.id,
-        processId: started.handle.processId,
-        message: "Provider process exited.",
-        text: null,
-        exitCode: exitInfo.exitCode,
-        signal: exitInfo.signal,
-        timestamp: exitInfo.finishedAt
-      });
-      const outputChunks = observedOutput
-        .filter((entry) => entry.taskId === started.handle.id)
-        .map((entry) => entry.chunk);
-      const result: TaskResult = {
-        exitCode: exitInfo.exitCode,
-        findings: [],
-        finishedAt: exitInfo.finishedAt,
-        jobId: job.id,
-        outputChunks,
-        providerId: request.providerId,
-        startedAt: started.startedAt,
-        status:
-          exitInfo.signal === "timeout"
-            ? "timeout"
-            : exitInfo.exitCode === 0
-              ? "completed"
-              : "failed",
-        taskId: started.handle.id
-      };
+
+      if (result.status === "completed" && (fastRetryCount > 0 || watchRetryCount > 0)) {
+        emit(request, onProgress, {
+          message: `Provider connection recovered. Continuing ${request.stageId} without marking the stage failed.`,
+          progress: Math.max(directive.progressStarted, directive.progressCompleted - 2),
+          status: "completed",
+          stepId: `provider-retry-recovered:${directive.id}`
+        });
+      }
       const submit = await client.post(
         `/jobs/${encodeURIComponent(job.id)}/result`,
         result,
@@ -2507,5 +2690,13 @@ export const createStageExecutionService = (
     return response;
   };
 
-  return { getRepairState, importRepairJson, manualRepair, run, saveRepair, validateRepairJson };
+  return {
+    getRepairState,
+    importRepairJson,
+    manualRepair,
+    retryProviderNow,
+    run,
+    saveRepair,
+    validateRepairJson
+  };
 };

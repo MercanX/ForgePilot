@@ -83,6 +83,23 @@ export type StartupGetStateRequest = z.infer<typeof startupGetStateRequestSchema
 export type StartupApproveScopeRequest = z.infer<typeof startupApproveScopeRequestSchema>;
 export type StartupApproveScopeResponse = z.infer<typeof startupApproveScopeResponseSchema>;
 
+export const providerRetryNowRequestSchema = z
+  .object({
+    projectId: z.string().uuid(),
+    stageId: z.string().min(1)
+  })
+  .strict();
+
+export const providerRetryNowResponseSchema = z
+  .object({
+    accepted: z.boolean(),
+    message: z.string().min(1)
+  })
+  .strict();
+
+export type ProviderRetryNowRequest = z.infer<typeof providerRetryNowRequestSchema>;
+export type ProviderRetryNowResponse = z.infer<typeof providerRetryNowResponseSchema>;
+
 export const ipcSchemaMap = {
   app: {
     ping: {
@@ -168,6 +185,10 @@ export const ipcSchemaMap = {
     runOnce: {
       request: jobRunRequestSchema,
       response: jobRunResponseSchema
+    },
+    retryProviderNow: {
+      request: providerRetryNowRequestSchema,
+      response: providerRetryNowResponseSchema
     },
     repairState: {
       request: stageRepairGetRequestSchema,

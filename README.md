@@ -427,16 +427,20 @@ ForgePilot supports `020-d15-database` as an executable Discovery stage when the
 
 ## Discovery evidence authority
 
-D05, D10, D15, D20 and D25 provider output is not considered a completed audit merely because the AI process returned valid JSON. Before persistence, ForgePilot deterministically validates every nested `evidence[]` path against the sealed 010-Startup workspace manifest. Approved runtime virtual evidence is limited to `@startup/scope`, `@startup/seal`, `@startup/workspace-manifest`, and `@discovery/context`. An excluded/unapproved repository path causes the local save directive to fail, emits a failed Activity entry, and the stage is not marked completed.
+D05, D10, D15, D20 and D25 provider output is not considered a completed audit merely because the AI process returned valid JSON. Startup scope controls proactive scanning, but it is **not** an evidence deny-list. Before persistence, ForgePilot deterministically validates every nested `evidence[]` path for path safety and reality: normal evidence must be project-relative, resolve inside the selected repository, and exist at validation time; approved virtual evidence remains `@startup/scope`, `@startup/seal`, `@startup/workspace-manifest`, and `@discovery/context`. A real targeted evidence file may therefore be outside the Startup scan manifest. Absolute, escaping, outside-workspace, or nonexistent evidence still fails validation.
 
-The mock workflow server also requires the loaded D05/D10/D15/D20/D25 compiled prompts to contain the current scope-evidence guard. This prevents an older AI Factory runtime package from silently running against the newer desktop contract.
+### Discovery checklist auto-repair guard
+
+Before final checklist validation, ForgePilot may repair a narrow class of **checklist-only** defects when doing so cannot change canonical semantic records. For example, a `CHECKED_OK` checklist row whose only evidence path is nonexistent and which has no finding/strength/unknown/contradiction links is downgraded to `NOT_INSPECTED_WITH_REASON`, the invalid evidence is removed, and an explicit `[ForgePilot auto-repair]` note is appended. If the defective checklist row is tied to canonical semantic records, or repairing it would change a finding/strength/unknown/contradiction meaning, the stage hard-fails instead of silently rewriting semantics. Successful saves return `auto_repair_count`, and the workflow completion message surfaces the count when nonzero.
+
+The mock workflow server requires the loaded D05/D10/D15/D20/D25 compiled prompts to contain the current **scan-scope/evidence-separation** policy. This prevents an older AI Factory runtime package from silently running against the newer desktop contract.
 
 
 ## D20 Dependencies / Integrations runtime
 
 ForgePilot supports `020-d20-dependencies-integrations` as an executable Discovery stage when the AI Factory runtime manifest marks it `available` and the D20 package exists. D20 has HARD prerequisites `020-d05-project-overview` and `020-d10-architecture`, loads the D20 compiled prompt/schema from the AI Factory runtime, and persists the stage result under the active audit snapshot.
 
-D20 executes semantic task `D20_DEPENDENCIES_INTEGRATIONS`, validates the full metadata envelope, requires exactly `DI-001` through `DI-102`, validates canonical `DI-F###` / `DI-S###` / `DI-U###` / `DI-C###` records, then validates all nested evidence paths against the sealed Startup workspace authority **before persistence**.
+D20 executes semantic task `D20_DEPENDENCIES_INTEGRATIONS`, validates the full metadata envelope, requires exactly `DI-001` through `DI-102`, validates canonical `DI-F###` / `DI-S###` / `DI-U###` / `DI-C###` records, applies safe checklist-only auto-repair when possible, then validates nested evidence paths as real project-contained paths **before persistence**.
 
 D20 restart resets D20 itself and invalidates downstream D25 because D25 has D20 as a HARD prerequisite. D15 is not a D20 prerequisite; D15 and D20 remain sibling stages that independently require D05 + D10. Restart invalidation follows the server-published HARD dependency graph, so stale downstream results cannot silently become valid again after a prerequisite rerun.
 
@@ -445,6 +449,6 @@ D20 restart resets D20 itself and invalidates downstream D25 because D25 has D20
 
 ForgePilot supports `020-d25-backend` as an executable Discovery stage when the AI Factory runtime manifest marks it `available` and the D25 package exists. D25 has HARD prerequisites `020-d05-project-overview`, `020-d10-architecture`, `020-d15-database`, and `020-d20-dependencies-integrations`.
 
-D25 executes semantic task `D25_BACKEND`, loads the AI Factory runtime's compiled Backend prompt and output schema, validates the full metadata envelope, requires exactly `BE-001` through `BE-134`, validates canonical `BE-F###` / `BE-S###` / `BE-U###` / `BE-C###` records, then validates every nested evidence path against sealed Startup authority **before persistence**.
+D25 executes semantic task `D25_BACKEND`, loads the AI Factory runtime's compiled Backend prompt and output schema, validates the full metadata envelope, requires exactly `BE-001` through `BE-134`, validates canonical `BE-F###` / `BE-S###` / `BE-U###` / `BE-C###` records, applies safe checklist-only auto-repair when possible, then validates every nested evidence path as a real project-contained path **before persistence**.
 
 Restarting D25 removes only D25 artifacts for the active audit. Restarting a HARD prerequisite invalidates D25 automatically. Restarting D10 also invalidates D15 and D20 because both depend on D10; restarting D05 invalidates D10, D15, D20, and D25. Cloud completion state and local audit artifacts follow the same dependency rule.

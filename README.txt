@@ -1,6 +1,6 @@
-ForgePilot 0.5.6 — D25 Backend + dependency-aware restart invalidation + Claude parser recovery
+ForgePilot 0.5.7 — Startup scan/evidence separation + checklist auto-repair + D25 Backend
 
-This package extends the working D05/D10/D15/D20 Discovery runtime with D25 Backend while preserving the 0.5.5 Claude final-output parser fix and Startup scope-evidence guard.
+This package preserves the D25-ready runtime and Claude final-output parser fix, separates Startup proactive scan scope from targeted evidence lookup, and adds deterministic safe checklist-only auto-repair before persistence.
 
 Executable Discovery stages:
 - 020-D05-Project-Overview

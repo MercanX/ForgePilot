@@ -1,8 +1,3 @@
-status: ok
-serverVersion: mock-0.5.4-d20-scope-guard
-message: Mock cloud connected (Startup 2.1.0, Discovery D05 + D10 + D15 + D20, scope-evidence guard enforced)
-020-d05-project-overview: availability=available; hard=010-startup
-020-d10-architecture: availability=available; hard=020-d05-project-overview
-020-d15-database: availability=available; hard=020-d05-project-overview,020-d10-architecture
-020-d20-dependencies-integrations: availability=available; hard=020-d05-project-overview,020-d10-architecture
-020-d25-backend: availability=not_ready; hard=020-d05-project-overview,020-d10-architecture,020-d15-database,020-d20-dependencies-integrations
+ForgePilot mock cloud listening at http://localhost:4328
+{"status":"ok","serverVersion":"mock-0.5.7-scan-evidence-autorepair","protocolVersion":"2","message":"Mock cloud connected (Startup 2.1.0, Discovery D05 + D10 + D15 + D20 + D25, scan/evidence separation + checklist auto-repair contract enforced)"}
+

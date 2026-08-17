@@ -1,3 +1,4 @@
+import { existsSync, realpathSync, statSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -505,39 +506,150 @@ const evidenceArraysFromResult = (result: Record<string, unknown>): unknown[][] 
   return arrays;
 };
 
-const D05_RUNTIME_EVIDENCE_PATHS = new Set([
+const DISCOVERY_RUNTIME_EVIDENCE_PATHS = new Set([
   "@startup/scope",
   "@startup/seal",
   "@startup/workspace-manifest",
   "@discovery/context"
 ]);
 
+const evidencePathStatus = (
+  rawPath: string,
+  projectRootPath: string
+): { ok: true; normalizedPath: string } | { ok: false; normalizedPath: string; reason: string } => {
+  const trimmed = rawPath.trim();
+  if (DISCOVERY_RUNTIME_EVIDENCE_PATHS.has(trimmed)) {
+    return { ok: true, normalizedPath: trimmed };
+  }
+
+  let relativePath: string;
+  try {
+    relativePath = normalizeRelativePath(trimmed);
+  } catch (error) {
+    return {
+      ok: false,
+      normalizedPath: trimmed,
+      reason: String((error as Error)?.message ?? error)
+    };
+  }
+
+  // Startup include/exclude controls proactive scan scope only. Evidence lookup is a
+  // separate, targeted operation: a concrete repository path is valid evidence when
+  // it actually exists inside the selected project workspace.
+  const candidate = path.resolve(projectRootPath, relativePath);
+  if (!existsSync(candidate)) {
+    return {
+      ok: false,
+      normalizedPath: relativePath,
+      reason: `repository evidence path does not exist: ${relativePath}`
+    };
+  }
+
+  try {
+    const rootRealPath = realpathSync(projectRootPath);
+    const candidateRealPath = realpathSync(candidate);
+    const escaped = path.relative(rootRealPath, candidateRealPath);
+    if (escaped.startsWith("..") || path.isAbsolute(escaped)) {
+      return {
+        ok: false,
+        normalizedPath: relativePath,
+        reason: `repository evidence path resolves outside the selected project workspace: ${relativePath}`
+      };
+    }
+    statSync(candidateRealPath);
+  } catch (error) {
+    return {
+      ok: false,
+      normalizedPath: relativePath,
+      reason: `repository evidence path cannot be verified: ${relativePath} (${String((error as Error)?.message ?? error)})`
+    };
+  }
+
+  return { ok: true, normalizedPath: relativePath };
+};
+
+type DiscoveryStageLabel = "D05" | "D10" | "D15" | "D20" | "D25";
+
+type ChecklistAutoRepair = {
+  check_id: string;
+  reason: string;
+};
+
+const AUTO_REPAIR_NOTE_PREFIX = "[ForgePilot auto-repair]";
+
+const canonicalChecklistReferenceCount = (item: Record<string, unknown>): number =>
+  ["finding_ids", "unknown_ids", "contradiction_ids", "strength_ids"].reduce(
+    (count, field) => count + asArray(item[field]).filter((id) => typeof id === "string").length,
+    0
+  );
+
+const autoRepairChecklistEvidence = (
+  result: Record<string, unknown>,
+  projectRootPath: string,
+  stageLabel: DiscoveryStageLabel
+): ChecklistAutoRepair[] => {
+  const repairs: ChecklistAutoRepair[] = [];
+  for (const rawItem of asArray(result.checklist)) {
+    if (!isObject(rawItem) || typeof rawItem.check_id !== "string" || typeof rawItem.status !== "string") {
+      continue;
+    }
+
+    const evidence = asArray(rawItem.evidence);
+    const validEvidence: unknown[] = [];
+    const invalidReasons: string[] = [];
+    for (const rawEvidence of evidence) {
+      if (!isObject(rawEvidence) || typeof rawEvidence.path !== "string") {
+        invalidReasons.push("evidence entry has no valid path");
+        continue;
+      }
+      const status = evidencePathStatus(rawEvidence.path, projectRootPath);
+      if (status.ok) {
+        validEvidence.push(rawEvidence);
+      } else {
+        invalidReasons.push(status.reason);
+      }
+    }
+
+    const hasCanonicalLinks = canonicalChecklistReferenceCount(rawItem) > 0;
+    const checkedWithoutEvidence = rawItem.status === "CHECKED_OK" && validEvidence.length === 0;
+    if (invalidReasons.length === 0 && !checkedWithoutEvidence) {
+      continue;
+    }
+
+    if (hasCanonicalLinks || rawItem.status === "FINDING" || rawItem.status === "STRENGTH") {
+      const reason = invalidReasons[0] ?? "CHECKED_OK has no verifiable evidence";
+      throw new Error(
+        `${stageLabel} checklist ${rawItem.check_id} has an unsafe evidence defect tied to canonical semantic records: ${reason}`
+      );
+    }
+
+    rawItem.evidence = validEvidence;
+    if (validEvidence.length === 0 && rawItem.status === "CHECKED_OK") {
+      rawItem.status = "NOT_INSPECTED_WITH_REASON";
+    }
+    const reason = invalidReasons[0] ?? "CHECKED_OK had no verifiable evidence";
+    const previousNotes = typeof rawItem.notes === "string" ? rawItem.notes.trim() : "";
+    const repairNote = `${AUTO_REPAIR_NOTE_PREFIX} ${reason}.`;
+    rawItem.notes = previousNotes ? `${previousNotes} ${repairNote}` : repairNote;
+    repairs.push({ check_id: rawItem.check_id, reason });
+  }
+  return repairs;
+};
+
 const validateEvidence = (
   result: Record<string, unknown>,
-  manifestPaths: Set<string>,
-  stageLabel: "D05" | "D10" | "D15" | "D20"
+  projectRootPath: string,
+  stageLabel: DiscoveryStageLabel
 ): void => {
-  const manifestList = [...manifestPaths];
   for (const evidenceArray of evidenceArraysFromResult(result)) {
     for (const raw of evidenceArray) {
       if (!isObject(raw) || typeof raw.path !== "string") {
         throw new Error(`${stageLabel} evidence entries must contain a valid evidence path.`);
       }
 
-      const rawPath = raw.path.trim();
-      if (D05_RUNTIME_EVIDENCE_PATHS.has(rawPath)) {
-        continue;
-      }
-
-      const relativePath = normalizeRelativePath(rawPath);
-      const isManifestFile = manifestPaths.has(relativePath);
-      const directoryPrefix = relativePath.endsWith("/") ? relativePath : `${relativePath}/`;
-      const isApprovedDirectory = manifestList.some((path) => path.startsWith(directoryPrefix));
-
-      if (!isManifestFile && !isApprovedDirectory) {
-        throw new Error(
-          `${stageLabel} evidence is outside the approved Startup manifest/runtime authority: ${relativePath}`
-        );
+      const status = evidencePathStatus(raw.path, projectRootPath);
+      if (!status.ok) {
+        throw new Error(`${stageLabel} ${status.reason}`);
       }
     }
   }
@@ -681,9 +793,8 @@ export const runSaveD05ResultJob = async (
   projectRootPath: string,
   resultInput: unknown
 ): Promise<Record<string, unknown>> => {
-  const { manifest, seal } = await readStartupAuthority(projectRootPath);
+  const { seal } = await readStartupAuthority(projectRootPath);
   const auditId = await ensureAudit(projectRootPath, seal.scope_hash, seal.workspace_hash);
-  const manifestPaths = new Set(manifest.files.map((file) => file.path.replaceAll("\\", "/")));
   const { completedAt, result, stageDocument } = parseAuthorizedDiscoveryStageEnvelope(resultInput, {
     auditId,
     label: "D05",
@@ -691,9 +802,10 @@ export const runSaveD05ResultJob = async (
     workspaceHash: seal.workspace_hash
   });
 
+  const autoRepairs = autoRepairChecklistEvidence(result, projectRootPath, "D05");
   validateChecklist(result);
   validateFindingsAndStrengths(result);
-  validateEvidence(result, manifestPaths, "D05");
+  validateEvidence(result, projectRootPath, "D05");
 
   const now = new Date().toISOString();
   await writeJson(stageFile(projectRootPath, auditId), stageDocument);
@@ -797,6 +909,7 @@ export const runSaveD05ResultJob = async (
 
   return {
     audit_id: auditId,
+    auto_repair_count: autoRepairs.length,
     checklist_count: checklist.length,
     finding_count: findings.length,
     result: result.result,
@@ -1059,15 +1172,15 @@ const validateD10CanonicalRecords = (result: Record<string, unknown>): void => {
   validateUniqueRecords("contradictions", /^AR-C\d{3}$/);
 };
 
-const validateD10Evidence = (result: Record<string, unknown>, manifestPaths: Set<string>): void => {
-  validateEvidence(result, manifestPaths, "D10");
+const validateD10Evidence = (result: Record<string, unknown>, projectRootPath: string): void => {
+  validateEvidence(result, projectRootPath, "D10");
 };
 
 export const runSaveD10ResultJob = async (
   projectRootPath: string,
   resultInput: unknown
 ): Promise<Record<string, unknown>> => {
-  const { manifest, seal } = await readStartupAuthority(projectRootPath);
+  const { seal } = await readStartupAuthority(projectRootPath);
   const auditId = await ensureAudit(projectRootPath, seal.scope_hash, seal.workspace_hash);
   const d05Saved = await readJsonIfPresent(stageFile(projectRootPath, auditId, D05_STAGE_FILE));
   const d05Result = d05Saved && isObject(d05Saved.result) ? d05Saved.result : null;
@@ -1075,16 +1188,16 @@ export const runSaveD10ResultJob = async (
     throw new Error("D10 Architecture cannot be saved before D05 Project Overview is completed for this audit.");
   }
 
-  const manifestPaths = new Set(manifest.files.map((file) => file.path.replaceAll("\\", "/")));
   const { completedAt, result, stageDocument } = parseAuthorizedDiscoveryStageEnvelope(resultInput, {
     auditId,
     label: "D10",
     substage: D10_NAME,
     workspaceHash: seal.workspace_hash
   });
+  const autoRepairs = autoRepairChecklistEvidence(result, projectRootPath, "D10");
   validateD10Checklist(result);
   validateD10CanonicalRecords(result);
-  validateD10Evidence(result, manifestPaths);
+  validateD10Evidence(result, projectRootPath);
 
   const now = new Date().toISOString();
   await writeJson(stageFile(projectRootPath, auditId, D10_STAGE_FILE), stageDocument);
@@ -1185,6 +1298,7 @@ export const runSaveD10ResultJob = async (
 
   return {
     audit_id: auditId,
+    auto_repair_count: autoRepairs.length,
     checklist_count: checklist.length,
     finding_count: findings.length,
     result: result.result,
@@ -1417,15 +1531,15 @@ const validateD15CanonicalRecords = (result: Record<string, unknown>): void => {
   validateUniqueRecords("contradictions", /^DB-C\d{3}$/);
 };
 
-const validateD15Evidence = (result: Record<string, unknown>, manifestPaths: Set<string>): void => {
-  validateEvidence(result, manifestPaths, "D15");
+const validateD15Evidence = (result: Record<string, unknown>, projectRootPath: string): void => {
+  validateEvidence(result, projectRootPath, "D15");
 };
 
 export const runSaveD15ResultJob = async (
   projectRootPath: string,
   resultInput: unknown
 ): Promise<Record<string, unknown>> => {
-  const { manifest, seal } = await readStartupAuthority(projectRootPath);
+  const { seal } = await readStartupAuthority(projectRootPath);
   const auditId = await ensureAudit(projectRootPath, seal.scope_hash, seal.workspace_hash);
 
   const d05Saved = await readJsonIfPresent(stageFile(projectRootPath, auditId, D05_STAGE_FILE));
@@ -1435,16 +1549,16 @@ export const runSaveD15ResultJob = async (
   const d10Result = d10Saved && isObject(d10Saved.result) ? d10Saved.result : null;
   if (!d10Result || d10Result.result === "BLOCKED") throw new Error("D15 Database cannot be saved before D10 is completed.");
 
-  const manifestPaths = new Set(manifest.files.map((file) => file.path.replaceAll("\\", "/")));
   const { completedAt, result, stageDocument } = parseAuthorizedDiscoveryStageEnvelope(resultInput, {
     auditId,
     label: "D15",
     substage: D15_NAME,
     workspaceHash: seal.workspace_hash
   });
+  const autoRepairs = autoRepairChecklistEvidence(result, projectRootPath, "D15");
   validateD15Checklist(result);
   validateD15CanonicalRecords(result);
-  validateD15Evidence(result, manifestPaths);
+  validateD15Evidence(result, projectRootPath);
 
   const now = new Date().toISOString();
   await writeJson(stageFile(projectRootPath, auditId, D15_STAGE_FILE), stageDocument);
@@ -1494,6 +1608,7 @@ export const runSaveD15ResultJob = async (
 
   return {
     audit_id: auditId,
+    auto_repair_count: autoRepairs.length,
     checklist_count: checklist.length,
     finding_count: findings.length,
     result: result.result,
@@ -1712,15 +1827,15 @@ const validateD20CanonicalRecords = (result: Record<string, unknown>): void => {
   validateUniqueRecords("contradictions", /^DI-C\d{3}$/);
 };
 
-const validateD20Evidence = (result: Record<string, unknown>, manifestPaths: Set<string>): void => {
-  validateEvidence(result, manifestPaths, "D20");
+const validateD20Evidence = (result: Record<string, unknown>, projectRootPath: string): void => {
+  validateEvidence(result, projectRootPath, "D20");
 };
 
 export const runSaveD20ResultJob = async (
   projectRootPath: string,
   resultInput: unknown
 ): Promise<Record<string, unknown>> => {
-  const { manifest, seal } = await readStartupAuthority(projectRootPath);
+  const { seal } = await readStartupAuthority(projectRootPath);
   const auditId = await ensureAudit(projectRootPath, seal.scope_hash, seal.workspace_hash);
   const d05Saved = await readJsonIfPresent(stageFile(projectRootPath, auditId, D05_STAGE_FILE));
   const d05Result = d05Saved && isObject(d05Saved.result) ? d05Saved.result : null;
@@ -1729,16 +1844,16 @@ export const runSaveD20ResultJob = async (
   const d10Result = d10Saved && isObject(d10Saved.result) ? d10Saved.result : null;
   if (!d10Result || d10Result.result === "BLOCKED") throw new Error("D20 Dependencies / Integrations cannot be saved before D10 is completed.");
 
-  const manifestPaths = new Set(manifest.files.map((file) => file.path.replaceAll("\\", "/")));
   const { completedAt, result, stageDocument } = parseAuthorizedDiscoveryStageEnvelope(resultInput, {
     auditId,
     label: "D20",
     substage: D20_NAME,
     workspaceHash: seal.workspace_hash
   });
+  const autoRepairs = autoRepairChecklistEvidence(result, projectRootPath, "D20");
   validateD20Checklist(result);
   validateD20CanonicalRecords(result);
-  validateD20Evidence(result, manifestPaths);
+  validateD20Evidence(result, projectRootPath);
 
   const now = new Date().toISOString();
   await writeJson(stageFile(projectRootPath, auditId, D20_STAGE_FILE), stageDocument);
@@ -1789,6 +1904,7 @@ export const runSaveD20ResultJob = async (
 
   return {
     audit_id: auditId,
+    auto_repair_count: autoRepairs.length,
     checklist_count: checklist.length,
     finding_count: findings.length,
     result: result.result,
@@ -2033,15 +2149,15 @@ const validateD25CanonicalRecords = (result: Record<string, unknown>): void => {
   validateUniqueRecords("contradictions", /^BE-C\d{3}$/);
 };
 
-const validateD25Evidence = (result: Record<string, unknown>, manifestPaths: Set<string>): void => {
-  validateEvidence(result, manifestPaths, "D25");
+const validateD25Evidence = (result: Record<string, unknown>, projectRootPath: string): void => {
+  validateEvidence(result, projectRootPath, "D25");
 };
 
 export const runSaveD25ResultJob = async (
   projectRootPath: string,
   resultInput: unknown
 ): Promise<Record<string, unknown>> => {
-  const { manifest, seal } = await readStartupAuthority(projectRootPath);
+  const { seal } = await readStartupAuthority(projectRootPath);
   const auditId = await ensureAudit(projectRootPath, seal.scope_hash, seal.workspace_hash);
   for (const [file, label] of [
     [D05_STAGE_FILE, "D05 Project Overview"],
@@ -2054,16 +2170,16 @@ export const runSaveD25ResultJob = async (
     if (!prior || prior.result === "BLOCKED") throw new Error(`D25 Backend cannot be saved before ${label} is completed.`);
   }
 
-  const manifestPaths = new Set(manifest.files.map((file) => file.path.replaceAll("\\", "/")));
   const { completedAt, result, stageDocument } = parseAuthorizedDiscoveryStageEnvelope(resultInput, {
     auditId,
     label: "D25",
     substage: D25_NAME,
     workspaceHash: seal.workspace_hash
   });
+  const autoRepairs = autoRepairChecklistEvidence(result, projectRootPath, "D25");
   validateD25Checklist(result);
   validateD25CanonicalRecords(result);
-  validateD25Evidence(result, manifestPaths);
+  validateD25Evidence(result, projectRootPath);
 
   const now = new Date().toISOString();
   await writeJson(stageFile(projectRootPath, auditId, D25_STAGE_FILE), stageDocument);
@@ -2116,6 +2232,7 @@ export const runSaveD25ResultJob = async (
 
   return {
     audit_id: auditId,
+    auto_repair_count: autoRepairs.length,
     checklist_count: checklist.length,
     finding_count: findings.length,
     result: result.result,

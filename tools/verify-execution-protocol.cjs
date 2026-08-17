@@ -83,7 +83,7 @@ writeFileSync(
     "OV-001",
     "OV-082",
     "@startup/scope",
-    "**Excluded evidence is a hard failure.** Unauthorized evidence must not be treated as completed."
+    "**Startup scan scope and evidence lookup are separate.** Startup manifest membership is not required for targeted evidence lookup. Keep default proactive scanning inside Startup scope."
   ].join("\n"),
   "utf8"
 );
@@ -135,7 +135,7 @@ writeFileSync(
     "AR-001",
     "AR-082",
     "@startup/scope",
-    "**Excluded evidence is a hard failure.** Unauthorized evidence must not be treated as completed."
+    "**Startup scan scope and evidence lookup are separate.** Startup manifest membership is not required for targeted evidence lookup. Keep default proactive scanning inside Startup scope."
   ].join("\n"),
   "utf8"
 );
@@ -188,7 +188,7 @@ writeFileSync(
     "DB-001",
     "DB-116",
     "@startup/scope",
-    "**Excluded evidence is a hard failure.** Unauthorized evidence must not be treated as completed."
+    "**Startup scan scope and evidence lookup are separate.** Startup manifest membership is not required for targeted evidence lookup. Keep default proactive scanning inside Startup scope."
   ].join("\n"),
   "utf8"
 );
@@ -241,7 +241,7 @@ writeFileSync(
     "DI-001",
     "DI-102",
     "@startup/scope",
-    "**Excluded evidence is a hard failure.** Unauthorized evidence must not be treated as completed."
+    "**Startup scan scope and evidence lookup are separate.** Startup manifest membership is not required for targeted evidence lookup. Keep default proactive scanning inside Startup scope."
   ].join("\n"),
   "utf8"
 );
@@ -297,7 +297,7 @@ writeFileSync(
     "BE-001",
     "BE-134",
     "@startup/scope",
-    "**Excluded evidence is a hard failure.** Unauthorized evidence must not be treated as completed."
+    "**Startup scan scope and evidence lookup are separate.** Startup manifest membership is not required for targeted evidence lookup. Keep default proactive scanning inside Startup scope."
   ].join("\n"),
   "utf8"
 );
@@ -718,7 +718,7 @@ const runStage = async (stageId, expectedOutcome = "completed", newRun = false) 
   try {
     await waitForServer();
     const handshake = await requestJson("POST", "/session/handshake", {
-      desktopVersion: "0.5.6",
+      desktopVersion: "0.5.7",
       protocolVersion: "2",
       supportedCapabilities: ["stage-execution:directives-v1", "contract:010-startup@2.1.0", "contract:020-discovery@2.0.0"]
     });

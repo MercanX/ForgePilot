@@ -1,0 +1,1 @@
+Discovery D05/D10/D15/D20/D25 compatibility verification passed (full envelopes, scan-scope/evidence-separation guard + checklist auto-repair, validation-before-persist, HARD downstream restart invalidation, explicit local failure activity, const + date-time enforcement).

@@ -191,8 +191,9 @@ const loadDiscoveryD25Schema = () => JSON.parse(readFileSync(DISCOVERY_D25_SCHEM
 
 const hasDiscoveryScopeEvidenceGuard = (prompt) =>
   prompt.includes("@startup/scope") &&
-  prompt.includes("Excluded evidence is a hard failure") &&
-  prompt.includes("must not be treated as completed");
+  prompt.includes("default proactive scanning") &&
+  prompt.includes("Startup scan scope and evidence lookup are separate") &&
+  prompt.includes("Startup manifest membership is not required for targeted evidence lookup");
 
 const sendJson = (response, statusCode, payload) => {
   response.writeHead(statusCode, {
@@ -969,7 +970,7 @@ const discoveryD05DirectiveFor = (session) => {
       false,
       "d05Result",
       [
-        "AI is running D05 Project Overview against the approved Startup scope.",
+        "AI is running D05 Project Overview inside the Startup proactive scan scope, with targeted repository evidence lookup allowed when needed.",
         "D05 AI generation finished; deterministic evidence/checklist validation is pending."
       ],
       [20, 90]
@@ -1000,7 +1001,7 @@ const discoveryD05DirectiveFor = (session) => {
 
   return terminalDirective(
     "completed",
-    `D05 Project Overview completed (${String(saved.result ?? "UNKNOWN")}); ${String(saved.finding_count ?? 0)} findings, ${String(saved.unknown_count ?? 0)} unknowns, ${String(saved.checklist_count ?? 0)} checklist dispositions.`,
+    `D05 Project Overview completed (${String(saved.result ?? "UNKNOWN")}); ${String(saved.finding_count ?? 0)} findings, ${String(saved.unknown_count ?? 0)} unknowns, ${String(saved.checklist_count ?? 0)} checklist dispositions${Number(saved.auto_repair_count ?? 0) > 0 ? `, ${String(saved.auto_repair_count)} checklist auto-repairs` : ""}.`,
     100
   );
 };
@@ -1077,7 +1078,7 @@ const discoveryD10DirectiveFor = (session) => {
 
   return terminalDirective(
     "completed",
-    `D10 Architecture completed (${String(saved.result ?? "UNKNOWN")}); ${String(saved.finding_count ?? 0)} findings, ${String(saved.unknown_count ?? 0)} unknowns, ${String(saved.checklist_count ?? 0)} checklist dispositions.`,
+    `D10 Architecture completed (${String(saved.result ?? "UNKNOWN")}); ${String(saved.finding_count ?? 0)} findings, ${String(saved.unknown_count ?? 0)} unknowns, ${String(saved.checklist_count ?? 0)} checklist dispositions${Number(saved.auto_repair_count ?? 0) > 0 ? `, ${String(saved.auto_repair_count)} checklist auto-repairs` : ""}.`,
     100
   );
 };
@@ -1154,7 +1155,7 @@ const discoveryD15DirectiveFor = (session) => {
 
   return terminalDirective(
     "completed",
-    `D15 Database completed (${String(saved.result ?? "UNKNOWN")}); ${String(saved.finding_count ?? 0)} findings, ${String(saved.unknown_count ?? 0)} unknowns, ${String(saved.checklist_count ?? 0)} checklist dispositions.`,
+    `D15 Database completed (${String(saved.result ?? "UNKNOWN")}); ${String(saved.finding_count ?? 0)} findings, ${String(saved.unknown_count ?? 0)} unknowns, ${String(saved.checklist_count ?? 0)} checklist dispositions${Number(saved.auto_repair_count ?? 0) > 0 ? `, ${String(saved.auto_repair_count)} checklist auto-repairs` : ""}.`,
     100
   );
 };
@@ -1232,7 +1233,7 @@ const discoveryD20DirectiveFor = (session) => {
 
   return terminalDirective(
     "completed",
-    `D20 Dependencies / Integrations completed (${String(saved.result ?? "UNKNOWN")}); ${String(saved.finding_count ?? 0)} findings, ${String(saved.unknown_count ?? 0)} unknowns, ${String(saved.checklist_count ?? 0)} checklist dispositions.`,
+    `D20 Dependencies / Integrations completed (${String(saved.result ?? "UNKNOWN")}); ${String(saved.finding_count ?? 0)} findings, ${String(saved.unknown_count ?? 0)} unknowns, ${String(saved.checklist_count ?? 0)} checklist dispositions${Number(saved.auto_repair_count ?? 0) > 0 ? `, ${String(saved.auto_repair_count)} checklist auto-repairs` : ""}.`,
     100
   );
 };
@@ -1310,7 +1311,7 @@ const discoveryD25DirectiveFor = (session) => {
 
   return terminalDirective(
     "completed",
-    `D25 Backend completed (${String(saved.result ?? "UNKNOWN")}); ${String(saved.finding_count ?? 0)} findings, ${String(saved.unknown_count ?? 0)} unknowns, ${String(saved.checklist_count ?? 0)} checklist dispositions.`,
+    `D25 Backend completed (${String(saved.result ?? "UNKNOWN")}); ${String(saved.finding_count ?? 0)} findings, ${String(saved.unknown_count ?? 0)} unknowns, ${String(saved.checklist_count ?? 0)} checklist dispositions${Number(saved.auto_repair_count ?? 0) > 0 ? `, ${String(saved.auto_repair_count)} checklist auto-repairs` : ""}.`,
     100
   );
 };
@@ -1633,10 +1634,10 @@ const server = http.createServer(async (request, response) => {
         d25RuntimeCompatible;
       sendJson(response, 200, {
         status: compatible ? "ok" : "update-required",
-        serverVersion: "mock-0.5.6-d25-backend",
+        serverVersion: "mock-0.5.7-scan-evidence-autorepair",
         protocolVersion: "2",
         message: compatible
-          ? "Mock cloud connected (Startup 2.1.0, Discovery D05 + D10 + D15 + D20 + D25, scope-evidence guard enforced)"
+          ? "Mock cloud connected (Startup 2.1.0, Discovery D05 + D10 + D15 + D20 + D25, scan/evidence separation + checklist auto-repair contract enforced)"
           : !protocolCompatible
             ? "Desktop protocol v2 is required for server-driven execution directives."
             : !startupRuntimeCompatible
@@ -1648,14 +1649,14 @@ const server = http.createServer(async (request, response) => {
                   : !discoveryManifestCompatible
                   ? "AI Factory Discovery stage manifest is missing or invalid in the runtime package."
                   : !d05RuntimeCompatible
-                    ? "AI Factory D05 runtime files are missing or invalid. Expected the approved compiled prompt, output schema, and scope-evidence guard."
+                    ? "AI Factory D05 runtime files are missing or invalid. Expected the approved compiled prompt, output schema, and scan/evidence-separation policy."
                     : !d10RuntimeCompatible
-                      ? "AI Factory D10 runtime files are missing or invalid. Expected the approved compiled prompt, output schema, and scope-evidence guard."
+                      ? "AI Factory D10 runtime files are missing or invalid. Expected the approved compiled prompt, output schema, and scan/evidence-separation policy."
                       : !d15RuntimeCompatible
-                        ? "AI Factory D15 runtime files are missing or invalid. Expected the approved compiled prompt, output schema, and scope-evidence guard."
+                        ? "AI Factory D15 runtime files are missing or invalid. Expected the approved compiled prompt, output schema, and scan/evidence-separation policy."
                         : !d20RuntimeCompatible
-                          ? "AI Factory D20 runtime files are missing or invalid. Expected the approved compiled prompt, output schema, and scope-evidence guard."
-                          : "AI Factory D25 runtime files are missing or invalid. Expected the approved compiled prompt, output schema, and scope-evidence guard."
+                          ? "AI Factory D20 runtime files are missing or invalid. Expected the approved compiled prompt, output schema, and scan/evidence-separation policy."
+                          : "AI Factory D25 runtime files are missing or invalid. Expected the approved compiled prompt, output schema, and scan/evidence-separation policy."
       });
       return;
     }

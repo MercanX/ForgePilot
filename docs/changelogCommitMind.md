@@ -6,6 +6,12 @@ ForgePilot Discovery stage görünürlüğü AI Factory runtime içindeki `STAGE
 
 ## 2026-08-17
 
+- Separated Startup proactive scan scope from targeted evidence validation, allowing real project-contained evidence paths outside the manifest to be accepted.
+- Added deterministic checklist-only auto-repair that downgrades unverifiable CHECKED_OK rows to NOT_INSPECTED_WITH_REASON without altering canonical semantic records.
+- Implemented hard failure for unsafe evidence defects tied to findings, strengths, unknowns, or contradictions, preventing silent semantic rewrites.
+- Updated all Discovery save jobs (D05-D25) to return auto_repair_count and surface repair activity in workflow completion messages.
+- Documented the new evidence authority model and auto-repair behavior in README, discovery execution docs, and a new scan-evidence-autorepair guide.
+
 - Added D25 Backend as an executable Discovery stage with full schema, checklist, and evidence validation.
 - Implemented dependency-aware restart invalidation that resets downstream stages when HARD prerequisites are rerun.
 - Extended the discovery context builder to aggregate D05, D10, D15, and D20 results for D25 provider execution.

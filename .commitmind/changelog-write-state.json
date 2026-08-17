@@ -1,5 +1,5 @@
 {
-  "lastFingerprint": "a037b19c9688f950410a8393bb42376e94a6867e",
+  "lastFingerprint": "69ee6c9ea7360c373987be1d547a24aacf3d2880",
   "lastDate": "2026-08-17",
-  "lastContent": "- Added D25 Backend as an executable Discovery stage with full schema, checklist, and evidence validation.\n- Implemented dependency-aware restart invalidation that resets downstream stages when HARD prerequisites are rerun.\n- Extended the discovery context builder to aggregate D05, D10, D15, and D20 results for D25 provider execution.\n- Updated documentation and manifests to reflect D25 availability and the new dependency invalidation rules.\n- Bumped package version to 0.5.6 with updated release notes."
+  "lastContent": "- Separated Startup proactive scan scope from targeted evidence validation, allowing real project-contained evidence paths outside the manifest to be accepted.\n- Added deterministic checklist-only auto-repair that downgrades unverifiable CHECKED_OK rows to NOT_INSPECTED_WITH_REASON without altering canonical semantic records.\n- Implemented hard failure for unsafe evidence defects tied to findings, strengths, unknowns, or contradictions, preventing silent semantic rewrites.\n- Updated all Discovery save jobs (D05-D25) to return auto_repair_count and surface repair activity in workflow completion messages.\n- Documented the new evidence authority model and auto-repair behavior in README, discovery execution docs, and a new scan-evidence-autorepair guide."
 }

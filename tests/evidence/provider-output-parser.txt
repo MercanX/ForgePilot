@@ -1,0 +1,4 @@
+PASS provider-output parser regression
+- truncated Claude result tail: rejected as contract root
+- complete Claude assistant event: recovered and selected
+- complete Claude result event: still accepted

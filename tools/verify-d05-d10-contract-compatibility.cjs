@@ -145,71 +145,79 @@ if (parsedD25.result.summary !== "backend fixture") {
   throw new Error("D25 full-envelope compatibility failed.");
 }
 
-const evidenceSource = `${extractDeclarations(
+const evidenceSource = `
+const { existsSync, realpathSync, statSync } = require("node:fs");
+const path = require("node:path");
+${extractDeclarations(
   path.join(__dirname, "..", "src", "services", "discovery", "discoverySubstageService.ts"),
   [
     "isObject",
+    "asArray",
     "normalizeRelativePath",
     "evidenceArraysFromResult",
-    "D05_RUNTIME_EVIDENCE_PATHS",
+    "DISCOVERY_RUNTIME_EVIDENCE_PATHS",
+    "evidencePathStatus",
+    "DiscoveryStageLabel",
+    "ChecklistAutoRepair",
+    "AUTO_REPAIR_NOTE_PREFIX",
+    "canonicalChecklistReferenceCount",
+    "autoRepairChecklistEvidence",
     "validateEvidence"
   ]
 )}
-export { validateEvidence };`;
+export { autoRepairChecklistEvidence, validateEvidence };`;
 const evidenceGuard = compileAndLoad(evidenceSource, "discovery-evidence-guard");
-const manifestPaths = new Set([
-  "website/public/js/app.js",
-  "website/public/sitethem/clinicmaster/assets/js/theme.js"
-]);
+const evidenceRepo = fs.mkdtempSync(path.join(os.tmpdir(), "forgepilot-evidence-"));
+fs.mkdirSync(path.join(evidenceRepo, "website", "public", "js"), { recursive: true });
+fs.writeFileSync(path.join(evidenceRepo, "website", "public", "js", "app.js"), "console.log('ok');\n");
+fs.mkdirSync(
+  path.join(evidenceRepo, "website", "public", "sitethem", "clinicmaster", "assets", "vendor", "wow"),
+  { recursive: true }
+);
+fs.writeFileSync(
+  path.join(evidenceRepo, "website", "public", "sitethem", "clinicmaster", "assets", "vendor", "wow", "wow.js"),
+  "/* vendored evidence */\n"
+);
 
+// In-scan evidence remains valid.
 evidenceGuard.validateEvidence(
   { checklist: [{ evidence: [{ path: "website/public/js/app.js" }] }] },
-  manifestPaths,
+  evidenceRepo,
+  "D05"
+);
+// Critical regression: a real repository file outside Startup's proactive scan set is
+// still valid targeted evidence. Startup manifest membership is no longer an evidence gate.
+evidenceGuard.validateEvidence(
+  { checklist: [{ evidence: [{ path: "website/public/sitethem/clinicmaster/assets/vendor/wow/wow.js" }] }] },
+  evidenceRepo,
   "D05"
 );
 evidenceGuard.validateEvidence(
-  { checklist: [{ evidence: [{ path: "website/public/js" }] }] },
-  manifestPaths,
-  "D10"
-);
-evidenceGuard.validateEvidence(
   { unknowns: [{ evidence: [{ path: "@startup/scope" }] }] },
-  manifestPaths,
+  evidenceRepo,
   "D15"
 );
-evidenceGuard.validateEvidence(
-  { checklist: [{ evidence: [{ path: "website/public/js/app.js" }] }] },
-  manifestPaths,
-  "D20"
-);
-evidenceGuard.validateEvidence(
-  { checklist: [{ evidence: [{ path: "website/public/js/app.js" }] }] },
-  manifestPaths,
-  "D25"
-);
 
-let excludedEvidenceRejected = false;
+let nonexistentRejected = false;
 try {
   evidenceGuard.validateEvidence(
-    { checklist: [{ evidence: [{ path: "website/public/sitethem/clinicmaster/assets/vendor/wow" }] }] },
-    manifestPaths,
-    "D05"
+    { checklist: [{ evidence: [{ path: "website/public/vendor/does-not-exist.js" }] }] },
+    evidenceRepo,
+    "D20"
   );
 } catch (error) {
-  excludedEvidenceRejected = String(error?.message ?? error).includes(
-    "D05 evidence is outside the approved Startup manifest/runtime authority"
-  );
+  nonexistentRejected = String(error?.message ?? error).includes("repository evidence path does not exist");
 }
-if (!excludedEvidenceRejected) {
-  throw new Error("Excluded/unapproved child evidence was not rejected by the deterministic Discovery guard.");
+if (!nonexistentRejected) {
+  throw new Error("Nonexistent Discovery evidence path was not rejected.");
 }
 
 let absoluteEvidenceRejected = false;
 try {
   evidenceGuard.validateEvidence(
     { findings: [{ evidence: [{ path: "C:/repo/secret.env" }] }] },
-    manifestPaths,
-    "D15"
+    evidenceRepo,
+    "D25"
   );
 } catch {
   absoluteEvidenceRejected = true;
@@ -218,16 +226,66 @@ if (!absoluteEvidenceRejected) {
   throw new Error("Absolute Discovery evidence path was not rejected.");
 }
 
+const repairFixture = {
+  checklist: [
+    {
+      check_id: "OV-029",
+      status: "CHECKED_OK",
+      evidence: [{ path: "website/public/vendor/missing.js" }],
+      finding_ids: [],
+      unknown_ids: [],
+      contradiction_ids: [],
+      strength_ids: [],
+      notes: "Provider claimed a file pair."
+    }
+  ]
+};
+const repairs = evidenceGuard.autoRepairChecklistEvidence(repairFixture, evidenceRepo, "D05");
+if (repairs.length !== 1 || repairFixture.checklist[0].status !== "NOT_INSPECTED_WITH_REASON") {
+  throw new Error("Safe checklist-only evidence defect was not auto-repaired.");
+}
+if (!String(repairFixture.checklist[0].notes).includes("[ForgePilot auto-repair]")) {
+  throw new Error("Checklist auto-repair did not record an explicit repair note.");
+}
+
+let unsafeRepairRejected = false;
+try {
+  evidenceGuard.autoRepairChecklistEvidence(
+    {
+      checklist: [
+        {
+          check_id: "OV-029",
+          status: "CHECKED_OK",
+          evidence: [{ path: "website/public/vendor/missing.js" }],
+          finding_ids: ["PO-F01"],
+          unknown_ids: [],
+          contradiction_ids: [],
+          strength_ids: [],
+          notes: "semantic link"
+        }
+      ]
+    },
+    evidenceRepo,
+    "D05"
+  );
+} catch (error) {
+  unsafeRepairRejected = String(error?.message ?? error).includes("unsafe evidence defect");
+}
+if (!unsafeRepairRejected) {
+  throw new Error("Auto-repair silently changed a checklist record tied to canonical semantics.");
+}
+fs.rmSync(evidenceRepo, { recursive: true, force: true });
+
 const discoveryServiceSource = fs.readFileSync(
   path.join(__dirname, "..", "src", "services", "discovery", "discoverySubstageService.ts"),
   "utf8"
 );
 for (const [functionName, validationNeedle] of [
-  ["runSaveD05ResultJob", "validateEvidence(result, manifestPaths, \"D05\")"],
-  ["runSaveD10ResultJob", "validateD10Evidence(result, manifestPaths)"],
-  ["runSaveD15ResultJob", "validateD15Evidence(result, manifestPaths)"],
-  ["runSaveD20ResultJob", "validateD20Evidence(result, manifestPaths)"],
-  ["runSaveD25ResultJob", "validateD25Evidence(result, manifestPaths)"]
+  ["runSaveD05ResultJob", "validateEvidence(result, projectRootPath, \"D05\")"],
+  ["runSaveD10ResultJob", "validateD10Evidence(result, projectRootPath)"],
+  ["runSaveD15ResultJob", "validateD15Evidence(result, projectRootPath)"],
+  ["runSaveD20ResultJob", "validateD20Evidence(result, projectRootPath)"],
+  ["runSaveD25ResultJob", "validateD25Evidence(result, projectRootPath)"]
 ]) {
   const start = discoveryServiceSource.indexOf(`export const ${functionName}`);
   if (start < 0) throw new Error(`${functionName} is missing.`);
@@ -345,5 +403,5 @@ if (!mockCloudRuntimeSource.includes("const unmarkStageAndHardDependents")) {
 }
 
 console.log(
-  "Discovery D05/D10/D15/D20/D25 compatibility verification passed (full envelopes, scope-evidence authority guard, validation-before-persist, HARD downstream restart invalidation, explicit local failure activity, const + date-time enforcement)."
+  "Discovery D05/D10/D15/D20/D25 compatibility verification passed (full envelopes, scan-scope/evidence-separation guard + checklist auto-repair, validation-before-persist, HARD downstream restart invalidation, explicit local failure activity, const + date-time enforcement)."
 );

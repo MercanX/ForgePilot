@@ -12,7 +12,6 @@ import type {
   WorkflowStage
 } from "@shared/schemas/run";
 
-import { loadDiscoveryStageCatalog } from "../discovery/discoveryStageCatalogService";
 import { runD05StatusJob, runD10StatusJob } from "../discovery/discoverySubstageService";
 import { runScopeStatusJob } from "../startup/startupJobService";
 
@@ -273,8 +272,6 @@ export const createProjectWorkflowState = (projectRootPath: string): ProjectWork
         }
       }
 
-      const catalog = await loadDiscoveryStageCatalog(projectRootPath);
-      const catalogById = new Map(catalog.map((entry) => [entry.id, entry]));
       const cloudById = new Map(workflow.stages.map((stage) => [stage.id, stage]));
       const completedIds = new Set<string>();
 
@@ -285,196 +282,117 @@ export const createProjectWorkflowState = (projectRootPath: string): ProjectWork
       for (const [stageId, state] of Object.entries(document.stages)) {
         if (state.status === "completed") completedIds.add(stageId);
       }
-      for (const stage of workflow.stages) {
-        if (
-          stage.status === "completed" &&
-          !["010-startup", "020-d05-project-overview", "020-d10-architecture"].includes(stage.id)
-        ) {
-          completedIds.add(stage.id);
-        }
-      }
-
-      const requirementName = (stageId: string): string =>
-        catalogById.get(stageId)?.display_name ?? cloudById.get(stageId)?.name ?? stageId;
 
       const requirementAvailable = (stageId: string): boolean => {
         if (stageId === "010-startup") return true;
-        const catalogEntry = catalogById.get(stageId);
-        if (catalogEntry) return catalogEntry.available && cloudById.has(stageId);
-        return cloudById.has(stageId);
+        const dependency = cloudById.get(stageId);
+        return Boolean(dependency && dependency.availability !== "not_ready");
       };
 
-      const catalogStages: WorkflowStage[] = catalog.map((entry): WorkflowStage => {
-        const base = cloudById.get(entry.id);
-        const local = document.stages[entry.id];
-        const executionAvailable = entry.available && Boolean(base);
-        const executionAvailabilityMessage = entry.availability_message ??
-          (entry.available && !base
-            ? "Stage package is installed, but the workflow server does not expose an execution directive yet."
-            : null);
-        const requirements = [
-          ...entry.hard.map((stageId) => ({ stageId, type: "hard" as const })),
-          ...entry.soft.map((stageId) => ({ stageId, type: "soft" as const }))
-        ].map(({ stageId, type }) => {
-          const satisfied = completedIds.has(stageId);
-          const available = requirementAvailable(stageId);
+      const stages = workflow.stages.map((stage): WorkflowStage => {
+        const local = document.stages[stage.id];
+        const requirements = stage.requirements.map((requirement) => {
+          const satisfied = completedIds.has(requirement.stageId);
+          const available = requirementAvailable(requirement.stageId);
           return {
-            stageId,
-            name: requirementName(stageId),
-            type,
-            status: satisfied ? ("satisfied" as const) : available ? ("missing" as const) : ("not_ready" as const),
+            ...requirement,
+            status: satisfied
+              ? ("satisfied" as const)
+              : available
+                ? ("missing" as const)
+                : ("not_ready" as const),
             runnable: !satisfied && available
           };
         });
-
         const hardMissing = requirements.filter(
           (requirement) => requirement.type === "hard" && requirement.status !== "satisfied"
         );
-        const completed = completedIds.has(entry.id);
-        const failed = local?.status === "failed";
-        const baseActivity = local?.activity ?? base?.activity ?? [];
-        const baseReport = local?.report ?? base?.report ?? null;
+        const completed = completedIds.has(stage.id);
+        const activity = local?.activity ?? stage.activity;
+        const report = local?.report ?? stage.report;
+
+        if (stage.id === "010-startup") {
+          if (startupSealed) {
+            return {
+              ...stage,
+              activity,
+              currentAgent: stage.currentAgent ?? "Startup Agent",
+              currentOperation: report?.message ?? "Workspace sealed.",
+              progress: 100,
+              report,
+              requirements,
+              status: "completed"
+            };
+          }
+          return { ...stage, activity, report, requirements, status: "ready" };
+        }
 
         if (completed) {
           return {
-            id: entry.id,
-            name: entry.display_name,
-            status: "completed",
+            ...stage,
+            activity,
+            currentOperation: report?.message ?? stage.currentOperation ?? "Completed.",
             progress: 100,
-            currentAgent: base?.currentAgent ?? `${entry.substage} Agent`,
-            currentOperation: baseReport?.message ?? base?.currentOperation ?? "Completed.",
-            availability: executionAvailable ? "available" : "not_ready",
-            availabilityMessage: executionAvailabilityMessage,
-            description: entry.description,
+            report,
             requirements,
-            activity: baseActivity,
-            report: baseReport
+            status: "completed"
           };
         }
 
-        if (!executionAvailable) {
+        if (stage.availability === "not_ready") {
           return {
-            id: entry.id,
-            name: entry.display_name,
-            status: "waiting",
-            progress: 0,
+            ...stage,
+            activity,
             currentAgent: null,
-            currentOperation: executionAvailabilityMessage ?? "Stage is not ready yet.",
-            availability: "not_ready",
-            availabilityMessage: executionAvailabilityMessage ?? "Stage is not ready yet.",
-            description: entry.description,
+            currentOperation: stage.availabilityMessage ?? "Stage is not ready yet.",
+            progress: 0,
+            report,
             requirements,
-            activity: baseActivity,
-            report: baseReport
+            status: "waiting"
           };
         }
 
-        if (failed) {
+        if (local?.status === "failed") {
           return {
-            id: entry.id,
-            name: entry.display_name,
-            status: "failed",
-            progress: base?.progress ?? 0,
-            currentAgent: base?.currentAgent ?? `${entry.substage} Agent`,
-            currentOperation: baseReport?.message ?? "Previous run failed. Requirements are satisfied; stage can be restarted.",
-            availability: "available",
-            availabilityMessage: null,
-            description: entry.description,
+            ...stage,
+            activity,
+            currentOperation: report?.message ?? "Previous run failed. Requirements can be re-evaluated before restart.",
+            report,
             requirements,
-            activity: baseActivity,
-            report: baseReport
+            status: "failed"
           };
         }
 
         if (hardMissing.length > 0) {
           return {
-            id: entry.id,
-            name: entry.display_name,
-            status: "waiting",
-            progress: 0,
+            ...stage,
+            activity,
             currentAgent: null,
             currentOperation: `Missing required stage: ${hardMissing.map((item) => item.name).join(", ")}`,
-            availability: "available",
-            availabilityMessage: null,
-            description: entry.description,
+            progress: 0,
+            report,
             requirements,
-            activity: baseActivity,
-            report: baseReport
+            status: "waiting"
           };
         }
 
+        if (local?.status === "running" || stage.status === "running") {
+          return { ...stage, activity, report, requirements, status: "running" };
+        }
+
         return {
-          id: entry.id,
-          name: entry.display_name,
-          status: base?.status === "running" ? "running" : "ready",
-          progress: base?.status === "running" ? (base.progress ?? 0) : 0,
-          currentAgent: base?.currentAgent ?? `${entry.substage} Agent`,
-          currentOperation: base?.status === "running" ? base.currentOperation : "Ready to start.",
-          availability: "available",
-          availabilityMessage: null,
-          description: entry.description,
+          ...stage,
+          activity,
+          currentOperation: "Ready to start.",
+          progress: 0,
+          report,
           requirements,
-          activity: baseActivity,
-          report: baseReport
+          status: "ready"
         };
       });
 
-      const discoveryIds = new Set(catalog.map((entry) => entry.id));
-      const otherStages = workflow.stages
-        .filter((stage) => !discoveryIds.has(stage.id))
-        .map((stage): WorkflowStage => {
-          const local = document.stages[stage.id];
+      return { ...workflow, stages };
 
-          if (stage.id === "010-startup" && startupSealed) {
-            return {
-              ...stage,
-              activity: local?.activity ?? stage.activity,
-              currentAgent: stage.currentAgent ?? "Startup Agent",
-              currentOperation: local?.report?.message ?? "Workspace sealed.",
-              progress: 100,
-              report: local?.report ?? stage.report,
-              status: "completed"
-            };
-          }
-
-          if (!local) return stage;
-          if (local.status === "completed") {
-            return {
-              ...stage,
-              activity: local.activity,
-              currentOperation: local.report?.message ?? "Completed",
-              progress: 100,
-              report: local.report,
-              status: "completed"
-            };
-          }
-          if (local.status === "failed") {
-            return {
-              ...stage,
-              activity: local.activity,
-              currentOperation: local.report?.message ?? stage.currentOperation,
-              report: local.report,
-              status: "failed"
-            };
-          }
-          return {
-            ...stage,
-            activity: local.activity,
-            currentOperation: local.report?.message ?? stage.currentOperation,
-            report: local.report
-          };
-        });
-
-      if (catalogStages.length === 0) {
-        return { ...workflow, stages: otherStages };
-      }
-
-      const startup = otherStages.find((stage) => stage.id === "010-startup");
-      const remainder = otherStages.filter((stage) => stage.id !== "010-startup");
-      return {
-        ...workflow,
-        stages: [...(startup ? [startup] : []), ...catalogStages, ...remainder]
-      };
     },
 
     recordProgress: async (event) => {

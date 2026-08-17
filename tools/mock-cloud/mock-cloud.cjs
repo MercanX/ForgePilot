@@ -2,7 +2,7 @@ const http = require("node:http");
 const os = require("node:os");
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
-const { readFileSync, writeFileSync } = require("node:fs");
+const { existsSync, readFileSync, writeFileSync } = require("node:fs");
 
 const PORT = Number(process.env.FORGEPILOT_MOCK_CLOUD_PORT ?? 4317);
 const jobs = new Map();
@@ -10,6 +10,29 @@ const STARTUP_STAGE_ID = "010-startup";
 const DISCOVERY_D05_STAGE_ID = "020-d05-project-overview";
 const DISCOVERY_D10_STAGE_ID = "020-d10-architecture";
 const executions = new Map();
+
+const DISCOVERY_MANIFEST_PATH =
+  process.env.FORGEPILOT_DISCOVERY_MANIFEST ??
+  "C:\\Github\\aiFactory\\.ai-factory\\020-Discovery\\STAGE-EXECUTION-MANIFEST.json";
+
+const loadDiscoveryManifest = () => {
+  const manifest = JSON.parse(readFileSync(DISCOVERY_MANIFEST_PATH, "utf8"));
+  if (
+    manifest?.schema_version !== "1.0" ||
+    manifest?.policy !== "dependency-aware-selectable" ||
+    !Array.isArray(manifest?.stages)
+  ) {
+    throw new Error("Invalid AI Factory Discovery stage execution manifest.");
+  }
+  return manifest;
+};
+
+const DISCOVERY_EXECUTABLE_STAGE_IDS = new Set([
+  DISCOVERY_D05_STAGE_ID,
+  DISCOVERY_D10_STAGE_ID
+]);
+
+const discoveryRuntimeRoot = () => path.dirname(DISCOVERY_MANIFEST_PATH);
 
 // Persisted to disk (not just in-memory) so that stage-completion status
 // survives a mock-cloud restart. This process is restarted frequently during
@@ -146,10 +169,79 @@ const getLastJsonObject = (outputChunks) => {
 };
 
 const buildStages = (projectId) => {
+  const manifest = loadDiscoveryManifest();
   const passed = getProjectStageSet(projectId);
   const startupCompleted = passed.has(STARTUP_STAGE_ID);
-  const d05Completed = passed.has(DISCOVERY_D05_STAGE_ID);
-  const d10Completed = passed.has(DISCOVERY_D10_STAGE_ID);
+  const stageById = new Map(manifest.stages.map((stage) => [stage.id, stage]));
+
+  const runtimeAvailable = (stage) =>
+    stage.implementation_status === "available" &&
+    existsSync(path.join(discoveryRuntimeRoot(), stage.folder)) &&
+    DISCOVERY_EXECUTABLE_STAGE_IDS.has(stage.id);
+
+  const requirementName = (stageId) =>
+    stageId === STARTUP_STAGE_ID
+      ? "010-Startup"
+      : stageById.get(stageId)?.display_name ?? stageId;
+
+  const requirementAvailable = (stageId) => {
+    if (stageId === STARTUP_STAGE_ID) return true;
+    const stage = stageById.get(stageId);
+    return Boolean(stage && runtimeAvailable(stage));
+  };
+
+  const discoveryStages = manifest.stages.map((stage) => {
+    const completed = passed.has(stage.id);
+    const available = runtimeAvailable(stage);
+    const requirements = [
+      ...(stage.hard ?? []).map((stageId) => ({ stageId, type: "hard" })),
+      ...(stage.soft ?? []).map((stageId) => ({ stageId, type: "soft" }))
+    ].map(({ stageId, type }) => {
+      const satisfied = stageId === STARTUP_STAGE_ID ? startupCompleted : passed.has(stageId);
+      const dependencyAvailable = requirementAvailable(stageId);
+      return {
+        stageId,
+        name: requirementName(stageId),
+        type,
+        status: satisfied ? "satisfied" : dependencyAvailable ? "missing" : "not_ready",
+        runnable: !satisfied && dependencyAvailable
+      };
+    });
+    const hardMissing = requirements.some(
+      (requirement) => requirement.type === "hard" && requirement.status !== "satisfied"
+    );
+
+    let availabilityMessage = null;
+    if (!available) {
+      if (stage.implementation_status !== "available") {
+        availabilityMessage = "Stage is defined in the AI Factory catalog but is not implemented yet.";
+      } else if (!existsSync(path.join(discoveryRuntimeRoot(), stage.folder))) {
+        availabilityMessage = "Stage package is missing from the AI Factory runtime.";
+      } else {
+        availabilityMessage =
+          "Stage package exists in the AI Factory runtime, but the workflow server does not expose an execution directive yet.";
+      }
+    }
+
+    return {
+      id: stage.id,
+      name: stage.display_name,
+      status: completed ? "completed" : available && !hardMissing ? "ready" : "waiting",
+      progress: completed ? 100 : 0,
+      currentAgent: available ? `${stage.substage} Agent` : null,
+      currentOperation: completed
+        ? `${stage.display_name} completed.`
+        : available && !hardMissing
+          ? "Ready for manual start."
+          : availabilityMessage,
+      availability: available ? "available" : "not_ready",
+      availabilityMessage,
+      description: stage.description,
+      requirements,
+      activity: [],
+      report: null
+    };
+  });
 
   return [
     {
@@ -158,58 +250,18 @@ const buildStages = (projectId) => {
       status: startupCompleted ? "completed" : "ready",
       progress: startupCompleted ? 100 : 0,
       currentAgent: "Startup Agent",
-      currentOperation: startupCompleted ? "Run sealed." : "Waiting for execution directive"
+      currentOperation: startupCompleted ? "Run sealed." : "Waiting for execution directive",
+      availability: "available",
+      availabilityMessage: null,
+      description: "Establishes and seals the project audit scope before Discovery execution.",
+      requirements: [],
+      activity: [],
+      report: null
     },
-    {
-      id: DISCOVERY_D05_STAGE_ID,
-      name: "020-D05-Project-Overview",
-      status: d05Completed ? "completed" : startupCompleted ? "ready" : "waiting",
-      progress: d05Completed ? 100 : 0,
-      currentAgent: startupCompleted ? "D05 Project Overview Agent" : null,
-      currentOperation: d05Completed
-        ? "Project Overview audit completed."
-        : startupCompleted
-          ? "Ready for manual start."
-          : null
-    },
-    {
-      id: DISCOVERY_D10_STAGE_ID,
-      name: "020-D10-Architecture",
-      status: d10Completed ? "completed" : d05Completed ? "ready" : "waiting",
-      progress: d10Completed ? 100 : 0,
-      currentAgent: d05Completed ? "D10 Architecture Agent" : null,
-      currentOperation: d10Completed
-        ? "Architecture audit completed."
-        : d05Completed
-          ? "Ready for manual start."
-          : null
-    },
-    {
-      id: "030-context",
-      name: "030-Context",
-      status: "waiting",
-      progress: 0,
-      currentAgent: null,
-      currentOperation: null
-    },
-    {
-      id: "040-implementation",
-      name: "040-Implementation",
-      status: "waiting",
-      progress: 0,
-      currentAgent: null,
-      currentOperation: null
-    },
-    {
-      id: "050-validation",
-      name: "050-Validation",
-      status: "waiting",
-      progress: 0,
-      currentAgent: null,
-      currentOperation: null
-    }
+    ...discoveryStages
   ];
 };
+
 const createStartupScopePrompt = (requestBody) => {
   const task = getStartupProviderTask("SCOPE_PROPOSAL");
   const rule = readRule(task.rulePath);
@@ -1032,6 +1084,16 @@ const server = http.createServer(async (request, response) => {
       const startupRuntimeCompatible = startupContract.contract_version === "2.1.0";
       const startupContractCompatible = capabilities.includes("contract:010-startup@2.1.0");
       const discoveryContractCompatible = capabilities.includes("contract:020-discovery@2.0.0");
+      let discoveryManifestCompatible = false;
+      try {
+        const discoveryManifest = loadDiscoveryManifest();
+        discoveryManifestCompatible =
+          discoveryManifest.stages.length === 14 &&
+          discoveryManifest.stages.some((stage) => stage.id === DISCOVERY_D05_STAGE_ID) &&
+          discoveryManifest.stages.some((stage) => stage.id === DISCOVERY_D10_STAGE_ID);
+      } catch {
+        discoveryManifestCompatible = false;
+      }
       let d05RuntimeCompatible = false;
       try {
         const d05Prompt = loadDiscoveryD05Prompt();
@@ -1069,6 +1131,7 @@ const server = http.createServer(async (request, response) => {
         startupRuntimeCompatible &&
         startupContractCompatible &&
         discoveryContractCompatible &&
+        discoveryManifestCompatible &&
         d05RuntimeCompatible &&
         d10RuntimeCompatible;
       sendJson(response, 200, {
@@ -1085,6 +1148,8 @@ const server = http.createServer(async (request, response) => {
                 ? "Desktop must support AI Factory Startup contract 2.1.0."
                 : !discoveryContractCompatible
                   ? "Desktop must support AI Factory Discovery contract 2.0.0."
+                  : !discoveryManifestCompatible
+                  ? "AI Factory Discovery stage manifest is missing or invalid in the runtime package."
                   : !d05RuntimeCompatible
                     ? "AI Factory D05 runtime files are missing or invalid. Expected the approved D05 compiled prompt and output schema."
                     : "AI Factory D10 runtime files are missing or invalid. Expected the approved D10 compiled prompt and output schema."

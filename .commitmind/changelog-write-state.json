@@ -1,5 +1,5 @@
 {
-  "lastFingerprint": "0ce19e4cfa56d7776734dee3ed0e096cd9595a01",
-  "lastDate": "2026-08-16",
-  "lastContent": "- Added D10 Architecture discovery stage with manual execution and D05 prerequisite enforcement\n- Implemented comprehensive validation for architecture findings, strengths, unknowns, and contradictions\n- Added D10 status and save operations to the local operation registry\n- Updated workflow state to reflect D10 readiness based on completed D05 results\n- Bumped application version to 0.5.1 with updated desktop version references"
+  "lastFingerprint": "9a6e435e15ae8f37a25f27828f743f3169c3d9c2",
+  "lastDate": "2026-08-17",
+  "lastContent": "- Moved Discovery stage catalog authority from project-local manifests to the AI Factory runtime package, published via the workflow server.\n- Updated project workflow state to consume server-published stage metadata, removing project-local catalog loading.\n- Added support for `FORGEPILOT_DISCOVERY_MANIFEST` environment variable to override the runtime manifest location.\n- Clarified runtime versus project state ownership in documentation, separating stage catalog authority from project-specific artifacts.\n- Updated AGENTS.md and README to reflect the new server-driven Discovery stage execution model."
 }

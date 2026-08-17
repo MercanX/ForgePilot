@@ -1,4 +1,4 @@
-const { mkdtempSync, writeFileSync, rmSync, mkdirSync } = require("node:fs");
+const { mkdtempSync, writeFileSync, rmSync, mkdirSync, readFileSync } = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
@@ -10,7 +10,9 @@ const statePath = path.join(tempRoot, "state.json");
 const startupRuntimeRoot = path.join(tempRoot, "startup-runtime");
 const startupRulePath = path.join(startupRuntimeRoot, "rules", "005-propose_scope.rules.md");
 const startupContractPath = path.join(startupRuntimeRoot, "STARTUP_CONTRACT.json");
-const d05RuntimeRoot = path.join(tempRoot, "discovery-runtime", "D05-Project-Overview");
+const discoveryRuntimeRoot = path.join(tempRoot, "discovery-runtime");
+const discoveryManifestPath = path.join(discoveryRuntimeRoot, "STAGE-EXECUTION-MANIFEST.json");
+const d05RuntimeRoot = path.join(discoveryRuntimeRoot, "D05-Project-Overview");
 const d05PromptPath = path.join(d05RuntimeRoot, "prompt", "project-overview.compiled.prompt.md");
 const d05SchemaPath = path.join(d05RuntimeRoot, "contracts", "project-overview-output.schema.json");
 const d10RuntimeRoot = path.join(tempRoot, "discovery-runtime", "D10-Architecture");
@@ -25,6 +27,11 @@ mkdirSync(path.dirname(d05PromptPath), { recursive: true });
 mkdirSync(path.dirname(d05SchemaPath), { recursive: true });
 mkdirSync(path.dirname(d10PromptPath), { recursive: true });
 mkdirSync(path.dirname(d10SchemaPath), { recursive: true });
+writeFileSync(
+  discoveryManifestPath,
+  readFileSync(path.join(__dirname, "..", "tests", "fixtures", "discovery-stage-execution-manifest.json"), "utf8"),
+  "utf8"
+);
 writeFileSync(startupRulePath, "# Startup scope fixture rule\n", "utf8");
 writeFileSync(
   startupContractPath,
@@ -154,6 +161,7 @@ const child = spawn(process.execPath, [path.join(__dirname, "mock-cloud", "mock-
     FORGEPILOT_MOCK_CLOUD_PORT: String(port),
     FORGEPILOT_MOCK_CLOUD_STATE_FILE: statePath,
     FORGEPILOT_STARTUP_CONTRACT: startupContractPath,
+    FORGEPILOT_DISCOVERY_MANIFEST: discoveryManifestPath,
     FORGEPILOT_DISCOVERY_D05_PROMPT: d05PromptPath,
     FORGEPILOT_DISCOVERY_D05_SCHEMA: d05SchemaPath,
     FORGEPILOT_DISCOVERY_D10_PROMPT: d10PromptPath,

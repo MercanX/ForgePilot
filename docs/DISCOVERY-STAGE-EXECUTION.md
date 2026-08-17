@@ -1,45 +1,37 @@
-# Discovery Stage Seçimi ve Gereksinim UI'sı
+# Discovery Stage Execution
 
-ForgePilot, `020-Discovery` substage listesini ve dependency bilgisini proje içindeki:
+ForgePilot, `020-Discovery` runtime paketini seçili yazılım projesinin içinde aramaz. Stage catalog ve HARD/SOFT dependency sözleşmesinin authority'si AI Factory runtime paketidir. Yerel geliştirme düzeninde varsayılan konum:
 
-`/.ai-factory/020-Discovery/STAGE-EXECUTION-MANIFEST.json`
+```text
+C:\\Github\\aiFactory\\.ai-factory\\020-Discovery\\STAGE-EXECUTION-MANIFEST.json
+```
 
-dosyasından okur. Desktop istemcisi Dxx dependency ilişkilerini hard-code etmez.
+`FORGEPILOT_DISCOVERY_MANIFEST` environment variable ile workflow server farklı bir runtime manifest konumuna yönlendirilebilir. Workflow server manifesti yükler ve stage listesini `/workflows/current` cevabında ForgePilot desktop'a yayınlar. Desktop seçili proje altında runtime manifest aramaz.
 
-## Kullanıcı akışı
+## Runtime ve project state ayrımı
 
-Bir Discovery substage kartına tıklamak stage'i otomatik başlatmaz. Önce stage ayrıntısı ve requirements görünür.
+AI Factory runtime tarafı şunların authority'sidir:
 
-- Stage `available` ve tüm HARD gereksinimler `Satisfied` ise **Start stage** aktif olur.
-- HARD gereksinim eksikse hedef stage başlatılamaz ve **Run requirement** gösterilir.
-- **Run requirement** seçildiğinde ForgePilot dependency'nin kendi HARD gereksinimlerini de kontrol eder ve recursive olarak ilk çalıştırılabilir prerequisite stage'i başlatır.
-- SOFT dependency eksikliği hedef stage'i bloke etmez.
-- Stage manifestte tanımlı fakat paket veya workflow-server execution desteği hazır değilse stage kartı görünür kalır ve **Not Ready** gösterir.
+- D05-D70 stage catalog,
+- stage açıklamaları,
+- `available` / `not_ready` implementation durumu,
+- HARD/SOFT dependency contract,
+- executable provider/local directives,
+- prompt ve output schema dosyaları.
 
-## Availability
+Seçili proje tarafı ise yalnız o projeye ait state/artifact authority'sidir; örneğin Startup seal, audit snapshot, stage outputs ve ForgePilot local state. Runtime stage paketinin her hedef projeye kopyalanması gerekmez.
 
-Bir Discovery stage'in gerçekten çalıştırılabilir sayılması için iki koşul birlikte gerekir:
+## UI davranışı
 
-1. Manifestte `implementation_status: "available"` olmalı ve stage klasörü projede bulunmalı.
-2. Workflow server aynı `stage.id` için executable stage/directive yüzeyi sunmalı.
+Bir stage seçildiğinde audit otomatik başlamaz. ForgePilot server'ın yayınladığı metadata üzerinden description ve requirements gösterir.
 
-Böylece yalnızca klasörün bulunması stage'in yanlışlıkla çalıştırılabilir kabul edilmesine yol açmaz.
+- Stage executable ve bütün HARD gereksinimler satisfied ise `Start stage`.
+- HARD dependency eksik ama runnable ise `Run requirement`.
+- SOFT dependency eksikse hedef stage bloklanmaz.
+- Stage katalogda var ama runtime package veya execution directive hazır değilse `Not Ready`.
 
-## Güvenlik / enforcement
+`Run requirement` renderer tarafında recursive olarak en yakın çalıştırılabilir prerequisite'i bulur. Backend `runOnce` aynı availability/HARD kurallarını tekrar doğrular; doğrudan IPC çağrısı UI guard'ını bypass edemez.
 
-Renderer butonları tek enforcement noktası değildir. `JobService.runOnce()` da:
+## Stage ekleme
 
-- `availability === "not_ready"` stage'i reddeder.
-- Satisfied olmayan HARD dependency bulunan stage'i reddeder.
-
-Bu nedenle IPC üzerinden doğrudan çağrı UI kuralını bypass edemez.
-
-## Mevcut durum
-
-Mevcut 020-Discovery paketinde:
-
-- D05 Project Overview: **available**
-- D10 Architecture: **available**
-- D15–D70: katalogda görünür, ancak stage paketleri henüz tamamlanmadığı için **not_ready**
-
-Yeni bir stage tamamlandığında ForgePilot dependency kodu değiştirilmez. İlgili stage paketi ve workflow server execution desteği hazırlanır; ardından `STAGE-EXECUTION-MANIFEST.json` içindeki availability/dependency contractı güncellenir.
+Yeni bir stage tamamlandığında ForgePilot'a Dxx ilişkisi hard-code edilmez. İlgili stage paketi AI Factory runtime'a eklenir, workflow server execution directive'i hazırlanır ve `STAGE-EXECUTION-MANIFEST.json` availability/dependency contractı güncellenir. Desktop katalog bilgisini bir sonraki workflow yüklemesinde server'dan alır.

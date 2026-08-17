@@ -119,9 +119,9 @@ export const createJobService = (options: JobServiceOptions = {}): JobService =>
     }
   };
 
-  // Cloud owns executable directives. Discovery stage visibility and HARD/SOFT dependency metadata
-  // are enriched from the project-local STAGE-EXECUTION-MANIFEST.json; project artifacts remain
-  // the authority for completion/readiness. Deleting .ai-factory resets that local Discovery state.
+  // Cloud/workflow server owns executable directives and publishes the Discovery stage catalog
+  // loaded from the AI Factory runtime manifest. The selected project owns only project-specific
+  // completion/readiness artifacts; it does not need to contain the Discovery runtime package.
   const getWorkflow = async (
     projectId: string,
     rootPath: string,

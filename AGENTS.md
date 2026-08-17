@@ -19,7 +19,7 @@ Temel mimari ilkeler:
 - Uygulama Electron, Node.js, TypeScript, React, Vite, SQLite ve Zod hattında ilerler.
 - ForgePilot ince istemcidir; AI Factory'nin özel agent, rule, skill, workflow, prompt,
   skor veya orkestrasyon mantığı istemciye gömülmez.
-- Workflow server executable directive yüzeyini sağlar; Discovery substage kataloğu ve HARD/SOFT dependency bilgisi proje içindeki `STAGE-EXECUTION-MANIFEST.json` üzerinden gelir. İstemci Dxx stage isimlerine veya dependency ilişkilerine göre hard-code edilmiş kararlar vermemelidir.
+- Workflow server executable directive yüzeyini sağlar; Discovery substage kataloğu ve HARD/SOFT dependency bilgisi AI Factory runtime paketindeki `STAGE-EXECUTION-MANIFEST.json` üzerinden gelir ve server tarafından desktop'a yayınlanır. Seçili proje runtime stage paketini taşımak zorunda değildir. İstemci Dxx stage isimlerine veya dependency ilişkilerine göre hard-code edilmiş kararlar vermemelidir.
 - Claude Code ve Codex gibi sağlayıcılar `ProviderAdapter` soyutlaması üzerinden
   yönetilir.
 - Renderer tarafı doğrudan `fs`, `child_process`, `process`, SQLite veya cloud

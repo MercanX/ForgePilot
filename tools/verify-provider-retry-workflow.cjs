@@ -36,7 +36,7 @@ mustContain(jobStore, 'providerRetryWaiting: boolean;', 'Renderer retry waiting 
 mustContain(jobStore, 'retryProviderNow: async (projectId, stageId)', 'Renderer manual retry action');
 mustContain(dashboard, 'Retry provider now', 'Dashboard manual retry button');
 mustContain(dashboard, 'Waiting for provider', 'Dashboard provider waiting state');
-mustContain(mockCloud, 'mock-0.5.10-provider-retry-watch', 'Updated mock-cloud version');
+mustContain(mockCloud, 'mock-0.5.11-repair-root-guard', 'Updated mock-cloud version');
 
 const tsPath = path.join(path.dirname(process.execPath), '..', 'lib', 'node_modules', 'typescript');
 const ts = require(tsPath);
@@ -200,7 +200,7 @@ const fakeJournal = {
   getLocalResult: async () => ({ found: false, output: null }),
   saveLocalResult: async () => {}
 };
-const fakeRepairStore = { clear: async () => {}, get: async () => null, save: async () => {}, toPublicState: async () => ({ available: false, autoAttempts: 0, canSave: false, changedPaths: [], manualAttempts: 0, maxAutoAttempts: 5, stageId: '020-any-stage', status: null, updatedAt: null, validationErrors: [], workingJson: null }) };
+const fakeRepairStore = { clear: async () => {}, get: async () => null, save: async () => {}, toPublicState: async () => ({ available: false, autoAttempts: 0, canManualRepair: false, canSave: false, changedPaths: [], manualAttempts: 0, maxAutoAttempts: 5, originalJson: null, repairBaseWarning: null, stageId: '020-any-stage', status: null, updatedAt: null, validationErrors: [], workingJson: null }) };
 const service = createStageExecutionService({
   createClient: () => fakeClient,
   localOperationRegistry: { list: () => [], execute: async () => { throw new Error('unused'); } },

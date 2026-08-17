@@ -721,7 +721,7 @@ const runStage = async (stageId, expectedOutcome = "completed", newRun = false) 
   try {
     await waitForServer();
     const handshake = await requestJson("POST", "/session/handshake", {
-      desktopVersion: "0.5.10",
+      desktopVersion: "0.5.11",
       protocolVersion: "2",
       supportedCapabilities: ["stage-execution:directives-v1", "contract:010-startup@2.1.0", "contract:020-discovery@2.0.0"]
     });

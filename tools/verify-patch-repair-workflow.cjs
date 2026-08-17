@@ -32,6 +32,9 @@ mustContain(execution, 'Preserve every value outside the allowed target paths ex
 mustContain(execution, 'allowed_target_paths=', 'Repair path allowlist');
 mustContain(execution, 'REPAIR_PATCH_SCHEMA', 'Patch response schema');
 mustContain(execution, 'applyRepairPatches', 'Patch application guard');
+mustContain(execution, 'patchPreservesExistingContainer', 'Container preservation guard');
+mustContain(execution, 'isRepairBaseViable', 'Fragment repair-base guard');
+mustContain(execution, 'Manual AI Repair was not started because Working JSON is only a fragment', 'Fragment manual-repair stop');
 mustContain(execution, 'enforceAuthority', 'Runtime metadata authority guard');
 mustContain(execution, 'toolPolicy: "no-repository-tools"', 'No-tools repair invocation');
 mustContain(execution, 'Automatic JSON patch repair ${attempt}/${MAX_AUTO_REPAIR_ATTEMPTS}', 'Provider contract 1/5 repair progress');
@@ -69,13 +72,16 @@ mustContain(dashboard, 'Recover existing JSON', 'Failed-run existing JSON recove
 mustContain(dashboard, 'Prepare existing JSON for repair', 'Existing JSON recovery action');
 mustContain(dashboard, 'Validate edited JSON', 'Editable JSON validate button');
 mustContain(dashboard, 'Manual Repair with AI', 'Manual AI repair button');
+mustContain(dashboard, 'Restore original provider JSON', 'Restore original repair action');
+mustContain(dashboard, 'Load full provider JSON', 'Load full provider JSON repair action');
+mustContain(dashboard, 'Repair base is incomplete', 'Fragment warning UI');
 mustContain(dashboard, 'Save repaired result', 'Repaired-result save button');
 mustContain(dashboard, 'Auto repair: {activeRepair.autoAttempts}/{activeRepair.maxAutoAttempts}', 'Repair attempt counter');
 mustContain(dashboard, 'disabled={isRunning || !activeRepair.canSave}', 'Save disabled until valid');
 mustContain(dashboard, 'Original provider output is preserved', 'UI original-output preservation notice');
 
-mustContain(mockCloud, 'mock-0.5.10-provider-retry-watch', 'Updated mock-cloud version');
-mustContain(mockCloud, '5x provider retry + 5-minute provider watch + manual retry + JSON patch/manual repair workflow', 'Updated handshake repair description');
+mustContain(mockCloud, 'mock-0.5.11-repair-root-guard', 'Updated mock-cloud version');
+mustContain(mockCloud, 'provider retry watch + schema-aware root selection + fragment-safe JSON patch/manual repair workflow', 'Updated handshake repair description');
 // The legacy helper may remain as dead code for compatibility, but nextDirectiveFor must not schedule it.
 const nextDirectiveStart = mockCloud.indexOf('const nextDirectiveFor = (session) => {');
 const applyPreviousStart = mockCloud.indexOf('const applyPreviousResult = (session, previous) => {');
@@ -115,8 +121,8 @@ const mockRequire = (id) => {
 new Function('require', 'module', 'exports', '__filename', '__dirname', compiled.outputText)(
   mockRequire, runtimeModule, runtimeModule.exports, stageSourcePath, path.dirname(stageSourcePath)
 );
-const { allowedRepairPaths, applyRepairPatches } = runtimeModule.exports;
-if (typeof allowedRepairPaths !== 'function' || typeof applyRepairPatches !== 'function') {
+const { allowedRepairPaths, applyRepairPatches, isRepairBaseViable } = runtimeModule.exports;
+if (typeof allowedRepairPaths !== 'function' || typeof applyRepairPatches !== 'function' || typeof isRepairBaseViable !== 'function') {
   throw new Error('Real patch helpers could not be loaded for functional verification.');
 }
 const working = {
@@ -135,6 +141,49 @@ if (patched.result.findings[0].title !== 'must stay') throw new Error('Patch rep
 if (patched.audit_id !== 'AUD-002') throw new Error('Repair AI overrode ForgePilot audit_id authority.');
 console.log('Functional patch guard regression passed (allowed path changed; unrelated semantic path rejected; authority metadata preserved).');
 
+const destructiveBase = {
+  audit_id: 'AUD-002', completed_at: '2026-08-18T00:00:00Z', schema_version: '1.0',
+  substage: 'D15-Database', workspace_hash: 'sealed-hash',
+  result: { summary: 'keep', findings: [{ id: 'DB-F001', title: 'must survive' }] }
+};
+const destructive = applyRepairPatches(
+  destructiveBase,
+  { patches: [{ op: 'replace', path: '$.result', value: { summary: 'replacement that drops findings' } }] },
+  ['$.result'],
+  { audit_id: 'AUD-002', schema_version: '1.0', substage: 'D15-Database', workspace_hash: 'sealed-hash' }
+).value;
+if (!destructive.result.findings || destructive.result.findings[0].title !== 'must survive') {
+  throw new Error('Repair replaced a non-empty result container and discarded existing semantic content.');
+}
+const moveGuard = applyRepairPatches(
+  destructiveBase,
+  { patches: [{ op: 'move', from: '$.result.findings[0].title', path: '$.result.summary' }] },
+  ['$.result.summary'],
+  { audit_id: 'AUD-002', schema_version: '1.0', substage: 'D15-Database', workspace_hash: 'sealed-hash' }
+).value;
+if (moveGuard.result.summary !== 'keep' || moveGuard.result.findings[0].title !== 'must survive') {
+  throw new Error('Repair move consumed an unrelated source path outside the allowlist.');
+}
+const viabilitySchema = {
+  type: 'object', required: ['audit_id', 'completed_at', 'schema_version', 'substage', 'workspace_hash', 'result'],
+  properties: { result: { type: 'object', required: ['summary', 'findings', 'checklist', 'handoff'] } }
+};
+const d15HandoffFragment = {
+  recommended_next_substages: [],
+  cautions: ['preserved tail'],
+  audit_id: 'AUD-002',
+  workspace_hash: 'sealed-hash',
+  schema_version: '1.0',
+  substage: 'D15-Database'
+};
+if (isRepairBaseViable(d15HandoffFragment, viabilitySchema)) {
+  throw new Error('D15 handoff tail + authority fields was incorrectly accepted as an AI repair base.');
+}
+if (!isRepairBaseViable(destructiveBase, viabilitySchema)) {
+  throw new Error('A real envelope with semantic result content was incorrectly rejected as a repair base.');
+}
+console.log('Fragment/container repair guards passed (no destructive replacement, no unrelated move source, handoff fragment rejected).');
+
 // Functional legacy/current failed-run recovery: importing an already-produced JSON must advance
 // only through local preparation, stop at the provider directive, and later save that JSON without
 // starting a provider process/repository audit.
@@ -152,18 +201,21 @@ const fakeRepairStore = {
   toPublicState: async (stageId) => repairRecord ? ({
     available: true,
     autoAttempts: repairRecord.autoAttempts,
+    canManualRepair: repairRecord.validationErrors.length > 0 && !!repairRecord.workingOutput.result,
     canSave: repairRecord.validationErrors.length === 0,
     changedPaths: repairRecord.changedPaths,
     manualAttempts: repairRecord.manualAttempts,
     maxAutoAttempts: repairRecord.maxAutoAttempts,
+    originalJson: JSON.stringify(repairRecord.originalOutput, null, 2),
+    repairBaseWarning: repairRecord.workingOutput.result ? null : 'fragment',
     stageId,
     status: repairRecord.validationErrors.length === 0 ? 'ready_to_save' : 'needs_manual',
     updatedAt: repairRecord.updatedAt,
     validationErrors: repairRecord.validationErrors,
     workingJson: JSON.stringify(repairRecord.workingOutput, null, 2)
   }) : ({
-    available: false, autoAttempts: 0, canSave: false, changedPaths: [], manualAttempts: 0,
-    maxAutoAttempts: 5, stageId, status: null, updatedAt: null, validationErrors: [], workingJson: null
+    available: false, autoAttempts: 0, canManualRepair: false, canSave: false, changedPaths: [], manualAttempts: 0,
+    maxAutoAttempts: 5, originalJson: null, repairBaseWarning: null, stageId, status: null, updatedAt: null, validationErrors: [], workingJson: null
   })
 };
 const fakeJournal = {

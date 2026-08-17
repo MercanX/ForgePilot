@@ -31,6 +31,7 @@ export type StageRepairRecord = {
   maxAutoAttempts: number;
   originalOutput: Record<string, unknown>;
   outputSchema: Record<string, unknown>;
+  providerOutputText?: string;
   pending: RepairPendingDirective;
   schemaVersion: 1;
   stageId: string;
@@ -70,7 +71,8 @@ const parseRecord = (value: unknown): StageRepairRecord | null => {
     !isObject(value.authority) ||
     !isObject(value.pending) ||
     !Array.isArray(value.validationErrors) ||
-    !Array.isArray(value.changedPaths)
+    !Array.isArray(value.changedPaths) ||
+    (value.providerOutputText !== undefined && typeof value.providerOutputText !== "string")
   ) {
     return null;
   }
@@ -90,6 +92,17 @@ const parseRecord = (value: unknown): StageRepairRecord | null => {
   }
 
   return value as unknown as StageRepairRecord;
+};
+
+
+const repairBaseWarning = (record: StageRepairRecord): string | null => {
+  const required = Array.isArray(record.outputSchema.required)
+    ? record.outputSchema.required.filter((item): item is string => typeof item === "string")
+    : [];
+  if (required.includes("result") && !isObject(record.workingOutput.result)) {
+    return "Working JSON is only a provider fragment: the required $.result object is missing. AI patch repair is disabled because it cannot safely recreate the audit from a fragment. Paste/load the full original provider JSON, then validate it.";
+  }
+  return null;
 };
 
 export const createStageRepairStore = (projectRootPath: string): StageRepairStore => {
@@ -125,10 +138,13 @@ export const createStageRepairStore = (projectRootPath: string): StageRepairStor
         return {
           available: false,
           autoAttempts: 0,
+          canManualRepair: false,
           canSave: false,
           changedPaths: [],
           manualAttempts: 0,
           maxAutoAttempts: MAX_AUTO_REPAIR_ATTEMPTS,
+          originalJson: null,
+          repairBaseWarning: null,
           stageId,
           status: null,
           updatedAt: null,
@@ -137,13 +153,17 @@ export const createStageRepairStore = (projectRootPath: string): StageRepairStor
         };
       }
 
+      const baseWarning = repairBaseWarning(record);
       return {
         available: true,
         autoAttempts: record.autoAttempts,
+        canManualRepair: record.validationErrors.length > 0 && baseWarning === null,
         canSave: record.validationErrors.length === 0,
         changedPaths: record.changedPaths,
         manualAttempts: record.manualAttempts,
         maxAutoAttempts: record.maxAutoAttempts,
+        originalJson: JSON.stringify(record.originalOutput, null, 2),
+        repairBaseWarning: baseWarning,
         stageId,
         status: record.validationErrors.length === 0 ? "ready_to_save" : "needs_manual",
         updatedAt: record.updatedAt,

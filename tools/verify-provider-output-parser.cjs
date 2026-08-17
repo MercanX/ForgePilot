@@ -135,6 +135,31 @@ if (!noSchemaRecovered || noSchemaRecovered.audit_id !== 'AUD-002') {
   throw new Error('Regression: largest complete assistant object was not preferred without a schema.');
 }
 
+const partialEnvelope = { ...envelope };
+delete partialEnvelope.completed_at;
+const partialAssistantEvent = {
+  type: 'assistant',
+  message: { content: [{ type: 'text', text: `\`\`\`json\n${JSON.stringify(partialEnvelope)}\n\`\`\`` }] }
+};
+const fragmentResultEvent = {
+  type: 'result',
+  is_error: false,
+  num_turns: 99,
+  result: JSON.stringify({ recommended_next_substages: [], cautions: ['tail fragment only'] })
+};
+const partialStream = `${JSON.stringify(partialAssistantEvent)}\n${JSON.stringify(fragmentResultEvent)}\n`;
+const partialRecovered = parseLastJsonObject(
+  [{ stream: 'stdout', text: partialStream, timestamp: '2026-08-18T00:00:00Z' }],
+  'claude-code',
+  schema
+);
+if (!partialRecovered || partialRecovered.audit_id !== 'AUD-002' || !partialRecovered.result) {
+  throw new Error(`Regression: schema-closest partial envelope lost to nested handoff fragment: ${JSON.stringify(partialRecovered)}`);
+}
+if (partialRecovered.completed_at !== undefined) {
+  throw new Error('Partial-envelope regression fixture unexpectedly became fully valid.');
+}
+
 const splitJson = `\`\`\`json\n${JSON.stringify(envelope)}\n\`\`\``;
 const splitAt1 = Math.floor(splitJson.length / 3);
 const splitAt2 = Math.floor((splitJson.length * 2) / 3);
@@ -174,6 +199,7 @@ if (!direct || direct.audit_id !== 'AUD-002') {
 console.log('PASS provider-output parser regression');
 console.log('- truncated Claude result tail: rejected as contract root');
 console.log('- complete/split Claude assistant events: reassembled, recovered and selected');
+console.log('- invalid-but-closest stage envelope beats a smaller nested handoff fragment');
 console.log('- complete Claude result event: still accepted');
 
 const structuralSchema = {

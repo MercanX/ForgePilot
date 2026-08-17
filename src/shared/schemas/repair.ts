@@ -8,10 +8,13 @@ export const stageRepairStateSchema = z
   .object({
     available: z.boolean(),
     autoAttempts: z.number().int().min(0),
+    canManualRepair: z.boolean(),
     canSave: z.boolean(),
     changedPaths: z.array(z.string()),
     manualAttempts: z.number().int().min(0),
     maxAutoAttempts: z.number().int().positive(),
+    originalJson: z.string().nullable(),
+    repairBaseWarning: z.string().nullable(),
     stageId: z.string().min(1),
     status: stageRepairStatusSchema.nullable(),
     updatedAt: z.string().datetime().nullable(),

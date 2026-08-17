@@ -119,6 +119,8 @@ type ProviderExecutionResult = {
   originalOutput: Record<string, unknown> | null;
   outputContractErrors: string[];
   parsedOutput: Record<string, unknown> | null;
+  providerOutputText: string | null;
+  repairBaseViable: boolean;
   repairPending: boolean;
   result: TaskResult;
   submitAccepted: boolean;
@@ -312,6 +314,45 @@ const parseProviderText = (rawText: string): Record<string, unknown> | null => {
   }
 
   return null;
+};
+
+
+const parseProviderTextObjects = (rawText: string): Record<string, unknown>[] => {
+  const text = stripAnsi(rawText).trim();
+  if (!text) return [];
+
+  const candidates: Record<string, unknown>[] = [];
+  const seen = new Set<string>();
+  const add = (value: Record<string, unknown> | null): void => {
+    if (!value) return;
+    let key: string;
+    try {
+      key = JSON.stringify(value);
+    } catch {
+      return;
+    }
+    if (seen.has(key)) return;
+    seen.add(key);
+    candidates.push(value);
+  };
+  const addParsed = (jsonText: string): void => {
+    const parsed = parseJsonObjectText(jsonText.trim());
+    if (parsed) add(unwrapProviderJsonEnvelope(parsed));
+  };
+
+  const whole = parseJsonObjectText(text);
+  if (whole) add(unwrapProviderJsonEnvelope(whole));
+
+  const fencedPattern = /```(?:json)?\s*([\s\S]*?)```/gi;
+  for (const match of text.matchAll(fencedPattern)) {
+    const fenced = match[1]?.trim();
+    if (!fenced) continue;
+    addParsed(fenced);
+    for (const objectText of extractJsonObjects(fenced)) addParsed(objectText);
+  }
+
+  for (const objectText of extractJsonObjects(text)) addParsed(objectText);
+  return candidates;
 };
 
 type ProviderStreamTextCandidate = {
@@ -955,6 +996,32 @@ const pathIsAllowed = (candidate: string, allowed: string[]): boolean =>
       candidate.startsWith(`${base}[`)
   );
 
+const jsonContainsSnapshot = (candidate: unknown, original: unknown): boolean => {
+  if (Array.isArray(original)) {
+    if (!Array.isArray(candidate) || candidate.length < original.length) return false;
+    return original.every((item, index) => jsonContainsSnapshot(candidate[index], item));
+  }
+  if (isJsonObject(original)) {
+    if (!isJsonObject(candidate)) return false;
+    return Object.entries(original).every(
+      ([key, value]) => key in candidate && jsonContainsSnapshot(candidate[key], value)
+    );
+  }
+  return jsonValuesEqual(candidate, original);
+};
+
+const patchPreservesExistingContainer = (
+  working: Record<string, unknown>,
+  patch: JsonPatchOperation
+): boolean => {
+  const current = readJsonPath(working, patch.path);
+  if (!current.found) return true;
+  if (!Array.isArray(current.value) && !isJsonObject(current.value)) return true;
+  if (patch.op === "remove") return false;
+  if (patch.op === "move") return false;
+  return jsonContainsSnapshot(patch.value, current.value);
+};
+
 const applyRepairPatches = (
   working: Record<string, unknown>,
   response: RepairPatchResponse,
@@ -970,7 +1037,11 @@ const applyRepairPatches = (
   for (const patch of response.patches.slice(0, 24)) {
     if (!pathIsAllowed(patch.path, allowedPaths)) continue;
     if (protectedPaths.has(patch.path) && !allowedPaths.includes(patch.path)) continue;
-    if (patch.op === "move" && patch.from && protectedPaths.has(patch.from)) continue;
+    if (patch.op === "move") {
+      if (!patch.from || !pathIsAllowed(patch.from, allowedPaths)) continue;
+      if (protectedPaths.has(patch.from)) continue;
+    }
+    if (!patchPreservesExistingContainer(next, patch)) continue;
     const result = mutateJsonPath(next, patch);
     if (result.applied && result.changedPath) changedPaths.push(result.changedPath);
   }
@@ -1070,6 +1141,71 @@ type ParsedProviderJsonSelection = {
   value: Record<string, unknown> | null;
 };
 
+const requiredStringKeys = (schema: Record<string, unknown> | null): string[] =>
+  schema && Array.isArray(schema.required)
+    ? schema.required.filter((item): item is string => typeof item === "string")
+    : [];
+
+const candidateFitness = (
+  value: Record<string, unknown>,
+  schema: Record<string, unknown> | null
+): [number, number, number, number, number] => {
+  if (!schema) {
+    let size = 0;
+    try { size = JSON.stringify(value).length; } catch { size = 0; }
+    return [0, 0, 0, 0, size];
+  }
+
+  const rootRequired = requiredStringKeys(schema);
+  const rootPresent = rootRequired.filter((key) => key in value).length;
+  const rootProperties = isJsonObject(schema.properties) ? schema.properties : null;
+  const resultSchema = rootProperties && isJsonObject(rootProperties.result)
+    ? rootProperties.result as Record<string, unknown>
+    : null;
+  const resultObject = isJsonObject(value.result) ? value.result : null;
+  const resultRequired = requiredStringKeys(resultSchema);
+  const resultPresent = resultObject
+    ? resultRequired.filter((key) => key in resultObject).length
+    : 0;
+  const errors = validateOutputContract(value, schema).length;
+  let size = 0;
+  try { size = JSON.stringify(value).length; } catch { size = 0; }
+  return [rootPresent, resultObject ? 1 : 0, resultPresent, -errors, size];
+};
+
+const fitnessIsBetter = (
+  next: [number, number, number, number, number],
+  current: [number, number, number, number, number] | null
+): boolean => {
+  if (!current) return true;
+  for (let index = 0; index < next.length; index += 1) {
+    if (next[index] !== current[index]) return next[index]! > current[index]!;
+  }
+  return false;
+};
+
+export const isRepairBaseViable = (
+  value: Record<string, unknown> | null,
+  schema: Record<string, unknown> | null
+): boolean => {
+  if (!value || !schema) return false;
+  const rootRequired = requiredStringKeys(schema);
+  if (rootRequired.includes("result") && !isJsonObject(value.result)) return false;
+
+  const rootProperties = isJsonObject(schema.properties) ? schema.properties : null;
+  const resultSchema = rootProperties && isJsonObject(rootProperties.result)
+    ? rootProperties.result as Record<string, unknown>
+    : null;
+  if (resultSchema && isJsonObject(value.result)) {
+    const required = requiredStringKeys(resultSchema);
+    if (required.length >= 4) {
+      const present = required.filter((key) => key in (value.result as Record<string, unknown>)).length;
+      if (present < 2) return false;
+    }
+  }
+  return true;
+};
+
 const parseProviderJsonSelection = (
   chunks: ProviderOutputChunk[],
   providerId?: string,
@@ -1086,36 +1222,23 @@ const parseProviderJsonSelection = (
         ];
 
   let fallback: ParsedProviderJsonSelection = { source: null, value: null };
-  let fallbackSize = -1;
+  let fallbackFitness: [number, number, number, number, number] | null = null;
 
   for (const candidate of textCandidates) {
-    const parsed = parseProviderText(candidate.text);
-    if (!parsed) {
-      continue;
-    }
+    const parsedObjects = parseProviderTextObjects(candidate.text);
+    for (const parsed of parsedObjects) {
+      if (schema) {
+        const semanticCandidate = selectContractOutput(parsed, schema);
+        if (semanticCandidate && validateOutputContract(semanticCandidate, schema).length === 0) {
+          return { source: candidate.source, value: parsed };
+        }
+      }
 
-    // Keep the largest parseable candidate as the diagnostic fallback. This is
-    // important for truncated Claude result events: their tail may contain a
-    // valid nested object (for example `handoff`) while the complete assistant
-    // event contains the actual audit envelope.
-    let serializedSize = 0;
-    try {
-      serializedSize = JSON.stringify(parsed).length;
-    } catch {
-      serializedSize = 0;
-    }
-    if (serializedSize > fallbackSize) {
-      fallback = { source: candidate.source, value: parsed };
-      fallbackSize = serializedSize;
-    }
-
-    if (!schema) {
-      continue;
-    }
-
-    const semanticCandidate = selectContractOutput(parsed, schema);
-    if (validateOutputContract(semanticCandidate, schema).length === 0) {
-      return { source: candidate.source, value: parsed };
+      const fitness = candidateFitness(parsed, schema);
+      if (fitnessIsBetter(fitness, fallbackFitness)) {
+        fallback = { source: candidate.source, value: parsed };
+        fallbackFitness = fitness;
+      }
     }
   }
 
@@ -1646,6 +1769,8 @@ export const createStageExecutionService = (
           originalOutput: null,
           outputContractErrors: [],
           parsedOutput: null,
+          providerOutputText: outputChunks.map((chunk) => chunk.text).join(""),
+          repairBaseViable: false,
           repairPending: false,
           result,
           submitAccepted: submit.accepted,
@@ -1734,11 +1859,18 @@ export const createStageExecutionService = (
           ? validateOutputContract(parsedOutput, directive.outputSchema)
           : [];
 
+      const repairBaseViable =
+        directive.mode === "semantic" &&
+        parsedOutput !== null &&
+        directive.outputSchema !== null &&
+        isRepairBaseViable(parsedOutput, directive.outputSchema);
+
       if (
         directive.mode === "semantic" &&
         parsedOutput &&
         directive.outputSchema &&
-        outputContractErrors.length > 0
+        outputContractErrors.length > 0 &&
+        repairBaseViable
       ) {
         let working = deepCloneJsonObject(parsedOutput);
         const repairAuthority = authorityFromSchema(directive.outputSchema, authority);
@@ -1788,6 +1920,33 @@ export const createStageExecutionService = (
         rawParsedOutput = working;
       }
 
+      if (
+        directive.mode === "semantic" &&
+        parsedOutput &&
+        directive.outputSchema &&
+        outputContractErrors.length > 0 &&
+        !repairBaseViable
+      ) {
+        const message =
+          "Provider output looks like an incomplete nested fragment, not a full stage envelope. Automatic AI repair was skipped to prevent inventing/replacing audit content. Load/paste the full original provider JSON into the Repair workspace instead.";
+        emitDebug(request, onDebug, {
+          kind: "contract",
+          taskId: started.handle.id,
+          processId: started.handle.processId,
+          message,
+          text: null,
+          exitCode: null,
+          signal: null,
+          timestamp: new Date().toISOString()
+        });
+        emit(request, onProgress, {
+          message,
+          progress: Math.max(directive.progressStarted, directive.progressCompleted - 1),
+          status: "blocked",
+          stepId: `repair-fragment:${directive.id}`
+        });
+      }
+
       if (directive.mode === "semantic") {
         emitDebug(request, onDebug, {
           kind: "contract",
@@ -1828,7 +1987,9 @@ export const createStageExecutionService = (
         message: directiveSucceeded
           ? directive.messageCompleted
           : repairPending
-            ? `Automatic repair stopped after ${MAX_AUTO_REPAIR_ATTEMPTS} attempts. Manual Repair is available; the original provider JSON was preserved.`
+            ? repairBaseViable
+              ? `Automatic repair stopped after ${MAX_AUTO_REPAIR_ATTEMPTS} attempts. Manual Repair is available; the original provider JSON was preserved.`
+              : "Automatic AI repair was skipped because the selected provider output is only an incomplete JSON fragment. The fragment was preserved; load/paste the full provider JSON in Repair workspace."
             : failureMessage,
         progress: directive.progressCompleted,
         status: directiveSucceeded ? "completed" : repairPending ? "blocked" : "failed",
@@ -1842,6 +2003,8 @@ export const createStageExecutionService = (
         originalOutput,
         outputContractErrors,
         parsedOutput,
+        providerOutputText: rawOutputText,
+        repairBaseViable,
         repairPending,
         result,
         submitAccepted: submit.accepted,
@@ -1875,6 +2038,7 @@ export const createStageExecutionService = (
     changedPaths: string[];
     originalOutput: Record<string, unknown>;
     outputSchema: Record<string, unknown>;
+    providerOutputText?: string;
     workingOutput: Record<string, unknown>;
   };
 
@@ -1921,6 +2085,7 @@ export const createStageExecutionService = (
       maxAutoAttempts: MAX_AUTO_REPAIR_ATTEMPTS,
       originalOutput: context.originalOutput,
       outputSchema: context.outputSchema,
+      ...(context.providerOutputText ? { providerOutputText: context.providerOutputText } : {}),
       pending,
       schemaVersion: 1,
       stageId: request.stageId,
@@ -2254,6 +2419,7 @@ export const createStageExecutionService = (
             changedPaths: [...provider.changedPaths],
             originalOutput: provider.originalOutput ?? provider.parsedOutput,
             outputSchema: directive.outputSchema,
+            providerOutputText: provider.providerOutputText ?? undefined,
             workingOutput: provider.parsedOutput
           };
         }
@@ -2268,8 +2434,9 @@ export const createStageExecutionService = (
             semanticContext,
             provider.outputContractErrors
           );
-          const message =
-            `Automatic repair exhausted ${provider.autoRepairAttempts}/${MAX_AUTO_REPAIR_ATTEMPTS} attempts. Manual Repair is available; no repository rescan will occur.`;
+          const message = provider.repairBaseViable
+            ? `Automatic repair exhausted ${provider.autoRepairAttempts}/${MAX_AUTO_REPAIR_ATTEMPTS} attempts. Manual Repair is available; no repository rescan will occur.`
+            : "Provider output was preserved as an incomplete JSON fragment. Automatic/Manual AI repair is disabled for this fragment to prevent replacing audit content; load/paste the full provider JSON and validate it. No repository rescan will occur.";
           return repairBlockedResponse(
             request,
             executionId,
@@ -2536,6 +2703,15 @@ export const createStageExecutionService = (
     const record = await store.get(request.stageId);
     if (!record) throw new Error("No preserved repair session exists for this stage.");
     if (record.validationErrors.length === 0) return store.toPublicState(request.stageId);
+    if (!isRepairBaseViable(record.workingOutput, record.outputSchema)) {
+      emit(request, onProgress, {
+        message: "Manual AI Repair was not started because Working JSON is only a fragment. Paste/load the full original provider JSON and use Validate edited JSON; repository discovery will not rerun.",
+        progress: 96,
+        status: "blocked",
+        stepId: `repair-manual-fragment:${record.manualAttempts + 1}`
+      });
+      return store.toPublicState(request.stageId);
+    }
 
     emit(request, onProgress, {
       message: "Manual Repair is sending only the preserved JSON + current errors to AI. Repository rescan is disabled.",

@@ -676,6 +676,13 @@ export const DashboardPage = (): ReactElement => {
                 <span>Changed paths: {activeRepair.changedPaths.length}</span>
               </div>
 
+              {activeRepair.repairBaseWarning ? (
+                <div className="repair-errors">
+                  <strong>Repair base is incomplete</strong>
+                  <p>{activeRepair.repairBaseWarning}</p>
+                </div>
+              ) : null}
+
               {activeRepair.validationErrors.length > 0 ? (
                 <div className="repair-errors">
                   <strong>Current validation errors</strong>
@@ -699,6 +706,33 @@ export const DashboardPage = (): ReactElement => {
               </label>
 
               <div className="repair-actions">
+                <label className="repair-file-picker">
+                  Load full provider JSON
+                  <input
+                    accept=".json,.txt,application/json,text/plain"
+                    type="file"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      if (!file) return;
+                      void file.text().then((text) => setRepairJsonText(text));
+                    }}
+                  />
+                </label>
+                <button
+                  type="button"
+                  disabled={isRunning || !activeRepair.originalJson}
+                  onClick={() => {
+                    if (!activeRepair.originalJson) return;
+                    setRepairJsonText(activeRepair.originalJson);
+                    void validateRepairJson(
+                      activeProject.rootPath,
+                      selectedStage.id,
+                      activeRepair.originalJson
+                    );
+                  }}
+                >
+                  Restore original provider JSON
+                </button>
                 <button
                   type="button"
                   disabled={isRunning || repairJsonText.trim().length === 0}
@@ -710,7 +744,11 @@ export const DashboardPage = (): ReactElement => {
                 </button>
                 <button
                   type="button"
-                  disabled={isRunning || activeRepair.validationErrors.length === 0}
+                  disabled={
+                    isRunning ||
+                    activeRepair.validationErrors.length === 0 ||
+                    !activeRepair.canManualRepair
+                  }
                   onClick={() =>
                     void manualRepair(
                       activeProject,

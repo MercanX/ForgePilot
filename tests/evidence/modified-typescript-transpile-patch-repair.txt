@@ -1,0 +1,11 @@
+src/services/jobs/stageExecutionService.ts: 0 diagnostics
+src/services/jobs/stageRepairStore.ts: 0 diagnostics
+src/services/jobs/jobService.ts: 0 diagnostics
+src/main/ipc/jobs.ts: 0 diagnostics
+src/shared/schemas/repair.ts: 0 diagnostics
+src/shared/schemas/ipc.ts: 0 diagnostics
+src/shared/constants/channels.ts: 0 diagnostics
+src/preload/index.ts: 0 diagnostics
+src/renderer/src/stores/jobStore.ts: 0 diagnostics
+src/renderer/src/pages/DashboardPage.tsx: 0 diagnostics
+src/main/providers/claudeCodeAdapter.ts: 0 diagnostics

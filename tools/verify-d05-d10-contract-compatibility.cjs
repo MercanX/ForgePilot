@@ -302,9 +302,19 @@ const executionSource = fs.readFileSync(
   path.join(__dirname, "..", "src", "services", "jobs", "stageExecutionService.ts"),
   "utf8"
 );
-if (!executionSource.includes('const message = error instanceof Error ? error.message : "Local operation failed.";') ||
-    !executionSource.includes('status: "failed",\n            stepId: directive.id')) {
-  throw new Error("Local validation failures are not surfaced as failed progress events.");
+for (const needle of [
+  "MAX_AUTO_REPAIR_ATTEMPTS",
+  "Automatic JSON patch repair ${repairNumber}/${MAX_AUTO_REPAIR_ATTEMPTS}",
+  "kind: \"local\", operation: directive.operation",
+  "Manual Repair is available",
+  "no repository rescan will occur"
+]) {
+  if (!executionSource.includes(needle)) {
+    throw new Error(`Local validation recovery behavior is missing: ${needle}`);
+  }
+}
+if (!executionSource.includes('validationErrors = [error instanceof Error ? error.message : "Local operation failed."]')) {
+  throw new Error("Local validation errors are not captured for patch repair.");
 }
 
 const mockCloudSource = fs.readFileSync(
@@ -403,5 +413,5 @@ if (!mockCloudRuntimeSource.includes("const unmarkStageAndHardDependents")) {
 }
 
 console.log(
-  "Discovery D05/D10/D15/D20/D25 compatibility verification passed (full envelopes, scan-scope/evidence-separation guard + checklist auto-repair, validation-before-persist, HARD downstream restart invalidation, explicit local failure activity, const + date-time enforcement)."
+  "Discovery D05/D10/D15/D20/D25 compatibility verification passed (full envelopes, scan-scope/evidence-separation guard + checklist auto-repair, validation-before-persist, HARD downstream restart invalidation, local validation patch-repair recovery, const + date-time enforcement)."
 );

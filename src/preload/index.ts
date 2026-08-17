@@ -23,6 +23,11 @@ import type {
   TaskStartResponse
 } from "@shared/schemas/job";
 import type { Project, ProjectAddResponse, ProjectListResponse } from "@shared/schemas/project";
+import type {
+  StageRepairActionRequest,
+  StageRepairImportRequest,
+  StageRepairState
+} from "@shared/schemas/repair";
 import type { ProviderDetectionResult, ProviderId } from "@shared/schemas/provider";
 import type { AppSettings } from "@shared/schemas/settings";
 import type { StartupState } from "@shared/schemas/startup";
@@ -79,6 +84,16 @@ const forgepilotApi = {
       ipcRenderer.invoke(IPC_CHANNELS.jobs.workflow, { projectId, rootPath }),
     runOnce: (request: JobRunRequest): Promise<JobRunResponse> =>
       ipcRenderer.invoke(IPC_CHANNELS.jobs.runOnce, request),
+    repairState: (projectRootPath: string, stageId: string): Promise<StageRepairState> =>
+      ipcRenderer.invoke(IPC_CHANNELS.jobs.repairState, { projectRootPath, stageId }),
+    repairImport: (request: StageRepairImportRequest): Promise<StageRepairState> =>
+      ipcRenderer.invoke(IPC_CHANNELS.jobs.repairImport, request),
+    repairValidate: (projectRootPath: string, stageId: string, workingJson: string): Promise<StageRepairState> =>
+      ipcRenderer.invoke(IPC_CHANNELS.jobs.repairValidate, { projectRootPath, stageId, workingJson }),
+    repairManual: (request: StageRepairActionRequest): Promise<StageRepairState> =>
+      ipcRenderer.invoke(IPC_CHANNELS.jobs.repairManual, request),
+    repairSave: (request: StageRepairActionRequest): Promise<JobRunResponse> =>
+      ipcRenderer.invoke(IPC_CHANNELS.jobs.repairSave, request),
     onProgress: (callback: (event: JobRunProgressEvent) => void): Unsubscribe =>
       subscribe(IPC_CHANNELS.jobs.progress, callback),
     onDebug: (callback: (event: JobProviderDebugEvent) => void): Unsubscribe =>

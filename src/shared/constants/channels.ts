@@ -30,6 +30,11 @@ export const IPC_CHANNELS = {
   jobs: {
     status: "jobs:status",
     runOnce: "jobs:run-once",
+    repairState: "jobs:repair-state",
+    repairImport: "jobs:repair-import",
+    repairValidate: "jobs:repair-validate",
+    repairManual: "jobs:repair-manual",
+    repairSave: "jobs:repair-save",
     request: "jobs:request",
     get: "jobs:get",
     workflow: "jobs:workflow",

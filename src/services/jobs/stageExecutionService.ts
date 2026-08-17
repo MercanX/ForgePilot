@@ -16,12 +16,20 @@ import {
   type StageExecutionNextResponse
 } from "@shared/schemas/execution";
 import type { Job, JobProviderDebugEvent, ProviderOutputChunk, TaskResult } from "@shared/schemas/job";
+import type { StageRepairState } from "@shared/schemas/repair";
 
 import { createHttpClient, type HttpClient } from "../api/httpClient";
 import { createTaskExecutionService, type TaskExecutionService } from "../tasks/taskExecutionService";
 
 import { createLocalOperationRegistry, type LocalOperationRegistry } from "./localOperationRegistry";
 import { createStageExecutionJournal, type StageExecutionJournal } from "./stageExecutionJournal";
+import {
+  createStageRepairStore,
+  MAX_AUTO_REPAIR_ATTEMPTS,
+  type RepairAuthority,
+  type StageRepairRecord,
+  type StageRepairStore
+} from "./stageRepairStore";
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const MAX_DIRECTIVES_PER_RUN = 100;
@@ -34,20 +42,46 @@ type StageExecutionServiceOptions = {
   localOperationRegistry?: LocalOperationRegistry;
   taskExecutionService?: TaskExecutionService;
   createJournal?: (projectRootPath: string) => StageExecutionJournal;
+  createRepairStore?: (projectRootPath: string) => StageRepairStore;
 };
 
 export type StageExecutionService = {
+  getRepairState: (projectRootPath: string, stageId: string) => Promise<StageRepairState>;
+  importRepairJson: (
+    request: JobRunRequest & { stageId: string; workingJson: string },
+    onProgress?: ProgressListener,
+    onDebug?: DebugListener
+  ) => Promise<StageRepairState>;
+  manualRepair: (
+    request: JobRunRequest & { stageId: string },
+    onProgress?: ProgressListener,
+    onDebug?: DebugListener
+  ) => Promise<StageRepairState>;
   run: (
     request: JobRunRequest & { stageId: string },
     onProgress?: ProgressListener,
     onDebug?: DebugListener
   ) => Promise<JobRunResponse>;
+  saveRepair: (
+    request: JobRunRequest & { stageId: string },
+    onProgress?: ProgressListener,
+    onDebug?: DebugListener
+  ) => Promise<JobRunResponse>;
+  validateRepairJson: (
+    projectRootPath: string,
+    stageId: string,
+    workingJson: string
+  ) => Promise<StageRepairState>;
 };
 
 type ProviderExecutionResult = {
+  autoRepairAttempts: number;
+  changedPaths: string[];
   job: Job;
+  originalOutput: Record<string, unknown> | null;
   outputContractErrors: string[];
   parsedOutput: Record<string, unknown> | null;
+  repairPending: boolean;
   result: TaskResult;
   submitAccepted: boolean;
   syncedFindings: TaskResult["findings"];
@@ -272,6 +306,7 @@ const findProviderStreamTextCandidates = (
   const events = parseJsonLines(stdout);
   const resultCandidates: ProviderStreamTextCandidate[] = [];
   const assistantCandidates: ProviderStreamTextCandidate[] = [];
+  const chronologicalAssistantText: string[] = [];
 
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index];
@@ -308,7 +343,18 @@ const findProviderStreamTextCandidates = (
 
     if (visibleText) {
       assistantCandidates.push({ source: "claude-assistant", text: visibleText });
+      chronologicalAssistantText.unshift(visibleText);
     }
+  }
+
+  // Claude may split one very large final JSON document across several
+  // assistant events. Individual event parsing then sees only fragments while
+  // the terminal result event may contain only the tail. Reassemble the visible
+  // assistant text in chronological order so braces spanning event boundaries
+  // can be parsed as one authoritative envelope.
+  const combinedAssistant = chronologicalAssistantText.join("").trim();
+  if (combinedAssistant) {
+    assistantCandidates.unshift({ source: "claude-assistant", text: combinedAssistant });
   }
 
   return [...resultCandidates, ...assistantCandidates];
@@ -585,19 +631,356 @@ export const repairProviderOutputStructure = (
   return { movedResultKeys, value: repairedRoot };
 };
 
-const CONTRACT_RECOVERY_MARKER = "forgepilot-contract-recovery-v1";
+type JsonPatchOperation = {
+  from?: string;
+  op: "add" | "move" | "remove" | "replace";
+  path: string;
+  value?: unknown;
+};
 
-const contractRecoveryPayload = (
-  candidate: Record<string, unknown> | null,
-  errors: string[]
-): Record<string, unknown> | null =>
-  candidate
-    ? {
-        marker: CONTRACT_RECOVERY_MARKER,
-        candidate,
-        contract_errors: errors
+type RepairPatchResponse = {
+  patches: JsonPatchOperation[];
+};
+
+const REPAIR_PATCH_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  additionalProperties: false,
+  required: ["patches"],
+  properties: {
+    patches: {
+      type: "array",
+      maxItems: 24,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["op", "path"],
+        properties: {
+          op: { type: "string", enum: ["add", "replace", "remove", "move"] },
+          path: { type: "string", minLength: 2 },
+          from: { type: "string", minLength: 2 },
+          value: {}
+        }
       }
-    : null;
+    }
+  }
+};
+
+const deepCloneJsonObject = (value: Record<string, unknown>): Record<string, unknown> =>
+  JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+
+const authorityFromSchema = (
+  schema: Record<string, unknown> | null,
+  current: RepairAuthority = {}
+): RepairAuthority => {
+  if (!schema || !isJsonObject(schema.properties)) return current;
+  const properties = schema.properties;
+  const next: RepairAuthority = { ...current };
+  for (const key of ["schema_version", "substage"] as const) {
+    const property = properties[key];
+    if (isJsonObject(property) && typeof property.const === "string") {
+      next[key] = property.const;
+    }
+  }
+  return next;
+};
+
+const mergeAuthority = (
+  authority: RepairAuthority,
+  value: unknown,
+  schema: Record<string, unknown> | null = null
+): RepairAuthority => {
+  const next = authorityFromSchema(schema, authority);
+  if (!isJsonObject(value)) return next;
+  if (typeof value.audit_id === "string" && value.audit_id.trim()) next.audit_id = value.audit_id;
+  if (typeof value.workspace_hash === "string" && value.workspace_hash.trim()) {
+    next.workspace_hash = value.workspace_hash;
+  }
+  if (typeof value.substage === "string" && value.substage.trim()) next.substage = value.substage;
+  if (typeof value.schema_version === "string" && value.schema_version.trim()) {
+    next.schema_version = value.schema_version;
+  }
+  return next;
+};
+
+const enforceAuthority = (
+  value: Record<string, unknown>,
+  authority: RepairAuthority
+): { changedPaths: string[]; value: Record<string, unknown> } => {
+  const next = deepCloneJsonObject(value);
+  const changedPaths: string[] = [];
+  for (const [key, expected] of Object.entries(authority)) {
+    if (typeof expected !== "string" || !expected) continue;
+    if (next[key] !== expected) {
+      next[key] = expected;
+      changedPaths.push(`$.${key}`);
+    }
+  }
+  return { changedPaths, value: next };
+};
+
+const jsonPathTokens = (jsonPath: string): Array<string | number | "-"> | null => {
+  if (jsonPath === "$") return [];
+  if (!jsonPath.startsWith("$")) return null;
+  const tokens: Array<string | number | "-"> = [];
+  let index = 1;
+  while (index < jsonPath.length) {
+    if (jsonPath[index] === ".") {
+      index += 1;
+      const match = /^[A-Za-z0-9_-]+/.exec(jsonPath.slice(index));
+      if (!match) return null;
+      tokens.push(match[0]);
+      index += match[0].length;
+      continue;
+    }
+    if (jsonPath[index] === "[") {
+      const close = jsonPath.indexOf("]", index + 1);
+      if (close === -1) return null;
+      const raw = jsonPath.slice(index + 1, close);
+      if (raw === "-") tokens.push("-");
+      else if (/^\d+$/.test(raw)) tokens.push(Number(raw));
+      else return null;
+      index = close + 1;
+      continue;
+    }
+    return null;
+  }
+  return tokens;
+};
+
+const readJsonPath = (root: unknown, jsonPath: string): { found: boolean; value: unknown } => {
+  const tokens = jsonPathTokens(jsonPath);
+  if (!tokens) return { found: false, value: undefined };
+  let current: unknown = root;
+  for (const token of tokens) {
+    if (typeof token === "number") {
+      if (!Array.isArray(current) || token < 0 || token >= current.length) {
+        return { found: false, value: undefined };
+      }
+      current = current[token];
+      continue;
+    }
+    if (token === "-") return { found: false, value: undefined };
+    if (!isJsonObject(current) || !(token in current)) return { found: false, value: undefined };
+    current = current[token];
+  }
+  return { found: true, value: current };
+};
+
+const mutateJsonPath = (
+  root: Record<string, unknown>,
+  operation: JsonPatchOperation
+): { applied: boolean; changedPath: string | null } => {
+  const tokens = jsonPathTokens(operation.path);
+  if (!tokens || tokens.length === 0) return { applied: false, changedPath: null };
+  let parent: unknown = root;
+  for (const token of tokens.slice(0, -1)) {
+    if (typeof token === "number") {
+      if (!Array.isArray(parent) || token < 0 || token >= parent.length) return { applied: false, changedPath: null };
+      parent = parent[token];
+    } else if (token === "-") {
+      return { applied: false, changedPath: null };
+    } else {
+      if (!isJsonObject(parent) || !(token in parent)) return { applied: false, changedPath: null };
+      parent = parent[token];
+    }
+  }
+
+  const last = tokens.at(-1)!;
+  let value = operation.value;
+  if (operation.op === "move") {
+    if (!operation.from) return { applied: false, changedPath: null };
+    const source = readJsonPath(root, operation.from);
+    if (!source.found) return { applied: false, changedPath: null };
+    value = source.value;
+  }
+
+  const applyValue = (): boolean => {
+    if (typeof last === "number") {
+      if (!Array.isArray(parent)) return false;
+      if (operation.op === "add") {
+        if (last > parent.length) return false;
+        parent.splice(last, 0, value);
+        return true;
+      }
+      if (last < 0 || last >= parent.length) return false;
+      if (operation.op === "remove") parent.splice(last, 1);
+      else parent[last] = value;
+      return true;
+    }
+    if (last === "-") {
+      if (!Array.isArray(parent) || operation.op !== "add") return false;
+      parent.push(value);
+      return true;
+    }
+    if (!isJsonObject(parent)) return false;
+    if (operation.op === "remove") {
+      if (!(last in parent)) return false;
+      delete parent[last];
+      return true;
+    }
+    parent[last] = value;
+    return true;
+  };
+
+  if (!applyValue()) return { applied: false, changedPath: null };
+
+  if (operation.op === "move" && operation.from && operation.from !== operation.path) {
+    const fromTokens = jsonPathTokens(operation.from);
+    if (fromTokens && fromTokens.length > 0) {
+      let fromParent: unknown = root;
+      for (const token of fromTokens.slice(0, -1)) {
+        if (typeof token === "number") {
+          if (!Array.isArray(fromParent) || token >= fromParent.length) return { applied: true, changedPath: operation.path };
+          fromParent = fromParent[token];
+        } else if (token === "-") {
+          return { applied: true, changedPath: operation.path };
+        } else {
+          if (!isJsonObject(fromParent) || !(token in fromParent)) return { applied: true, changedPath: operation.path };
+          fromParent = fromParent[token];
+        }
+      }
+      const fromLast = fromTokens.at(-1)!;
+      if (typeof fromLast === "number" && Array.isArray(fromParent) && fromLast < fromParent.length) {
+        fromParent.splice(fromLast, 1);
+      } else if (typeof fromLast === "string" && fromLast !== "-" && isJsonObject(fromParent)) {
+        delete fromParent[fromLast];
+      }
+    }
+  }
+
+  return { applied: true, changedPath: operation.path };
+};
+
+const errorJsonPath = (error: string): string | null => {
+  const match = /^(\$(?:\.[A-Za-z0-9_-]+|\[\d+\])*)\s*:/.exec(error.trim());
+  return match?.[1] ?? null;
+};
+
+const findRecordIndexById = (
+  working: Record<string, unknown>,
+  collection: string,
+  id: string
+): number | null => {
+  const result = isJsonObject(working.result) ? working.result : null;
+  const items = result && Array.isArray(result[collection]) ? result[collection] : [];
+  const index = items.findIndex((item) => isJsonObject(item) && item.id === id);
+  return index >= 0 ? index : null;
+};
+
+const localErrorPath = (error: string, working: Record<string, unknown>): string | null => {
+  const checkId = /\b(?:OV|AR|DB|DI|BE)-\d{3}\b/.exec(error)?.[0];
+  if (checkId) {
+    const result = isJsonObject(working.result) ? working.result : null;
+    const checklist = result && Array.isArray(result.checklist) ? result.checklist : [];
+    const index = checklist.findIndex((item) => isJsonObject(item) && item.check_id === checkId);
+    if (index >= 0) return `$.result.checklist[${index}]`;
+    return "$.result.checklist";
+  }
+
+  for (const [pattern, collection] of [
+    [/\b(?:D05|AR|DB|DI|BE)-F\d{2,3}\b/, "findings"],
+    [/\b(?:D05|AR|DB|DI|BE)-S\d{2,3}\b/, "strengths"],
+    [/\b(?:D05|AR|DB|DI|BE)-U\d{2,3}\b/, "unknowns"],
+    [/\b(?:D05|AR|DB|DI|BE)-C\d{2,3}\b/, "contradictions"]
+  ] as const) {
+    const id = pattern.exec(error)?.[0];
+    if (!id) continue;
+    const index = findRecordIndexById(working, collection, id);
+    return index === null ? `$.result.${collection}` : `$.result.${collection}[${index}]`;
+  }
+
+  if (/audit_id/i.test(error)) return "$.audit_id";
+  if (/workspace_hash/i.test(error)) return "$.workspace_hash";
+  if (/schema_version/i.test(error)) return "$.schema_version";
+  if (/completed_at/i.test(error)) return "$.completed_at";
+  if (/substage/i.test(error)) return "$.substage";
+  if (/checklist/i.test(error)) return "$.result.checklist";
+  if (/finding/i.test(error)) return "$.result.findings";
+  if (/strength/i.test(error)) return "$.result.strengths";
+  if (/unknown/i.test(error)) return "$.result.unknowns";
+  if (/contradiction/i.test(error)) return "$.result.contradictions";
+  if (/evidence/i.test(error)) return "$.result";
+  return "$.result";
+};
+
+const allowedRepairPaths = (
+  errors: string[],
+  working: Record<string, unknown>
+): string[] =>
+  [...new Set(errors.map((error) => errorJsonPath(error) ?? localErrorPath(error, working)).filter((value): value is string => Boolean(value)))];
+
+const pathIsAllowed = (candidate: string, allowed: string[]): boolean =>
+  allowed.some(
+    (base) =>
+      candidate === base ||
+      candidate.startsWith(`${base}.`) ||
+      candidate.startsWith(`${base}[`)
+  );
+
+const applyRepairPatches = (
+  working: Record<string, unknown>,
+  response: RepairPatchResponse,
+  allowedPaths: string[],
+  authority: RepairAuthority
+): { changedPaths: string[]; value: Record<string, unknown> } => {
+  const next = deepCloneJsonObject(working);
+  const changedPaths: string[] = [];
+  const protectedPaths = new Set(
+    Object.keys(authority).map((key) => `$.${key}`)
+  );
+
+  for (const patch of response.patches.slice(0, 24)) {
+    if (!pathIsAllowed(patch.path, allowedPaths)) continue;
+    if (protectedPaths.has(patch.path) && !allowedPaths.includes(patch.path)) continue;
+    if (patch.op === "move" && patch.from && protectedPaths.has(patch.from)) continue;
+    const result = mutateJsonPath(next, patch);
+    if (result.applied && result.changedPath) changedPaths.push(result.changedPath);
+  }
+
+  const authoritative = enforceAuthority(next, authority);
+  return {
+    changedPaths: [...new Set([...changedPaths, ...authoritative.changedPaths])],
+    value: authoritative.value
+  };
+};
+
+const parseRepairPatchResponse = (value: Record<string, unknown> | null): RepairPatchResponse | null => {
+  if (!value || !Array.isArray(value.patches)) return null;
+  const patches: JsonPatchOperation[] = [];
+  for (const raw of value.patches) {
+    if (!isJsonObject(raw)) return null;
+    if (!["add", "replace", "remove", "move"].includes(String(raw.op)) || typeof raw.path !== "string") {
+      return null;
+    }
+    patches.push({
+      op: raw.op as JsonPatchOperation["op"],
+      path: raw.path,
+      ...(typeof raw.from === "string" ? { from: raw.from } : {}),
+      ...(Object.prototype.hasOwnProperty.call(raw, "value") ? { value: raw.value } : {})
+    });
+  }
+  return { patches };
+};
+
+const createRepairPrompt = (
+  working: Record<string, unknown>,
+  schema: Record<string, unknown>,
+  errors: string[],
+  allowedPaths: string[]
+): string =>
+  [
+    "ForgePilot JSON PATCH REPAIR.",
+    "This is NOT a new audit. Repository access is forbidden and no repository tools are available.",
+    "Do not regenerate or summarize the audit. Preserve every value outside the allowed target paths exactly.",
+    "Return ONLY one JSON object with shape: {\\\"patches\\\":[{\\\"op\\\":\\\"add|replace|remove|move\\\",\\\"path\\\":\\\"$.path\\\",\\\"from\\\":\\\"$.optional.source\\\",\\\"value\\\":...}]}.",
+    "Use the minimum number of patches. If a value already exists at the wrong location, use move instead of recreating it.",
+    "Never change audit_id, workspace_hash, substage, or schema_version unless that exact path is explicitly listed in allowed_target_paths.",
+    "If the supplied information cannot safely fix the error, return {\\\"patches\\\":[]}.",
+    `allowed_target_paths=${JSON.stringify(allowedPaths)}`,
+    `validation_errors=${JSON.stringify(errors)}`,
+    `current_json=${JSON.stringify(working)}`,
+    `target_schema=${JSON.stringify(schema)}`
+  ].join("\\n");
 
 /**
  * Providers occasionally wrap the requested semantic object even when the
@@ -736,11 +1119,111 @@ export const createStageExecutionService = (
   const localOperations = options.localOperationRegistry ?? createLocalOperationRegistry();
   const taskExecutionService = options.taskExecutionService ?? createTaskExecutionService();
   const createJournal = options.createJournal ?? createStageExecutionJournal;
+  const createRepairStore = options.createRepairStore ?? createStageRepairStore;
+
+  const runRepairProviderTask = async (
+    request: JobRunRequest & { stageId: string },
+    working: Record<string, unknown>,
+    schema: Record<string, unknown>,
+    errors: string[],
+    attemptLabel: string,
+    onDebug?: DebugListener
+  ): Promise<RepairPatchResponse | null> => {
+    const allowedPaths = allowedRepairPaths(errors, working);
+    if (allowedPaths.length === 0) return null;
+
+    const observedOutput: Array<{ taskId: string; chunk: ProviderOutputChunk }> = [];
+    const observedExits = new Map<string, { exitCode: number | null; finishedAt: string; signal: string | null }>();
+    let resolveExit: ((exit: { exitCode: number | null; finishedAt: string; signal: string | null }) => void) | null = null;
+    let expectedTaskId: string | null = null;
+    const removeOutput = taskExecutionService.onOutput((event) => {
+      observedOutput.push({ taskId: event.taskId, chunk: event.chunk });
+    });
+    const removeExit = taskExecutionService.onExit((event) => {
+      observedExits.set(event.taskId, event.exitInfo);
+      if (event.taskId === expectedTaskId && resolveExit) {
+        resolveExit(event.exitInfo);
+        resolveExit = null;
+      }
+    });
+
+    try {
+      const started = await taskExecutionService.start({
+        instructions: {
+          body: createRepairPrompt(working, schema, errors, allowedPaths),
+          format: "plain-text",
+          metadata: {
+            repairAttempt: attemptLabel,
+            toolPolicy: "no-repository-tools"
+          }
+        },
+        mode: "provider",
+        model: request.model,
+        outputJsonSchema: REPAIR_PATCH_SCHEMA,
+        projectRootPath: request.project.rootPath,
+        providerId: request.providerId,
+        timeoutMs: Math.min(request.timeoutMs, 120_000)
+      });
+      expectedTaskId = started.handle.id;
+      emitDebug(request, onDebug, {
+        kind: "provider-start",
+        taskId: started.handle.id,
+        processId: started.handle.processId,
+        message: `JSON patch repair provider started (${attemptLabel}); repository tools disabled.`,
+        text: [started.command, ...started.args.map((arg) => JSON.stringify(arg))].join(" "),
+        exitCode: null,
+        signal: null,
+        timestamp: started.startedAt
+      });
+
+      const alreadyExited = observedExits.get(started.handle.id);
+      const exitInfo =
+        alreadyExited ??
+        (await new Promise<{ exitCode: number | null; finishedAt: string; signal: string | null }>((resolve) => {
+          resolveExit = resolve;
+        }));
+      const chunks = observedOutput
+        .filter((entry) => entry.taskId === started.handle.id)
+        .map((entry) => entry.chunk);
+
+      emitDebug(request, onDebug, {
+        kind: "provider-exit",
+        taskId: started.handle.id,
+        processId: started.handle.processId,
+        message: `JSON patch repair provider exited (${attemptLabel}).`,
+        text: null,
+        exitCode: exitInfo.exitCode,
+        signal: exitInfo.signal,
+        timestamp: exitInfo.finishedAt
+      });
+
+      if (exitInfo.exitCode !== 0 || exitInfo.signal) return null;
+      const parsed = parseLastJsonObject(chunks, request.providerId, REPAIR_PATCH_SCHEMA);
+      const repair = parseRepairPatchResponse(parsed);
+      emitDebug(request, onDebug, {
+        kind: "parser",
+        taskId: started.handle.id,
+        processId: started.handle.processId,
+        message: repair
+          ? `JSON patch repair parsed (${repair.patches.length} patch operations).`
+          : "JSON patch repair did not return a valid patch payload.",
+        text: repair ? JSON.stringify(repair) : null,
+        exitCode: null,
+        signal: null,
+        timestamp: new Date().toISOString()
+      });
+      return repair;
+    } finally {
+      removeOutput();
+      removeExit();
+    }
+  };
 
   const executeProvider = async (
     request: JobRunRequest & { stageId: string },
     directive: ProviderExecutionDirective,
     client: HttpClient,
+    authority: RepairAuthority,
     onProgress?: ProgressListener,
     onDebug?: DebugListener
   ): Promise<ProviderExecutionResult> => {
@@ -974,9 +1457,13 @@ export const createStageExecutionService = (
         });
 
         return {
+          autoRepairAttempts: 0,
+          changedPaths: [],
           job,
+          originalOutput: null,
           outputContractErrors: [],
           parsedOutput: null,
+          repairPending: false,
           result,
           submitAccepted: submit.accepted,
           syncedFindings: sync.accepted ? submit.findings : []
@@ -999,8 +1486,10 @@ export const createStageExecutionService = (
         request.providerId,
         directive.mode === "semantic" ? directive.outputSchema : null
       );
-      let rawParsedOutput = parsedSelection.value;
-      let movedResultKeys: string[] = [];
+      const originalOutput = parsedSelection.value;
+      let rawParsedOutput = originalOutput;
+      const changedPaths: string[] = [];
+      let autoRepairAttempts = 0;
 
       if (directive.mode === "semantic" && rawParsedOutput) {
         const structuralRepair = repairProviderOutputStructure(
@@ -1008,11 +1497,13 @@ export const createStageExecutionService = (
           directive.outputSchema
         );
         rawParsedOutput = structuralRepair.value;
-        movedResultKeys = structuralRepair.movedResultKeys;
+        for (const key of structuralRepair.movedResultKeys) {
+          changedPaths.push(`$.result.${key}`);
+        }
 
-        if (movedResultKeys.length > 0) {
+        if (structuralRepair.movedResultKeys.length > 0) {
           const message =
-            `Provider output structural auto-repair applied: moved ${movedResultKeys.join(", ")} into $.result.`;
+            `Provider output structural auto-repair applied: moved ${structuralRepair.movedResultKeys.join(", ")} into $.result.`;
           emitDebug(request, onDebug, {
             kind: "contract",
             taskId: started.handle.id,
@@ -1025,14 +1516,20 @@ export const createStageExecutionService = (
           });
           emit(request, onProgress, {
             message,
-            progress: Math.max(directive.progressStarted, directive.progressCompleted - 1),
-            status: "started",
-            stepId: directive.id
+            progress: Math.max(directive.progressStarted, directive.progressCompleted - 2),
+            status: "completed",
+            stepId: `repair-structural:${directive.id}`
           });
+        }
+
+        if (rawParsedOutput) {
+          const authoritative = enforceAuthority(rawParsedOutput, authorityFromSchema(directive.outputSchema, authority));
+          rawParsedOutput = authoritative.value;
+          changedPaths.push(...authoritative.changedPaths);
         }
       }
 
-      const parsedOutput =
+      let parsedOutput =
         directive.mode === "semantic"
           ? selectContractOutput(rawParsedOutput, directive.outputSchema)
           : rawParsedOutput;
@@ -1048,10 +1545,66 @@ export const createStageExecutionService = (
         signal: null,
         timestamp: new Date().toISOString()
       });
-      const outputContractErrors =
+
+      let outputContractErrors =
         directive.mode === "semantic"
           ? validateOutputContract(parsedOutput, directive.outputSchema)
           : [];
+
+      if (
+        directive.mode === "semantic" &&
+        parsedOutput &&
+        directive.outputSchema &&
+        outputContractErrors.length > 0
+      ) {
+        let working = deepCloneJsonObject(parsedOutput);
+        const repairAuthority = authorityFromSchema(directive.outputSchema, authority);
+
+        for (
+          let attempt = 1;
+          attempt <= MAX_AUTO_REPAIR_ATTEMPTS && outputContractErrors.length > 0;
+          attempt += 1
+        ) {
+          autoRepairAttempts = attempt;
+          emit(request, onProgress, {
+            message: `Automatic JSON patch repair ${attempt}/${MAX_AUTO_REPAIR_ATTEMPTS}: ${outputContractErrors[0]}`,
+            progress: Math.max(directive.progressStarted, directive.progressCompleted - 1),
+            status: "started",
+            stepId: `repair-auto:${directive.id}:${attempt}`
+          });
+
+          const patchResponse = await runRepairProviderTask(
+            request,
+            working,
+            directive.outputSchema,
+            outputContractErrors,
+            `auto ${attempt}/${MAX_AUTO_REPAIR_ATTEMPTS}`,
+            onDebug
+          );
+
+          if (patchResponse) {
+            const allowed = allowedRepairPaths(outputContractErrors, working);
+            const applied = applyRepairPatches(working, patchResponse, allowed, repairAuthority);
+            working = applied.value;
+            changedPaths.push(...applied.changedPaths);
+          }
+
+          outputContractErrors = validateOutputContract(working, directive.outputSchema);
+          emit(request, onProgress, {
+            message:
+              outputContractErrors.length === 0
+                ? `Automatic JSON patch repair ${attempt}/${MAX_AUTO_REPAIR_ATTEMPTS} passed validation.`
+                : `Automatic JSON patch repair ${attempt}/${MAX_AUTO_REPAIR_ATTEMPTS} finished; ${outputContractErrors.length} validation error(s) remain.`,
+            progress: Math.max(directive.progressStarted, directive.progressCompleted - 1),
+            status: "completed",
+            stepId: `repair-auto:${directive.id}:${attempt}`
+          });
+        }
+
+        parsedOutput = working;
+        rawParsedOutput = working;
+      }
+
       if (directive.mode === "semantic") {
         emitDebug(request, onDebug, {
           kind: "contract",
@@ -1060,13 +1613,19 @@ export const createStageExecutionService = (
           message:
             outputContractErrors.length === 0
               ? "Provider output contract passed."
-              : `Provider output contract failed: ${outputContractErrors[0]}`,
+              : `Provider output contract failed after ${autoRepairAttempts} automatic repair attempt(s): ${outputContractErrors[0]}`,
           text: null,
           exitCode: null,
           signal: null,
           timestamp: new Date().toISOString()
         });
       }
+
+      const repairPending =
+        result.status === "completed" &&
+        directive.mode === "semantic" &&
+        parsedOutput !== null &&
+        outputContractErrors.length > 0;
       const directiveSucceeded =
         result.status === "completed" &&
         (directive.mode !== "semantic" || parsedOutput !== null) &&
@@ -1079,30 +1638,28 @@ export const createStageExecutionService = (
           : parsedOutput === null
             ? "Provider did not return a valid final JSON object."
             : outputContractErrors.length > 0
-              ? `Provider output contract failed: ${outputContractErrors[0]} (${describeJsonShape(rawParsedOutput)})`
+              ? `Provider output still has ${outputContractErrors.length} validation error(s) after automatic repair.`
               : "Provider verification returned ok != true.";
-
-      const recoverableContractFailure =
-        result.status === "completed" &&
-        directive.mode === "semantic" &&
-        parsedOutput !== null &&
-        outputContractErrors.length > 0;
 
       emit(request, onProgress, {
         message: directiveSucceeded
           ? directive.messageCompleted
-          : recoverableContractFailure
-            ? `Provider output contract needs repair: ${outputContractErrors[0]}`
+          : repairPending
+            ? `Automatic repair stopped after ${MAX_AUTO_REPAIR_ATTEMPTS} attempts. Manual Repair is available; the original provider JSON was preserved.`
             : failureMessage,
         progress: directive.progressCompleted,
-        status: directiveSucceeded ? "completed" : recoverableContractFailure ? "started" : "failed",
+        status: directiveSucceeded ? "completed" : repairPending ? "blocked" : "failed",
         stepId: directive.id
       });
 
       return {
+        autoRepairAttempts,
+        changedPaths: [...new Set(changedPaths)],
         job,
+        originalOutput,
         outputContractErrors,
         parsedOutput,
+        repairPending,
         result,
         submitAccepted: submit.accepted,
         syncedFindings: sync.accepted ? submit.findings : []
@@ -1129,25 +1686,88 @@ export const createStageExecutionService = (
     }
   };
 
-  const run = async (
+  type SemanticRepairContext = {
+    authority: RepairAuthority;
+    autoAttempts: number;
+    changedPaths: string[];
+    originalOutput: Record<string, unknown>;
+    outputSchema: Record<string, unknown>;
+    workingOutput: Record<string, unknown>;
+  };
+
+  const repairBlockedResponse = (
     request: JobRunRequest & { stageId: string },
+    executionId: string,
+    lastJob: Job | null,
+    lastResult: TaskResult | null,
+    submitAccepted: boolean,
+    syncedFindings: TaskResult["findings"],
+    message: string,
+    progress: number
+  ): JobRunResponse => ({
+    job: lastJob,
+    result: lastResult,
+    stageOutcome: {
+      executionId,
+      message,
+      progress,
+      stageId: request.stageId,
+      status: "blocked"
+    },
+    submitAccepted,
+    syncedFindings
+  });
+
+  const persistRepair = async (
+    store: StageRepairStore,
+    request: JobRunRequest & { stageId: string },
+    executionId: string,
+    directiveId: string,
+    pending: StageRepairRecord["pending"],
+    context: SemanticRepairContext,
+    validationErrors: string[],
+    manualAttempts = 0
+  ): Promise<void> => {
+    await store.save({
+      authority: context.authority,
+      autoAttempts: context.autoAttempts,
+      changedPaths: [...new Set(context.changedPaths)],
+      directiveId,
+      executionId,
+      manualAttempts,
+      maxAutoAttempts: MAX_AUTO_REPAIR_ATTEMPTS,
+      originalOutput: context.originalOutput,
+      outputSchema: context.outputSchema,
+      pending,
+      schemaVersion: 1,
+      stageId: request.stageId,
+      updatedAt: new Date().toISOString(),
+      validationErrors,
+      workingOutput: context.workingOutput
+    });
+  };
+
+  const executeLoop = async (
+    request: JobRunRequest & { stageId: string },
+    initialExecutionId: string | null,
+    initialPrevious: ExecutionPreviousResult | null,
+    initialSemanticContext: SemanticRepairContext | null,
+    allowAutoRepair: boolean,
     onProgress?: ProgressListener,
     onDebug?: DebugListener
   ): Promise<JobRunResponse> => {
     const client = createClient(request.serverUrl);
     const journal = createJournal(request.project.rootPath);
-
-    if (request.newRun) {
-      await journal.clearStage(request.stageId);
-    }
-
-    let executionId = request.newRun ? null : await journal.getExecutionId(request.stageId);
-    let previous: ExecutionPreviousResult | null = null;
+    const repairStore = createRepairStore(request.project.rootPath);
+    let executionId = initialExecutionId;
+    let previous = initialPrevious;
+    let semanticContext = initialSemanticContext;
+    let authority: RepairAuthority = initialSemanticContext?.authority ?? {};
     let lastJob: Job | null = null;
     let lastResult: TaskResult | null = null;
     let submitAccepted = false;
     let syncedFindings: TaskResult["findings"] = [];
-    let resumeRetryAvailable = executionId !== null;
+    let resumeRetryAvailable = executionId !== null && initialPrevious === null;
 
     for (let attempt = 0; attempt < MAX_DIRECTIVES_PER_RUN; attempt += 1) {
       const payload: StageExecutionNextRequest = {
@@ -1167,16 +1787,13 @@ export const createStageExecutionService = (
       try {
         next = await client.post("/executions/next", payload, stageExecutionNextResponseSchema);
       } catch (error) {
-        const staleExecution =
-          error instanceof Error && error.message.includes("HTTP 404");
-
+        const staleExecution = error instanceof Error && error.message.includes("HTTP 404");
         if (resumeRetryAvailable && previous === null && staleExecution) {
           resumeRetryAvailable = false;
           executionId = null;
           await journal.clearStage(request.stageId);
           continue;
         }
-
         if (staleExecution && executionId === null) {
           throw new Error(
             "Cloud execution API is unavailable. The connected server does not expose " +
@@ -1184,13 +1801,13 @@ export const createStageExecutionService = (
               "with this ForgePilot build."
           );
         }
-
         throw error;
       }
 
       executionId = next.executionId;
       await journal.setExecutionId(request.stageId, executionId);
       const directive = next.directive;
+      previous = null;
 
       if (directive.kind === "terminal") {
         const progressStatus =
@@ -1206,6 +1823,7 @@ export const createStageExecutionService = (
           stepId: `stage:${request.stageId}`
         });
         await journal.clearStage(request.stageId);
+        if (directive.outcome === "completed") await repairStore.clear(request.stageId);
 
         return {
           job: lastJob,
@@ -1238,12 +1856,16 @@ export const createStageExecutionService = (
         );
 
         try {
+          const effectiveInputs =
+            semanticContext && directive.operation.startsWith("discovery.save-")
+              ? { ...directive.inputs, result: semanticContext.workingOutput }
+              : directive.inputs;
           const output = cached.found
             ? cached.output
             : await localOperations.execute(
                 directive.operation,
                 request.project.rootPath,
-                directive.inputs
+                effectiveInputs
               );
 
           if (!cached.found) {
@@ -1255,6 +1877,7 @@ export const createStageExecutionService = (
               output
             );
           }
+          authority = mergeAuthority(authority, output, semanticContext?.outputSchema ?? null);
 
           emit(request, onProgress, {
             message: cached.found
@@ -1270,8 +1893,134 @@ export const createStageExecutionService = (
             output,
             status: "completed"
           };
+          continue;
         } catch (error) {
-          const message = error instanceof Error ? error.message : "Local operation failed.";
+          let validationErrors = [error instanceof Error ? error.message : "Local operation failed."];
+          const isDiscoverySave =
+            directive.operation.startsWith("discovery.save-") && semanticContext !== null;
+
+          if (isDiscoverySave && semanticContext && allowAutoRepair) {
+            let working = semanticContext.workingOutput;
+            let savedOutput: unknown = null;
+            let saved = false;
+            const remainingAttempts = Math.max(
+              0,
+              MAX_AUTO_REPAIR_ATTEMPTS - semanticContext.autoAttempts
+            );
+
+            for (let index = 0; index < remainingAttempts && !saved; index += 1) {
+              const repairNumber = semanticContext.autoAttempts + 1;
+              semanticContext.autoAttempts = repairNumber;
+              emit(request, onProgress, {
+                message: `Automatic JSON patch repair ${repairNumber}/${MAX_AUTO_REPAIR_ATTEMPTS}: ${validationErrors[0]}`,
+                progress: directive.progressStarted,
+                status: "started",
+                stepId: `repair-auto-local:${directive.id}:${repairNumber}`
+              });
+              const patchResponse = await runRepairProviderTask(
+                request,
+                working,
+                semanticContext.outputSchema,
+                validationErrors,
+                `auto ${repairNumber}/${MAX_AUTO_REPAIR_ATTEMPTS}`,
+                onDebug
+              );
+              if (patchResponse) {
+                const allowed = allowedRepairPaths(validationErrors, working);
+                const applied = applyRepairPatches(
+                  working,
+                  patchResponse,
+                  allowed,
+                  semanticContext.authority
+                );
+                working = applied.value;
+                semanticContext.changedPaths.push(...applied.changedPaths);
+              }
+
+              const contractErrors = validateOutputContract(working, semanticContext.outputSchema);
+              if (contractErrors.length > 0) {
+                validationErrors = contractErrors;
+              } else {
+                try {
+                  savedOutput = await localOperations.execute(
+                    directive.operation,
+                    request.project.rootPath,
+                    { ...directive.inputs, result: working }
+                  );
+                  saved = true;
+                } catch (saveError) {
+                  validationErrors = [
+                    saveError instanceof Error ? saveError.message : "Local validation failed."
+                  ];
+                }
+              }
+
+              emit(request, onProgress, {
+                message: saved
+                  ? `Automatic JSON patch repair ${repairNumber}/${MAX_AUTO_REPAIR_ATTEMPTS} passed deterministic save validation.`
+                  : `Automatic JSON patch repair ${repairNumber}/${MAX_AUTO_REPAIR_ATTEMPTS} finished; validation still reports: ${validationErrors[0]}`,
+                progress: directive.progressStarted,
+                status: "completed",
+                stepId: `repair-auto-local:${directive.id}:${repairNumber}`
+              });
+            }
+
+            semanticContext.workingOutput = working;
+            if (saved) {
+              await journal.saveLocalResult(
+                request.stageId,
+                executionId,
+                directive.id,
+                directive.operation,
+                savedOutput
+              );
+              emit(request, onProgress, {
+                message: `${directive.messageCompleted} (after JSON patch repair)`,
+                progress: directive.progressCompleted,
+                status: "completed",
+                stepId: directive.id
+              });
+              previous = {
+                directiveId: directive.id,
+                message: "Local save passed after JSON patch repair.",
+                output: savedOutput,
+                status: "completed"
+              };
+              continue;
+            }
+          }
+
+          if (isDiscoverySave && semanticContext) {
+            await persistRepair(
+              repairStore,
+              request,
+              executionId,
+              directive.id,
+              { kind: "local", operation: directive.operation },
+              semanticContext,
+              validationErrors
+            );
+            const message =
+              `Automatic repair is paused. ${validationErrors[0]} Manual Repair can patch the preserved JSON; Save stays disabled until validation is clean.`;
+            emit(request, onProgress, {
+              message,
+              progress: directive.progressCompleted,
+              status: "blocked",
+              stepId: directive.id
+            });
+            return repairBlockedResponse(
+              request,
+              executionId,
+              lastJob,
+              lastResult,
+              submitAccepted,
+              syncedFindings,
+              message,
+              directive.progressCompleted
+            );
+          }
+
+          const message = validationErrors[0];
           emit(request, onProgress, {
             message,
             progress: directive.progressCompleted,
@@ -1284,12 +2033,19 @@ export const createStageExecutionService = (
             output: null,
             status: "failed"
           };
+          continue;
         }
-        continue;
       }
 
       try {
-        const provider = await executeProvider(request, directive, client, onProgress, onDebug);
+        const provider = await executeProvider(
+          request,
+          directive,
+          client,
+          authority,
+          onProgress,
+          onDebug
+        );
         lastJob = provider.job;
         lastResult = provider.result;
         submitAccepted = provider.submitAccepted;
@@ -1299,11 +2055,49 @@ export const createStageExecutionService = (
         const semanticOutputPresent =
           directive.mode !== "semantic" || provider.parsedOutput !== null;
         const outputContractPassed = provider.outputContractErrors.length === 0;
-        const verificationPassed =
-          !directive.requireOk || provider.parsedOutput?.ok === true;
+        const verificationPassed = !directive.requireOk || provider.parsedOutput?.ok === true;
         const succeeded =
           processSucceeded && semanticOutputPresent && outputContractPassed && verificationPassed;
         const failureDetail = providerFailureDetail(provider.result.outputChunks);
+
+        if (
+          directive.mode === "semantic" &&
+          provider.parsedOutput &&
+          directive.outputSchema
+        ) {
+          semanticContext = {
+            authority: authorityFromSchema(directive.outputSchema, authority),
+            autoAttempts: provider.autoRepairAttempts,
+            changedPaths: [...provider.changedPaths],
+            originalOutput: provider.originalOutput ?? provider.parsedOutput,
+            outputSchema: directive.outputSchema,
+            workingOutput: provider.parsedOutput
+          };
+        }
+
+        if (provider.repairPending && semanticContext) {
+          await persistRepair(
+            repairStore,
+            request,
+            executionId,
+            directive.id,
+            { kind: "provider" },
+            semanticContext,
+            provider.outputContractErrors
+          );
+          const message =
+            `Automatic repair exhausted ${provider.autoRepairAttempts}/${MAX_AUTO_REPAIR_ATTEMPTS} attempts. Manual Repair is available; no repository rescan will occur.`;
+          return repairBlockedResponse(
+            request,
+            executionId,
+            lastJob,
+            lastResult,
+            submitAccepted,
+            syncedFindings,
+            message,
+            directive.progressCompleted
+          );
+        }
 
         previous = {
           directiveId: directive.id,
@@ -1316,10 +2110,7 @@ export const createStageExecutionService = (
                 : !outputContractPassed
                   ? `Provider output contract failed: ${provider.outputContractErrors.join(" | ")}`
                   : "Provider verification returned ok != true.",
-          output:
-            !succeeded && processSucceeded && semanticOutputPresent && !outputContractPassed
-              ? contractRecoveryPayload(provider.parsedOutput, provider.outputContractErrors)
-              : provider.parsedOutput,
+          output: provider.parsedOutput,
           status: succeeded ? "completed" : "failed"
         };
       } catch (error) {
@@ -1335,5 +2126,386 @@ export const createStageExecutionService = (
     throw new Error(`Stage execution exceeded ${MAX_DIRECTIVES_PER_RUN} directives.`);
   };
 
-  return { run };
+  const run = async (
+    request: JobRunRequest & { stageId: string },
+    onProgress?: ProgressListener,
+    onDebug?: DebugListener
+  ): Promise<JobRunResponse> => {
+    const journal = createJournal(request.project.rootPath);
+    const repairStore = createRepairStore(request.project.rootPath);
+    if (request.newRun) {
+      await journal.clearStage(request.stageId);
+      await repairStore.clear(request.stageId);
+    }
+    const executionId = request.newRun ? null : await journal.getExecutionId(request.stageId);
+    return executeLoop(request, executionId, null, null, true, onProgress, onDebug);
+  };
+
+  const getRepairState = async (
+    projectRootPath: string,
+    stageId: string
+  ): Promise<StageRepairState> => createRepairStore(projectRootPath).toPublicState(stageId);
+
+  const importRepairJson = async (
+    request: JobRunRequest & { stageId: string; workingJson: string },
+    onProgress?: ProgressListener,
+    onDebug?: DebugListener
+  ): Promise<StageRepairState> => {
+    const imported = parseProviderText(request.workingJson);
+    if (!imported) {
+      throw new Error("Existing repair JSON must contain one valid JSON object.");
+    }
+
+    const client = createClient(request.serverUrl);
+    const journal = createJournal(request.project.rootPath);
+    const repairStore = createRepairStore(request.project.rootPath);
+    await journal.clearStage(request.stageId);
+    await repairStore.clear(request.stageId);
+
+    let executionId: string | null = null;
+    let previous: ExecutionPreviousResult | null = null;
+    let authority: RepairAuthority = {};
+
+    emit(request, onProgress, {
+      message: "Preparing existing JSON for repair; provider audit will not run.",
+      progress: 18,
+      status: "started",
+      stepId: `repair-import:${request.stageId}`
+    });
+
+    for (let attempt = 0; attempt < MAX_DIRECTIVES_PER_RUN; attempt += 1) {
+      const next = await client.post(
+        "/executions/next",
+        {
+          capabilities: [...SUPPORTED_CAPABILITIES],
+          executionId,
+          localOperations: localOperations.list(),
+          newRun: false,
+          previous,
+          project: request.project,
+          providerId: request.providerId,
+          outputLanguage: request.outputLanguage,
+          timeoutMs: request.timeoutMs,
+          stageId: request.stageId
+        } satisfies StageExecutionNextRequest,
+        stageExecutionNextResponseSchema
+      );
+      executionId = next.executionId;
+      await journal.setExecutionId(request.stageId, executionId);
+      previous = null;
+      const directive = next.directive;
+
+      if (directive.kind === "terminal") {
+        throw new Error(
+          `Cloud did not expose a recoverable provider step for ${request.stageId}: ${directive.message}`
+        );
+      }
+
+      if (directive.kind === "local") {
+        if (directive.operation.startsWith("discovery.save-")) {
+          throw new Error("Repair import reached a save step before the provider step.");
+        }
+        emit(request, onProgress, {
+          message: `${directive.messageStarted} (repair preparation)`,
+          progress: directive.progressStarted,
+          status: "started",
+          stepId: directive.id
+        });
+        const output = await localOperations.execute(
+          directive.operation,
+          request.project.rootPath,
+          directive.inputs
+        );
+        authority = mergeAuthority(authority, output);
+        await journal.saveLocalResult(
+          request.stageId,
+          executionId,
+          directive.id,
+          directive.operation,
+          output
+        );
+        emit(request, onProgress, {
+          message: `${directive.messageCompleted} (repair preparation)`,
+          progress: directive.progressCompleted,
+          status: "completed",
+          stepId: directive.id
+        });
+        previous = {
+          directiveId: directive.id,
+          message: "Local preparation completed for existing JSON recovery.",
+          output,
+          status: "completed"
+        };
+        continue;
+      }
+
+      if (directive.mode !== "semantic" || !directive.outputSchema) {
+        throw new Error("Existing JSON recovery requires a semantic provider directive with an output schema.");
+      }
+
+      const originalOutput = deepCloneJsonObject(imported);
+      const structural = repairProviderOutputStructure(imported, directive.outputSchema);
+      let workingOutput = structural.value;
+      const repairAuthority = authorityFromSchema(directive.outputSchema, authority);
+      const authoritative = enforceAuthority(workingOutput, repairAuthority);
+      workingOutput = authoritative.value;
+      const validationErrors = validateOutputContract(workingOutput, directive.outputSchema);
+      const changedPaths = [
+        ...structural.movedResultKeys.map((key) => `$.result.${key}`),
+        ...authoritative.changedPaths
+      ];
+
+      await persistRepair(
+        repairStore,
+        request,
+        executionId,
+        directive.id,
+        {
+          kind: "provider",
+          jobId: directive.job.id,
+          providerResultSubmitted: false,
+          taskId: directive.job.task.id
+        },
+        {
+          authority: repairAuthority,
+          autoAttempts: 0,
+          changedPaths,
+          originalOutput,
+          outputSchema: directive.outputSchema,
+          workingOutput
+        },
+        validationErrors
+      );
+
+      emitDebug(request, onDebug, {
+        kind: "contract",
+        taskId: directive.job.task.id,
+        processId: null,
+        message:
+          validationErrors.length === 0
+            ? "Existing JSON loaded and provider contract passed; ready to save without rerunning the audit."
+            : `Existing JSON loaded with ${validationErrors.length} validation error(s); Manual Repair/editing is available without rerunning the audit.`,
+        text: null,
+        exitCode: null,
+        signal: null,
+        timestamp: new Date().toISOString()
+      });
+      emit(request, onProgress, {
+        message:
+          validationErrors.length === 0
+            ? "Existing JSON is valid. Save repaired result is ready; provider audit was not rerun."
+            : "Existing JSON loaded into Repair workspace. Fix only the reported paths; provider audit was not rerun.",
+        progress: directive.progressStarted,
+        status: "blocked",
+        stepId: `repair-import:${directive.id}`
+      });
+      return repairStore.toPublicState(request.stageId);
+    }
+
+    throw new Error(`Repair import exceeded ${MAX_DIRECTIVES_PER_RUN} directives.`);
+  };
+
+  const validateRepairJson = async (
+    projectRootPath: string,
+    stageId: string,
+    workingJson: string
+  ): Promise<StageRepairState> => {
+    const store = createRepairStore(projectRootPath);
+    const record = await store.get(stageId);
+    if (!record) throw new Error("No preserved repair session exists for this stage.");
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(workingJson) as unknown;
+    } catch (error) {
+      record.validationErrors = [
+        `Manual JSON is not valid JSON: ${error instanceof Error ? error.message : String(error)}`
+      ];
+      await store.save(record);
+      return store.toPublicState(stageId);
+    }
+    if (!isJsonObject(parsed)) {
+      record.validationErrors = ["Manual JSON must be one JSON object."];
+      await store.save(record);
+      return store.toPublicState(stageId);
+    }
+
+    const structural = repairProviderOutputStructure(parsed, record.outputSchema);
+    const authoritative = enforceAuthority(structural.value ?? parsed, record.authority);
+    record.workingOutput = authoritative.value;
+    record.changedPaths = [
+      ...new Set([
+        ...record.changedPaths,
+        ...structural.movedResultKeys.map((key) => `$.result.${key}`),
+        ...authoritative.changedPaths
+      ])
+    ];
+    record.validationErrors = validateOutputContract(record.workingOutput, record.outputSchema);
+    await store.save(record);
+    return store.toPublicState(stageId);
+  };
+
+  const manualRepair = async (
+    request: JobRunRequest & { stageId: string },
+    onProgress?: ProgressListener,
+    onDebug?: DebugListener
+  ): Promise<StageRepairState> => {
+    const store = createRepairStore(request.project.rootPath);
+    const record = await store.get(request.stageId);
+    if (!record) throw new Error("No preserved repair session exists for this stage.");
+    if (record.validationErrors.length === 0) return store.toPublicState(request.stageId);
+
+    emit(request, onProgress, {
+      message: "Manual Repair is sending only the preserved JSON + current errors to AI. Repository rescan is disabled.",
+      progress: 96,
+      status: "started",
+      stepId: `repair-manual:${record.manualAttempts + 1}`
+    });
+    const patchResponse = await runRepairProviderTask(
+      request,
+      record.workingOutput,
+      record.outputSchema,
+      record.validationErrors,
+      `manual ${record.manualAttempts + 1}`,
+      onDebug
+    );
+    record.manualAttempts += 1;
+    if (patchResponse) {
+      const allowed = allowedRepairPaths(record.validationErrors, record.workingOutput);
+      const applied = applyRepairPatches(
+        record.workingOutput,
+        patchResponse,
+        allowed,
+        record.authority
+      );
+      record.workingOutput = applied.value;
+      record.changedPaths = [...new Set([...record.changedPaths, ...applied.changedPaths])];
+    }
+    record.validationErrors = validateOutputContract(record.workingOutput, record.outputSchema);
+    await store.save(record);
+    emit(request, onProgress, {
+      message:
+        record.validationErrors.length === 0
+          ? "Manual Repair produced schema-valid JSON. Review it, then use Save repaired result."
+          : `Manual Repair finished; ${record.validationErrors.length} contract error(s) remain.`,
+      progress: 97,
+      status: "completed",
+      stepId: `repair-manual:${record.manualAttempts}`
+    });
+    return store.toPublicState(request.stageId);
+  };
+
+  const saveRepair = async (
+    request: JobRunRequest & { stageId: string },
+    onProgress?: ProgressListener,
+    onDebug?: DebugListener
+  ): Promise<JobRunResponse> => {
+    const store = createRepairStore(request.project.rootPath);
+    const record = await store.get(request.stageId);
+    if (!record) throw new Error("No preserved repair session exists for this stage.");
+    if (record.validationErrors.length > 0) {
+      throw new Error("Repaired JSON still has validation errors. Save is disabled until validation passes.");
+    }
+
+    const semanticContext: SemanticRepairContext = {
+      authority: record.authority,
+      autoAttempts: record.autoAttempts,
+      changedPaths: record.changedPaths,
+      originalOutput: record.originalOutput,
+      outputSchema: record.outputSchema,
+      workingOutput: record.workingOutput
+    };
+    let previous: ExecutionPreviousResult;
+
+    if (record.pending.kind === "local") {
+      try {
+        const output = await localOperations.execute(
+          record.pending.operation,
+          request.project.rootPath,
+          { result: record.workingOutput }
+        );
+        previous = {
+          directiveId: record.directiveId,
+          message: "Manually repaired JSON passed deterministic save validation.",
+          output,
+          status: "completed"
+        };
+      } catch (error) {
+        record.validationErrors = [
+          error instanceof Error ? error.message : "Deterministic save validation failed."
+        ];
+        await store.save(record);
+        const message = `Save blocked: ${record.validationErrors[0]}`;
+        emit(request, onProgress, {
+          message,
+          progress: 98,
+          status: "blocked",
+          stepId: "repair-save"
+        });
+        return repairBlockedResponse(
+          request,
+          record.executionId,
+          null,
+          null,
+          false,
+          [],
+          message,
+          98
+        );
+      }
+    } else {
+      if (
+        record.pending.providerResultSubmitted === false &&
+        record.pending.jobId &&
+        record.pending.taskId
+      ) {
+        const now = new Date().toISOString();
+        const client = createClient(request.serverUrl);
+        await client.post(
+          `/jobs/${encodeURIComponent(record.pending.jobId)}/result`,
+          {
+            taskId: record.pending.taskId,
+            jobId: record.pending.jobId,
+            providerId: request.providerId,
+            status: "completed",
+            exitCode: 0,
+            outputChunks: [
+              { stream: "stdout", text: `${JSON.stringify(record.workingOutput)}\n`, timestamp: now }
+            ],
+            findings: [],
+            startedAt: now,
+            finishedAt: now
+          },
+          submitResultResponseSchema
+        );
+        record.pending.providerResultSubmitted = true;
+        await store.save(record);
+      }
+      previous = {
+        directiveId: record.directiveId,
+        message: "Validated repaired provider output supplied without rerunning the audit.",
+        output: record.workingOutput,
+        status: "completed"
+      };
+    }
+
+    emit(request, onProgress, {
+      message: "Saving the validated repaired JSON without rerunning repository discovery.",
+      progress: 98,
+      status: "started",
+      stepId: "repair-save"
+    });
+    const response = await executeLoop(
+      request,
+      record.executionId,
+      previous,
+      semanticContext,
+      false,
+      onProgress,
+      onDebug
+    );
+    if (response.stageOutcome.status === "completed") await store.clear(request.stageId);
+    return response;
+  };
+
+  return { getRepairState, importRepairJson, manualRepair, run, saveRepair, validateRepairJson };
 };

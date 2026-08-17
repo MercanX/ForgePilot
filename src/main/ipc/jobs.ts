@@ -33,6 +33,66 @@ export const registerJobsIpc = (service: JobService = createJobService()): void 
   });
 
   defineIpcHandler({
+    channel: IPC_CHANNELS.jobs.repairState,
+    requestSchema: ipcSchemaMap.jobs.repairState.request,
+    responseSchema: ipcSchemaMap.jobs.repairState.response,
+    handler: ({ projectRootPath, stageId }) => service.getRepairState(projectRootPath, stageId)
+  });
+
+  defineIpcHandler({
+    channel: IPC_CHANNELS.jobs.repairImport,
+    requestSchema: ipcSchemaMap.jobs.repairImport.request,
+    responseSchema: ipcSchemaMap.jobs.repairImport.response,
+    handler: (request, event) =>
+      service.importRepairJson(
+        request,
+        (progressEvent) => event.sender.send(IPC_CHANNELS.jobs.progress, progressEvent),
+        (debugEvent) => {
+          const parsed = jobProviderDebugEventSchema.safeParse(debugEvent);
+          if (parsed.success) event.sender.send(IPC_CHANNELS.jobs.debug, parsed.data);
+        }
+      )
+  });
+
+  defineIpcHandler({
+    channel: IPC_CHANNELS.jobs.repairValidate,
+    requestSchema: ipcSchemaMap.jobs.repairValidate.request,
+    responseSchema: ipcSchemaMap.jobs.repairValidate.response,
+    handler: ({ projectRootPath, stageId, workingJson }) =>
+      service.validateRepairJson(projectRootPath, stageId, workingJson)
+  });
+
+  defineIpcHandler({
+    channel: IPC_CHANNELS.jobs.repairManual,
+    requestSchema: ipcSchemaMap.jobs.repairManual.request,
+    responseSchema: ipcSchemaMap.jobs.repairManual.response,
+    handler: (request, event) =>
+      service.manualRepair(
+        request,
+        (progressEvent) => event.sender.send(IPC_CHANNELS.jobs.progress, progressEvent),
+        (debugEvent) => {
+          const parsed = jobProviderDebugEventSchema.safeParse(debugEvent);
+          if (parsed.success) event.sender.send(IPC_CHANNELS.jobs.debug, parsed.data);
+        }
+      )
+  });
+
+  defineIpcHandler({
+    channel: IPC_CHANNELS.jobs.repairSave,
+    requestSchema: ipcSchemaMap.jobs.repairSave.request,
+    responseSchema: ipcSchemaMap.jobs.repairSave.response,
+    handler: (request, event) =>
+      service.saveRepair(
+        request,
+        (progressEvent) => event.sender.send(IPC_CHANNELS.jobs.progress, progressEvent),
+        (debugEvent) => {
+          const parsed = jobProviderDebugEventSchema.safeParse(debugEvent);
+          if (parsed.success) event.sender.send(IPC_CHANNELS.jobs.debug, parsed.data);
+        }
+      )
+  });
+
+  defineIpcHandler({
     channel: IPC_CHANNELS.jobs.request,
     requestSchema: ipcSchemaMap.jobs.request.request,
     responseSchema: ipcSchemaMap.jobs.request.response,

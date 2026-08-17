@@ -53,6 +53,12 @@ const mockRequire = (id) => {
   if (id === './stageExecutionJournal') {
     return { createStageExecutionJournal: () => { throw new Error('not used in parser regression'); } };
   }
+  if (id === './stageRepairStore') {
+    return {
+      MAX_AUTO_REPAIR_ATTEMPTS: 5,
+      createStageRepairStore: () => { throw new Error('not used in parser regression'); }
+    };
+  }
   return Module.createRequire(sourcePath)(id);
 };
 
@@ -129,6 +135,24 @@ if (!noSchemaRecovered || noSchemaRecovered.audit_id !== 'AUD-002') {
   throw new Error('Regression: largest complete assistant object was not preferred without a schema.');
 }
 
+const splitJson = `\`\`\`json\n${JSON.stringify(envelope)}\n\`\`\``;
+const splitAt1 = Math.floor(splitJson.length / 3);
+const splitAt2 = Math.floor((splitJson.length * 2) / 3);
+const splitAssistantEvents = [
+  { type: 'assistant', message: { content: [{ type: 'text', text: splitJson.slice(0, splitAt1) }] } },
+  { type: 'assistant', message: { content: [{ type: 'text', text: splitJson.slice(splitAt1, splitAt2) }] } },
+  { type: 'assistant', message: { content: [{ type: 'text', text: splitJson.slice(splitAt2) }] } }
+];
+const splitStream = `${splitAssistantEvents.map((event) => JSON.stringify(event)).join('\n')}\n${JSON.stringify(truncatedResultEvent)}\n`;
+const splitChunks = [
+  { stream: 'stdout', text: splitStream.slice(0, 113), timestamp: '2026-08-17T12:00:02Z' },
+  { stream: 'stdout', text: splitStream.slice(113), timestamp: '2026-08-17T12:00:03Z' }
+];
+const splitRecovered = parseLastJsonObject(splitChunks, 'claude-code', schema);
+if (!splitRecovered || splitRecovered.audit_id !== 'AUD-002') {
+  throw new Error(`Regression: split assistant envelope was not reassembled: ${JSON.stringify(splitRecovered)}`);
+}
+
 const completeResultEvent = {
   type: 'result',
   is_error: false,
@@ -149,7 +173,7 @@ if (!direct || direct.audit_id !== 'AUD-002') {
 
 console.log('PASS provider-output parser regression');
 console.log('- truncated Claude result tail: rejected as contract root');
-console.log('- complete Claude assistant event: recovered and selected');
+console.log('- complete/split Claude assistant events: reassembled, recovered and selected');
 console.log('- complete Claude result event: still accepted');
 
 const structuralSchema = {

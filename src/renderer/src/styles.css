@@ -1376,3 +1376,129 @@ h1 {
 .requirement-list button {
   flex: 0 0 auto;
 }
+
+.repair-panel {
+  margin-top: 20px;
+  padding: 18px;
+  border: 1px solid var(--border-color, #30343b);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.repair-panel-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.repair-panel-heading h3 {
+  margin: 0 0 6px;
+}
+
+.repair-panel-heading p {
+  margin: 0;
+  color: #aeb6c2;
+  max-width: 760px;
+}
+
+.repair-ready,
+.repair-warning {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 5px 9px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.repair-ready {
+  border: 1px solid #2a8f55;
+  color: #6ef3a4;
+}
+
+.repair-warning {
+  border: 1px solid #a66b2c;
+  color: #ffc27a;
+}
+
+.repair-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 18px;
+  margin-top: 14px;
+  font-size: 12px;
+  color: #aeb6c2;
+}
+
+.repair-errors {
+  margin-top: 14px;
+  padding: 12px;
+  border-radius: 8px;
+  background: rgba(190, 65, 65, 0.08);
+}
+
+.repair-errors ul {
+  margin: 8px 0 0 18px;
+  padding: 0;
+}
+
+.repair-errors li {
+  margin: 5px 0;
+  color: #ff9c9c;
+  overflow-wrap: anywhere;
+}
+
+.repair-valid-message {
+  margin: 14px 0 0;
+  color: #6ef3a4;
+}
+
+.repair-json-editor {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+  font-weight: 600;
+}
+
+.repair-json-editor textarea {
+  min-height: 300px;
+  width: 100%;
+  resize: vertical;
+  box-sizing: border-box;
+  border: 1px solid #343b46;
+  border-radius: 8px;
+  padding: 12px;
+  background: #0b0e12;
+  color: #dce4ef;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.repair-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.repair-import-actions {
+  align-items: center;
+}
+
+.repair-file-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #343b46;
+  border-radius: 7px;
+  padding: 8px 10px;
+  color: #dce4ef;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.repair-file-picker input {
+  max-width: 240px;
+}

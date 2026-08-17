@@ -26,6 +26,11 @@ import {
   workflowResponseSchema
 } from "@shared/schemas/cloud-api";
 import type { JobProviderDebugEvent, TaskResult } from "@shared/schemas/job";
+import type {
+  StageRepairActionRequest,
+  StageRepairImportRequest,
+  StageRepairState
+} from "@shared/schemas/repair";
 
 import { createHttpClient, type HttpClient } from "../api/httpClient";
 import { createProjectWorkflowState } from "./projectWorkflowState";
@@ -43,6 +48,23 @@ export type JobService = {
   getTask: (jobId: string, serverUrl: string) => Promise<GetTaskResponse>;
   getWorkflow: (projectId: string, rootPath: string, serverUrl: string) => Promise<WorkflowResponse>;
   requestJob: (request: RequestJobRequest, serverUrl: string) => Promise<RequestJobResponse>;
+  getRepairState: (projectRootPath: string, stageId: string) => Promise<StageRepairState>;
+  importRepairJson: (
+    request: StageRepairImportRequest,
+    onProgress?: JobRunProgressListener,
+    onDebug?: JobRunDebugListener
+  ) => Promise<StageRepairState>;
+  manualRepair: (
+    request: StageRepairActionRequest,
+    onProgress?: JobRunProgressListener,
+    onDebug?: JobRunDebugListener
+  ) => Promise<StageRepairState>;
+  validateRepairJson: (projectRootPath: string, stageId: string, workingJson: string) => Promise<StageRepairState>;
+  saveRepair: (
+    request: StageRepairActionRequest,
+    onProgress?: JobRunProgressListener,
+    onDebug?: JobRunDebugListener
+  ) => Promise<JobRunResponse>;
   runOnce: (
     request: JobRunRequest,
     onProgress?: JobRunProgressListener,
@@ -69,7 +91,7 @@ const createClientFactory =
 
 export const createJobService = (options: JobServiceOptions = {}): JobService => {
   const createClient = createClientFactory(options);
-  const desktopVersion = options.desktopVersion ?? "0.5.5";
+  const desktopVersion = options.desktopVersion ?? "0.5.9";
   const stageExecutionService =
     options.stageExecutionService ?? createStageExecutionService({ createClient });
 
@@ -286,14 +308,79 @@ export const createJobService = (options: JobServiceOptions = {}): JobService =>
     }
   };
 
+  const getRepairState = async (projectRootPath: string, stageId: string): Promise<StageRepairState> =>
+    stageExecutionService.getRepairState(projectRootPath, stageId);
+
+  const validateRepairJson = async (
+    projectRootPath: string,
+    stageId: string,
+    workingJson: string
+  ): Promise<StageRepairState> =>
+    stageExecutionService.validateRepairJson(projectRootPath, stageId, workingJson);
+
+  const importRepairJson = async (
+    request: StageRepairImportRequest,
+    onProgress?: JobRunProgressListener,
+    onDebug?: JobRunDebugListener
+  ): Promise<StageRepairState> => {
+    await handshake(request.serverUrl);
+    return stageExecutionService.importRepairJson(
+      { ...request, stageId: request.stageId, workingJson: request.workingJson },
+      onProgress,
+      onDebug
+    );
+  };
+
+  const manualRepair = async (
+    request: StageRepairActionRequest,
+    onProgress?: JobRunProgressListener,
+    onDebug?: JobRunDebugListener
+  ): Promise<StageRepairState> => {
+    await handshake(request.serverUrl);
+    return stageExecutionService.manualRepair(
+      { ...request, stageId: request.stageId },
+      onProgress,
+      onDebug
+    );
+  };
+
+  const saveRepair = async (
+    request: StageRepairActionRequest,
+    onProgress?: JobRunProgressListener,
+    onDebug?: JobRunDebugListener
+  ): Promise<JobRunResponse> => {
+    await handshake(request.serverUrl);
+    const projectState = createProjectWorkflowState(request.project.rootPath);
+    let stateWrites = Promise.resolve();
+    const persistProgress: JobRunProgressListener = (event) => {
+      onProgress?.(event);
+      stateWrites = stateWrites
+        .then(() => projectState.recordProgress(event))
+        .catch(() => undefined);
+    };
+    const response = await stageExecutionService.saveRepair(
+      { ...request, stageId: request.stageId },
+      persistProgress,
+      onDebug
+    );
+    await stateWrites;
+    await projectState.finishStage(response);
+    return response;
+  };
+
   return {
     fail,
+    getRepairState,
+    importRepairJson,
     getStatus,
     getTask,
     getWorkflow,
+    manualRepair,
     requestJob,
     runOnce,
+    saveRepair,
     submitResult,
-    syncFindings
+    syncFindings,
+    validateRepairJson
   };
 };

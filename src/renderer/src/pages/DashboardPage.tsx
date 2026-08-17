@@ -40,6 +40,12 @@ export const DashboardPage = (): ReactElement => {
   const runningStageId = useJobStore((state) => state.runningStageId);
   const runCloudJob = useJobStore((state) => state.runCloudJob);
   const workflow = useJobStore((state) => state.workflow);
+  const repairState = useJobStore((state) => state.repairState);
+  const loadRepairState = useJobStore((state) => state.loadRepairState);
+  const importRepairJson = useJobStore((state) => state.importRepairJson);
+  const validateRepairJson = useJobStore((state) => state.validateRepairJson);
+  const manualRepair = useJobStore((state) => state.manualRepair);
+  const saveRepair = useJobStore((state) => state.saveRepair);
   const [selectedStageId, setSelectedStageId] = useState<string | null>(null);
   const [followRunnableStage, setFollowRunnableStage] = useState(true);
   const [startupState, setStartupState] = useState<StartupState | null>(null);
@@ -47,6 +53,8 @@ export const DashboardPage = (): ReactElement => {
   const [scopeExcludeText, setScopeExcludeText] = useState("");
   const [scopeExplicitFilesText, setScopeExplicitFilesText] = useState("");
   const [startupMessage, setStartupMessage] = useState<string | null>(null);
+  const [repairJsonText, setRepairJsonText] = useState("");
+  const [repairImportText, setRepairImportText] = useState("");
 
   const selectedProvider = useMemo(
     () =>
@@ -69,6 +77,8 @@ export const DashboardPage = (): ReactElement => {
   const selectedStageIsRunning = Boolean(
     isRunning && selectedStage && runningStageId === selectedStage.id
   );
+  const activeRepair =
+    repairState?.available && repairState.stageId === selectedStage?.id ? repairState : null;
   const startupAwaitingApproval = Boolean(
     selectedStage?.id === "010-startup" && startupState?.scope?.status === "pending_approval"
   );
@@ -84,6 +94,7 @@ export const DashboardPage = (): ReactElement => {
       selectedProvider &&
       selectedStage &&
       !isRunning &&
+      !activeRepair &&
       !selectedStageNotReady &&
       selectedMissingHardRequirements.length === 0 &&
       selectedStage.status !== "waiting" &&
@@ -111,6 +122,18 @@ export const DashboardPage = (): ReactElement => {
       void loadWorkflow(activeProject.id, activeProject.rootPath);
     }
   }, [activeProject, loadWorkflow]);
+
+  useEffect(() => {
+    if (!activeProject || !selectedStage) {
+      return;
+    }
+    void loadRepairState(activeProject.rootPath, selectedStage.id);
+  }, [activeProject, lastRun, loadRepairState, selectedStage?.id, workflow]);
+
+  useEffect(() => {
+    setRepairJsonText(activeRepair?.workingJson ?? "");
+    if (activeRepair) setRepairImportText("");
+  }, [activeRepair?.updatedAt, activeRepair?.workingJson, selectedStage?.id]);
 
   useEffect(() => {
     const currentStages = workflow?.stages ?? [];
@@ -442,6 +465,8 @@ export const DashboardPage = (): ReactElement => {
               >
                 {selectedStageIsRunning
                   ? "Running"
+                  : activeRepair
+                    ? "Repair pending"
                   : selectedStageNotReady
                     ? "Not Ready"
                     : startupAwaitingApproval
@@ -554,6 +579,152 @@ export const DashboardPage = (): ReactElement => {
               </ul>
             )}
           </section>
+
+          {!activeRepair &&
+          selectedStage?.status === "failed" &&
+          activeProject &&
+          selectedProvider &&
+          selectedStage.id !== "010-startup" ? (
+            <section className="repair-panel" aria-label="Recover existing stage JSON">
+              <div className="repair-panel-heading">
+                <div>
+                  <h3>Recover existing JSON</h3>
+                  <p>
+                    Already have the provider JSON from this failed run? Load it here. ForgePilot will
+                    prepare the existing stage execution and validate this JSON without running the
+                    repository audit again.
+                  </p>
+                </div>
+                <span className="repair-warning">NO RESCAN</span>
+              </div>
+
+              <label className="repair-json-editor">
+                Existing provider JSON
+                <textarea
+                  spellCheck={false}
+                  placeholder="Paste the full JSON envelope here, or choose a .json/.txt file below."
+                  value={repairImportText}
+                  onChange={(event) => setRepairImportText(event.target.value)}
+                />
+              </label>
+              <div className="repair-actions repair-import-actions">
+                <label className="repair-file-picker">
+                  Load JSON file
+                  <input
+                    accept=".json,.txt,application/json,text/plain"
+                    type="file"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      if (!file) return;
+                      void file.text().then((text) => setRepairImportText(text));
+                    }}
+                  />
+                </label>
+                <button
+                  className="primary-action"
+                  type="button"
+                  disabled={isRunning || repairImportText.trim().length === 0}
+                  onClick={() =>
+                    void importRepairJson(
+                      activeProject,
+                      selectedProvider,
+                      selectedModel,
+                      selectedStage.id,
+                      repairImportText
+                    )
+                  }
+                >
+                  Prepare existing JSON for repair
+                </button>
+              </div>
+            </section>
+          ) : null}
+
+          {activeRepair && activeProject && selectedProvider && selectedStage ? (
+            <section className="repair-panel" aria-label="Stage JSON repair">
+              <div className="repair-panel-heading">
+                <div>
+                  <h3>Repair workspace</h3>
+                  <p>
+                    Original provider output is preserved. Repair only patches the existing JSON;
+                    repository discovery is not rerun.
+                  </p>
+                </div>
+                <span className={activeRepair.canSave ? "repair-ready" : "repair-warning"}>
+                  {activeRepair.canSave ? "VALID · READY TO SAVE" : "VALIDATION ERRORS"}
+                </span>
+              </div>
+
+              <div className="repair-stats">
+                <span>Auto repair: {activeRepair.autoAttempts}/{activeRepair.maxAutoAttempts}</span>
+                <span>Manual AI repair: {activeRepair.manualAttempts}</span>
+                <span>Changed paths: {activeRepair.changedPaths.length}</span>
+              </div>
+
+              {activeRepair.validationErrors.length > 0 ? (
+                <div className="repair-errors">
+                  <strong>Current validation errors</strong>
+                  <ul>
+                    {activeRepair.validationErrors.map((error, index) => (
+                      <li key={`${index}:${error}`}>{error}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : (
+                <p className="repair-valid-message">✓ Current working JSON passes the provider contract.</p>
+              )}
+
+              <label className="repair-json-editor">
+                Working JSON
+                <textarea
+                  spellCheck={false}
+                  value={repairJsonText}
+                  onChange={(event) => setRepairJsonText(event.target.value)}
+                />
+              </label>
+
+              <div className="repair-actions">
+                <button
+                  type="button"
+                  disabled={isRunning || repairJsonText.trim().length === 0}
+                  onClick={() =>
+                    void validateRepairJson(activeProject.rootPath, selectedStage.id, repairJsonText)
+                  }
+                >
+                  Validate edited JSON
+                </button>
+                <button
+                  type="button"
+                  disabled={isRunning || activeRepair.validationErrors.length === 0}
+                  onClick={() =>
+                    void manualRepair(
+                      activeProject,
+                      selectedProvider,
+                      selectedModel,
+                      selectedStage.id
+                    )
+                  }
+                >
+                  Manual Repair with AI
+                </button>
+                <button
+                  className="primary-action"
+                  type="button"
+                  disabled={isRunning || !activeRepair.canSave}
+                  onClick={() =>
+                    void saveRepair(
+                      activeProject,
+                      selectedProvider,
+                      selectedModel,
+                      selectedStage.id
+                    )
+                  }
+                >
+                  Save repaired result
+                </button>
+              </div>
+            </section>
+          ) : null}
 
           {selectedStage?.report ? (
             <section className="stage-report" aria-label="Stage final report">

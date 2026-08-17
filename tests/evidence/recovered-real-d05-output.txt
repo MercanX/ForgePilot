@@ -1,0 +1,1 @@
+Recovered user failed-run D05 JSON: audit_id=AUD-002 checklist_count=82 schema_errors=0

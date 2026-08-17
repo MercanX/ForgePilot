@@ -1,0 +1,3 @@
+Patch repair workflow verification passed (5x path-limited patch repair, authority lock, original/working preservation, no-rescan AI repair, Manual Repair, editable Validate, gated Save, and no server-side replacement-audit repair scheduling).
+Functional patch guard regression passed (allowed path changed; unrelated semantic path rejected; authority metadata preserved).
+Existing failed-run JSON recovery regression passed (load existing JSON -> authority lock -> no provider run -> register result -> deterministic save -> terminal completed).

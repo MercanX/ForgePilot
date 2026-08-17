@@ -27,6 +27,14 @@ import {
 } from "./job";
 import { languagePackManifestSchema, localeIdSchema } from "./language-pack";
 import {
+  stageRepairActionRequestSchema,
+  stageRepairGetRequestSchema,
+  stageRepairImportRequestSchema,
+  stageRepairSaveResponseSchema,
+  stageRepairStateSchema,
+  stageRepairValidateRequestSchema
+} from "./repair";
+import {
   projectAddRequestSchema,
   projectAddResponseSchema,
   projectListResponseSchema,
@@ -160,6 +168,26 @@ export const ipcSchemaMap = {
     runOnce: {
       request: jobRunRequestSchema,
       response: jobRunResponseSchema
+    },
+    repairState: {
+      request: stageRepairGetRequestSchema,
+      response: stageRepairStateSchema
+    },
+    repairImport: {
+      request: stageRepairImportRequestSchema,
+      response: stageRepairStateSchema
+    },
+    repairValidate: {
+      request: stageRepairValidateRequestSchema,
+      response: stageRepairStateSchema
+    },
+    repairManual: {
+      request: stageRepairActionRequestSchema,
+      response: stageRepairStateSchema
+    },
+    repairSave: {
+      request: stageRepairActionRequestSchema,
+      response: stageRepairSaveResponseSchema
     },
     request: {
       request: requestJobRequestSchema,

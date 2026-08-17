@@ -1419,10 +1419,6 @@ const nextDirectiveFor = (session) => {
     return terminalDirective("failed", session.failure, session.lastProgress ?? 0);
   }
 
-  if (session.contractRepair) {
-    return contractRepairDirectiveFor(session);
-  }
-
   if (session.stageId === STARTUP_STAGE_ID) {
     return startupDirectiveFor(session);
   }
@@ -1469,35 +1465,7 @@ const applyPreviousResult = (session, previous) => {
   session.lastProgress = session.pending.progressCompleted ?? session.lastProgress ?? 0;
 
   if (previous.status !== "completed") {
-    const recovery = contractRecoveryPayloadFrom(previous.output);
-    const semanticTaskId = pendingSemanticTaskId(session.pending);
-    const isRepairDirective = semanticTaskId === DISCOVERY_CONTRACT_REPAIR_TASK;
-
-    if (
-      !isRepairDirective &&
-      recovery &&
-      session.pending.kind === "provider" &&
-      session.pending.mode === "semantic" &&
-      session.pending.saveAs &&
-      DISCOVERY_REPAIRABLE_TASK_IDS.has(semanticTaskId) &&
-      session.contractRepairAttempts < 1
-    ) {
-      session.contractRepair = {
-        candidateOutput: recovery.candidate,
-        contractErrors: recovery.contractErrors,
-        targetSaveAs: session.pending.saveAs,
-        targetSemanticTaskId: semanticTaskId
-      };
-      session.contractRepairAttempts += 1;
-      session.lastAppliedDirectiveId = session.pending.id;
-      session.step += 1;
-      session.pending = null;
-      return;
-    }
-
-    session.failure = isRepairDirective
-      ? `Provider JSON contract repair failed: ${previous.message || "repair output is still invalid."}`
-      : previous.message || `Directive ${session.pending.id} failed.`;
+    session.failure = previous.message || `Directive ${session.pending.id} failed.`;
     session.lastAppliedDirectiveId = session.pending.id;
     session.pending = null;
     return;
@@ -1507,9 +1475,6 @@ const applyPreviousResult = (session, previous) => {
     session.context[session.pending.saveAs] = previous.output;
   }
 
-  if (pendingSemanticTaskId(session.pending) === DISCOVERY_CONTRACT_REPAIR_TASK) {
-    session.contractRepair = null;
-  }
 
   session.lastAppliedDirectiveId = session.pending.id;
   session.step += 1;
@@ -1519,8 +1484,6 @@ const applyPreviousResult = (session, previous) => {
 const createExecution = (body) => {
   const session = {
     context: {},
-    contractRepair: null,
-    contractRepairAttempts: 0,
     failure: null,
     id: randomUUID(),
     lastAppliedDirectiveId: null,
@@ -1772,10 +1735,10 @@ const server = http.createServer(async (request, response) => {
         d25RuntimeCompatible;
       sendJson(response, 200, {
         status: compatible ? "ok" : "update-required",
-        serverVersion: "mock-0.5.8-contract-recovery",
+        serverVersion: "mock-0.5.9-patch-repair-manual",
         protocolVersion: "2",
         message: compatible
-          ? "Mock cloud connected (Startup 2.1.0, Discovery D05 + D10 + D15 + D20 + D25, targeted scan + structural/contract recovery + checklist auto-repair enforced)"
+          ? "Mock cloud connected (Startup 2.1.0, Discovery D05 + D10 + D15 + D20 + D25, targeted scan + client-side 5x patch repair + manual repair/save workflow)"
           : !protocolCompatible
             ? "Desktop protocol v2 is required for server-driven execution directives."
             : !startupRuntimeCompatible

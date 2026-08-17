@@ -119,9 +119,9 @@ export const createJobService = (options: JobServiceOptions = {}): JobService =>
     }
   };
 
-  // Cloud owns the stage catalog and execution directives. The project-local
-  // JSON is the sole authority for stage completion/readiness. Deleting the
-  // project's .ai-factory folder therefore resets the visible workflow state.
+  // Cloud owns executable directives. Discovery stage visibility and HARD/SOFT dependency metadata
+  // are enriched from the project-local STAGE-EXECUTION-MANIFEST.json; project artifacts remain
+  // the authority for completion/readiness. Deleting .ai-factory resets that local Discovery state.
   const getWorkflow = async (
     projectId: string,
     rootPath: string,
@@ -230,6 +230,21 @@ export const createJobService = (options: JobServiceOptions = {}): JobService =>
         request.stageId
           ? `Stage is not present in the cloud workflow: ${request.stageId}`
           : "Cloud workflow does not contain a runnable stage."
+      );
+    }
+
+    if (requestedStage.availability === "not_ready") {
+      throw new Error(
+        requestedStage.availabilityMessage ?? `Stage is not implemented or executable yet: ${requestedStage.id}`
+      );
+    }
+
+    const missingHardRequirements = requestedStage.requirements.filter(
+      (requirement) => requirement.type === "hard" && requirement.status !== "satisfied"
+    );
+    if (missingHardRequirements.length > 0) {
+      throw new Error(
+        `Stage requirements are not satisfied: ${missingHardRequirements.map((item) => item.name).join(", ")}`
       );
     }
 

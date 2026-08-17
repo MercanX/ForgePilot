@@ -25,6 +25,19 @@ export const stageStatusSchema = z.enum([
   "skipped"
 ]);
 
+
+export const stageAvailabilitySchema = z.enum(["available", "not_ready"]);
+
+export const stageRequirementSchema = z
+  .object({
+    stageId: z.string().min(1),
+    name: z.string().min(1),
+    type: z.enum(["hard", "soft"]),
+    status: z.enum(["satisfied", "missing", "not_ready"]),
+    runnable: z.boolean()
+  })
+  .strict();
+
 export const stageActivityEntrySchema = z
   .object({
     message: z.string().min(1),
@@ -52,6 +65,10 @@ export const workflowStageSchema = z
     progress: z.number().min(0).max(100).nullable(),
     currentAgent: z.string().min(1).nullable(),
     currentOperation: z.string().min(1).nullable(),
+    availability: stageAvailabilitySchema.default("available"),
+    availabilityMessage: z.string().min(1).nullable().default(null),
+    description: z.string().min(1).nullable().default(null),
+    requirements: z.array(stageRequirementSchema).default([]),
     activity: z.array(stageActivityEntrySchema).default([]),
     report: stageReportSchema.nullable().default(null)
   })
@@ -84,6 +101,8 @@ export const runSchema = z
 
 export type RunStatus = z.infer<typeof runStatusSchema>;
 export type StageStatus = z.infer<typeof stageStatusSchema>;
+export type StageAvailability = z.infer<typeof stageAvailabilitySchema>;
+export type StageRequirement = z.infer<typeof stageRequirementSchema>;
 export type StageActivityEntry = z.infer<typeof stageActivityEntrySchema>;
 export type StageReport = z.infer<typeof stageReportSchema>;
 export type WorkflowStage = z.infer<typeof workflowStageSchema>;

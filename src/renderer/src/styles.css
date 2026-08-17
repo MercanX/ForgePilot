@@ -1280,3 +1280,99 @@ h1 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+.stage-description {
+  color: #b8bec8;
+  font-size: 13px;
+  line-height: 1.55;
+  margin: 0 0 16px;
+}
+
+.stage-requirements {
+  border-top: 1px solid #26282c;
+  margin-bottom: 16px;
+  padding-top: 16px;
+}
+
+.stage-requirements-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.stage-requirements-heading h3 {
+  color: #ffffff;
+  font-size: 15px;
+  margin: 0;
+}
+
+.requirement-badge {
+  border: 1px solid #343840;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  padding: 4px 8px;
+  text-transform: uppercase;
+}
+
+.requirement-badge-ok {
+  color: #86efac;
+}
+
+.requirement-badge-missing {
+  color: #facc15;
+}
+
+.requirement-badge-not-ready {
+  color: #a8adb7;
+}
+
+.stage-availability-message,
+.stage-requirements > p {
+  color: #a8adb7;
+  font-size: 13px;
+  margin: 0 0 10px;
+}
+
+.requirement-list {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.requirement-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #26282c;
+  border-radius: 8px;
+  background: #111317;
+  padding: 10px 12px;
+}
+
+.requirement-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.requirement-copy strong {
+  color: #f8fafc;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.requirement-copy span {
+  color: #8f98a6;
+  font-size: 11px;
+}
+
+.requirement-list button {
+  flex: 0 0 auto;
+}

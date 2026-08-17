@@ -72,11 +72,20 @@ export const DashboardPage = (): ReactElement => {
   const startupAwaitingApproval = Boolean(
     selectedStage?.id === "010-startup" && startupState?.scope?.status === "pending_approval"
   );
+  const selectedHardRequirements = selectedStage?.requirements.filter(
+    (requirement) => requirement.type === "hard"
+  ) ?? [];
+  const selectedMissingHardRequirements = selectedHardRequirements.filter(
+    (requirement) => requirement.status !== "satisfied"
+  );
+  const selectedStageNotReady = selectedStage?.availability === "not_ready";
   const canRunSelectedStage = Boolean(
     activeProject &&
       selectedProvider &&
       selectedStage &&
       !isRunning &&
+      !selectedStageNotReady &&
+      selectedMissingHardRequirements.length === 0 &&
       selectedStage.status !== "waiting" &&
       !startupAwaitingApproval
   );
@@ -167,6 +176,55 @@ export const DashboardPage = (): ReactElement => {
     } catch (error) {
       setStartupMessage(error instanceof Error ? error.message : "Could not read Startup state.");
     }
+  };
+
+  const findRunnableRequirementStage = (
+    stage: WorkflowStage,
+    visited: Set<string> = new Set()
+  ): WorkflowStage | null => {
+    if (visited.has(stage.id)) return null;
+    const nextVisited = new Set(visited);
+    nextVisited.add(stage.id);
+
+    const missingHard = stage.requirements.filter(
+      (requirement) => requirement.type === "hard" && requirement.status !== "satisfied"
+    );
+
+    for (const requirement of missingHard) {
+      const dependency = stages.find((candidate) => candidate.id === requirement.stageId);
+      if (!dependency || dependency.availability === "not_ready") continue;
+      const nested = findRunnableRequirementStage(dependency, nextVisited);
+      if (nested) return nested;
+      if (dependency.status === "ready" || dependency.status === "failed") return dependency;
+    }
+
+    if (stage.availability !== "not_ready" && (stage.status === "ready" || stage.status === "failed")) {
+      return stage;
+    }
+    return null;
+  };
+
+  const runRequirement = (stageId: string): void => {
+    if (!activeProject || !selectedProvider || isRunning) return;
+    const directRequirement = stages.find((stage) => stage.id === stageId);
+    if (!directRequirement) return;
+
+    const runnable = findRunnableRequirementStage(directRequirement);
+    if (!runnable) {
+      setFollowRunnableStage(false);
+      setSelectedStageId(directRequirement.id);
+      return;
+    }
+
+    setFollowRunnableStage(false);
+    setSelectedStageId(runnable.id);
+    void runCloudJob(
+      activeProject,
+      selectedProvider,
+      selectedModel,
+      runnable.id,
+      runnable.status === "failed"
+    );
   };
 
   const parseScopeText = (value: string): string[] =>
@@ -337,7 +395,14 @@ export const DashboardPage = (): ReactElement => {
                       <span>
                         {isRunning && runningStageId === stage.id
                           ? "Running"
-                          : statusText[stage.status]}
+                          : stage.availability === "not_ready"
+                            ? "Not Ready"
+                            : stage.requirements.some(
+                                  (requirement) =>
+                                    requirement.type === "hard" && requirement.status !== "satisfied"
+                                )
+                              ? "Needs requirement"
+                              : statusText[stage.status]}
                       </span>
                     </span>
                   </button>
@@ -377,15 +442,19 @@ export const DashboardPage = (): ReactElement => {
               >
                 {selectedStageIsRunning
                   ? "Running"
-                  : startupAwaitingApproval
-                    ? "Approve scope below"
-                  : selectedStage.status === "completed"
-                    ? "Restart stage"
-                    : selectedStage.status === "failed"
-                      ? "Restart stage"
-                      : selectedStage.status === "waiting"
-                        ? "Waiting"
-                        : "Start stage"}
+                  : selectedStageNotReady
+                    ? "Not Ready"
+                    : startupAwaitingApproval
+                      ? "Approve scope below"
+                      : selectedMissingHardRequirements.length > 0
+                        ? "Requirements missing"
+                        : selectedStage.status === "completed"
+                          ? "Restart stage"
+                          : selectedStage.status === "failed"
+                            ? "Restart stage"
+                            : selectedStage.status === "waiting"
+                              ? "Waiting"
+                              : "Start stage"}
               </button>
             ) : null}
           </div>
@@ -403,11 +472,68 @@ export const DashboardPage = (): ReactElement => {
               {selectedStageIsRunning
                 ? currentOperation
                 : (selectedStage?.currentOperation ??
-                  (selectedStage?.status === "waiting" ? "Waiting for previous stage" : "Ready to start"))}
+                  (selectedStage?.availability === "not_ready"
+                    ? "Stage is not ready yet"
+                    : selectedStage?.status === "waiting"
+                      ? "Waiting for required stage"
+                      : "Ready to start"))}
             </strong>
             <span>Model</span>
             <strong>{selectedModel ?? "No model selected"}</strong>
           </div>
+
+          {selectedStage?.description ? (
+            <p className="stage-description">{selectedStage.description}</p>
+          ) : null}
+
+          {selectedStage ? (
+            <section className="stage-requirements" aria-label="Stage requirements">
+              <div className="stage-requirements-heading">
+                <h3>Requirements</h3>
+                {selectedStage.availability === "not_ready" ? (
+                  <span className="requirement-badge requirement-badge-not-ready">Not Ready</span>
+                ) : selectedMissingHardRequirements.length === 0 ? (
+                  <span className="requirement-badge requirement-badge-ok">Ready</span>
+                ) : (
+                  <span className="requirement-badge requirement-badge-missing">Required</span>
+                )}
+              </div>
+              {selectedStage.availabilityMessage ? (
+                <p className="stage-availability-message">{selectedStage.availabilityMessage}</p>
+              ) : null}
+              {selectedStage.requirements.length === 0 ? (
+                <p>No stage prerequisites.</p>
+              ) : (
+                <ul className="requirement-list">
+                  {selectedStage.requirements.map((requirement) => (
+                    <li key={`${selectedStage.id}:${requirement.type}:${requirement.stageId}`}>
+                      <div className="requirement-copy">
+                        <strong>{requirement.name}</strong>
+                        <span>
+                          {requirement.type === "hard" ? "HARD" : "SOFT"} · {requirement.status === "satisfied"
+                            ? "Satisfied"
+                            : requirement.status === "not_ready"
+                              ? "Not Ready"
+                              : requirement.type === "hard"
+                                ? "Required"
+                                : "Optional / missing"}
+                        </span>
+                      </div>
+                      {requirement.status !== "satisfied" && requirement.type === "hard" ? (
+                        <button
+                          type="button"
+                          disabled={isRunning || !requirement.runnable}
+                          onClick={() => runRequirement(requirement.stageId)}
+                        >
+                          {requirement.status === "not_ready" ? "Not Ready" : "Run requirement"}
+                        </button>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          ) : null}
 
           <section className="activity-panel" aria-label="Stage activity">
             <h3>Activity</h3>

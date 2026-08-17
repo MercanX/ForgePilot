@@ -414,3 +414,7 @@ Users should be able to verify what software is running on their computer withou
 
 **ForgePilot**
 Open-source desktop execution client for AI Factory.
+
+## Discovery stage catalog
+
+ForgePilot, `020-Discovery` stage listesini ve HARD/SOFT gereksinimlerini proje içindeki `.ai-factory/020-Discovery/STAGE-EXECUTION-MANIFEST.json` dosyasından okur. Tüm substages görünür; hazır olmayanlar `Not Ready`, eksik HARD gereksinimi olanlar `Run requirement`, çalıştırılabilir olanlar `Start stage` olarak sunulur. Ayrıntı: `docs/DISCOVERY-STAGE-EXECUTION.md`.

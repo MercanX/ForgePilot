@@ -16,7 +16,8 @@
     "test:watch": "vitest",
     "dev:mock-cloud": "node tools/mock-cloud/mock-cloud.cjs",
     "test:protocol": "node tools/verify-execution-protocol.cjs",
-    "test:contract-compat": "node tools/verify-d05-d10-contract-compatibility.cjs"
+    "test:contract-compat": "node tools/verify-d05-d10-contract-compatibility.cjs",
+    "test:stage-catalog": "node tools/verify-discovery-stage-catalog.cjs"
   },
   "build": {
     "appId": "com.aifactory.forgepilot",

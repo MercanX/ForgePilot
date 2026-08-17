@@ -242,9 +242,9 @@ const parseProviderText = (rawText: string): Record<string, unknown> | null => {
   return null;
 };
 
-type ProviderStreamResult = {
-  event: Record<string, unknown>;
-  finalText: string | null;
+type ProviderStreamTextCandidate = {
+  source: "claude-result" | "claude-assistant";
+  text: string;
 };
 
 const parseJsonLines = (value: string): Record<string, unknown>[] =>
@@ -255,49 +255,63 @@ const parseJsonLines = (value: string): Record<string, unknown>[] =>
     .map((line) => parseJsonObjectText(line))
     .filter((item): item is Record<string, unknown> => item !== null);
 
-const findProviderStreamResult = (chunks: ProviderOutputChunk[]): ProviderStreamResult | null => {
+/**
+ * Claude Code's terminal `type=result` event is not always a byte-for-byte copy
+ * of the final assistant message. Large responses can arrive there as a tail
+ * fragment even though the preceding assistant event contains the complete
+ * JSON document. Keep both as candidates and let contract validation select
+ * the authoritative root object. Tool-use/thinking content is never considered.
+ */
+const findProviderStreamTextCandidates = (
+  chunks: ProviderOutputChunk[]
+): ProviderStreamTextCandidate[] => {
   const stdout = chunks
     .filter((chunk) => chunk.stream === "stdout")
     .map((chunk) => chunk.text)
     .join("");
   const events = parseJsonLines(stdout);
+  const resultCandidates: ProviderStreamTextCandidate[] = [];
+  const assistantCandidates: ProviderStreamTextCandidate[] = [];
 
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index];
-    if (event?.type !== "result") {
+    if (!event) {
       continue;
     }
 
-    return {
-      event,
-      finalText: typeof event.result === "string" ? event.result : null
-    };
+    if (event.type === "result") {
+      if (typeof event.structured_output === "string" && event.structured_output.trim()) {
+        resultCandidates.push({ source: "claude-result", text: event.structured_output });
+      } else if (isJsonObject(event.structured_output)) {
+        resultCandidates.push({
+          source: "claude-result",
+          text: JSON.stringify(event.structured_output)
+        });
+      }
+      if (typeof event.result === "string" && event.result.trim()) {
+        resultCandidates.push({ source: "claude-result", text: event.result });
+      }
+      continue;
+    }
+
+    if (event.type !== "assistant" || !isJsonObject(event.message)) {
+      continue;
+    }
+
+    const content = Array.isArray(event.message.content) ? event.message.content : [];
+    const visibleText = content
+      .filter((block): block is Record<string, unknown> => isJsonObject(block))
+      .filter((block) => block.type === "text" && typeof block.text === "string")
+      .map((block) => block.text as string)
+      .filter((text) => text.trim().length > 0)
+      .join("\n");
+
+    if (visibleText) {
+      assistantCandidates.push({ source: "claude-assistant", text: visibleText });
+    }
   }
 
-  return null;
-};
-
-export const parseLastJsonObject = (
-  chunks: ProviderOutputChunk[],
-  providerId?: string
-): Record<string, unknown> | null => {
-  // Claude Code stream-json emits JSONL events and ends with a `type=result`
-  // record whose `result` field contains the model's final visible response.
-  // Parse ONLY that final response for the AI Factory output contract.
-  const streamResult = findProviderStreamResult(chunks);
-  if (streamResult) {
-    return streamResult.finalText ? parseProviderText(streamResult.finalText) : null;
-  }
-
-  // Never reinterpret an arbitrary Claude stream event (system/tool/thinking)
-  // as the semantic task result. If Claude did not emit `type=result`, the
-  // provider run is incomplete even when an earlier event happens to be JSON.
-  if (providerId === PROVIDER_IDS.claudeCode) {
-    return null;
-  }
-
-  // Codex and older non-streaming provider modes may still return plain text / JSON.
-  return parseProviderText(chunks.map((chunk) => chunk.text).join(""));
+  return [...resultCandidates, ...assistantCandidates];
 };
 
 const safeJsonPreview = (value: unknown, maxLength = 1600): string | null => {
@@ -562,6 +576,70 @@ const selectContractOutput = (
 
   return value;
 };
+
+type ParsedProviderJsonSelection = {
+  source: "claude-result" | "claude-assistant" | "plain-output" | null;
+  value: Record<string, unknown> | null;
+};
+
+const parseProviderJsonSelection = (
+  chunks: ProviderOutputChunk[],
+  providerId?: string,
+  schema: Record<string, unknown> | null = null
+): ParsedProviderJsonSelection => {
+  const textCandidates =
+    providerId === PROVIDER_IDS.claudeCode
+      ? findProviderStreamTextCandidates(chunks)
+      : [
+          {
+            source: "plain-output" as const,
+            text: chunks.map((chunk) => chunk.text).join("")
+          }
+        ];
+
+  let fallback: ParsedProviderJsonSelection = { source: null, value: null };
+  let fallbackSize = -1;
+
+  for (const candidate of textCandidates) {
+    const parsed = parseProviderText(candidate.text);
+    if (!parsed) {
+      continue;
+    }
+
+    // Keep the largest parseable candidate as the diagnostic fallback. This is
+    // important for truncated Claude result events: their tail may contain a
+    // valid nested object (for example `handoff`) while the complete assistant
+    // event contains the actual audit envelope.
+    let serializedSize = 0;
+    try {
+      serializedSize = JSON.stringify(parsed).length;
+    } catch {
+      serializedSize = 0;
+    }
+    if (serializedSize > fallbackSize) {
+      fallback = { source: candidate.source, value: parsed };
+      fallbackSize = serializedSize;
+    }
+
+    if (!schema) {
+      continue;
+    }
+
+    const semanticCandidate = selectContractOutput(parsed, schema);
+    if (validateOutputContract(semanticCandidate, schema).length === 0) {
+      return { source: candidate.source, value: parsed };
+    }
+  }
+
+  return fallback;
+};
+
+export const parseLastJsonObject = (
+  chunks: ProviderOutputChunk[],
+  providerId?: string,
+  schema: Record<string, unknown> | null = null
+): Record<string, unknown> | null =>
+  parseProviderJsonSelection(chunks, providerId, schema).value;
 
 const describeJsonShape = (value: Record<string, unknown> | null): string => {
   if (!value) {
@@ -849,7 +927,12 @@ export const createStageExecutionService = (
         signal: null,
         timestamp: new Date().toISOString()
       });
-      const rawParsedOutput = parseLastJsonObject(outputChunks, request.providerId);
+      const parsedSelection = parseProviderJsonSelection(
+        outputChunks,
+        request.providerId,
+        directive.mode === "semantic" ? directive.outputSchema : null
+      );
+      const rawParsedOutput = parsedSelection.value;
       const parsedOutput =
         directive.mode === "semantic"
           ? selectContractOutput(rawParsedOutput, directive.outputSchema)
@@ -859,7 +942,7 @@ export const createStageExecutionService = (
         taskId: started.handle.id,
         processId: started.handle.processId,
         message: rawParsedOutput
-          ? `JSON object extracted (${describeJsonShape(rawParsedOutput)}).`
+          ? `JSON object extracted from ${parsedSelection.source ?? "provider output"} (${describeJsonShape(rawParsedOutput)}).`
           : "Parser could not extract a valid JSON object.",
         text: null,
         exitCode: null,

@@ -1,0 +1,5 @@
+src/services/jobs/stageExecutionService.ts: PASS
+src/renderer/src/pages/ProviderConsolePage.tsx: PASS
+src/services/jobs/jobService.ts: PASS
+src/shared/constants/app.ts: PASS
+syntax diagnostics: 0

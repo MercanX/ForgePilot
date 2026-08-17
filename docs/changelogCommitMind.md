@@ -6,6 +6,12 @@ ForgePilot Discovery stage görünürlüğü AI Factory runtime içindeki `STAGE
 
 ## 2026-08-17
 
+- Added recovery logic for truncated Claude stream-json result events by evaluating assistant-text candidates against the stage output contract.
+- Updated provider output parser to select the largest contract-valid root envelope, preventing nested tail objects from winning over complete audit envelopes.
+- Enhanced Provider Console to display the larger final assistant payload when Claude's terminal result is truncated.
+- Added regression test script `verify-provider-output-parser.cjs` covering truncated result tails, complete assistant events, and direct result parsing.
+- Bumped application version to 0.5.5 across desktop, job service, and mock cloud handshake.
+
 - Added D15 Database as an executable Discovery stage with HARD prerequisites on D05 and D10.
 - Introduced deterministic evidence validation that verifies all repository evidence paths against the sealed Startup workspace manifest before stage persistence.
 - Enforced scope-evidence guard on loaded compiled prompts in the mock workflow server to prevent incompatible runtime packages.

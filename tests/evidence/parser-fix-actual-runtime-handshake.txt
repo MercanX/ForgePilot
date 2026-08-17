@@ -1,0 +1,5 @@
+status: ok
+serverVersion: mock-0.5.5-d20-parser-fix
+protocolVersion: 2
+message: Mock cloud connected (Startup 2.1.0, Discovery D05 + D10 + D15 + D20, scope-evidence guard enforced)
+runtime: 020-Discovery-D20-READY.zip + Startup contract 2.1.0

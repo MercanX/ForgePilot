@@ -25,9 +25,26 @@ export const ProviderConsolePage = (): ReactElement => {
     ? providers.find((provider) => provider.id === latestEvent.providerId)?.label ?? latestEvent.providerId
     : "No provider run yet";
   const rawOutput = useMemo(() => {
-    const finalResult = [...debugEvents]
-      .reverse()
-      .find((event) => event.kind === "provider-result" && event.text);
+    const reversedEvents = [...debugEvents].reverse();
+    const finalResult = reversedEvents.find(
+      (event) => event.kind === "provider-result" && event.text
+    );
+    const finalAssistant = reversedEvents.find(
+      (event) =>
+        event.kind === "provider-event" &&
+        event.message === "Claude assistant event." &&
+        event.text
+    );
+
+    // Claude's terminal result event can contain only the tail of a large final
+    // response. When the immediately preceding assistant event carries a larger
+    // visible payload, show that complete payload instead of the truncated tail.
+    if (
+      finalAssistant?.text &&
+      (!finalResult?.text || finalAssistant.text.length > finalResult.text.length)
+    ) {
+      return finalAssistant.text;
+    }
     if (finalResult?.text) {
       return finalResult.text;
     }

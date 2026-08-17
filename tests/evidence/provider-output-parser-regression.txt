@@ -1,0 +1,7 @@
+ForgePilot 0.5.5 provider-output parser regression
+UTC 2026-08-17T12:50:54Z
+
+PASS provider-output parser regression
+- truncated Claude result tail: rejected as contract root
+- complete Claude assistant event: recovered and selected
+- complete Claude result event: still accepted

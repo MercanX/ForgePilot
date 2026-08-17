@@ -1461,7 +1461,7 @@ const server = http.createServer(async (request, response) => {
         d20RuntimeCompatible;
       sendJson(response, 200, {
         status: compatible ? "ok" : "update-required",
-        serverVersion: "mock-0.5.4-d20-scope-guard",
+        serverVersion: "mock-0.5.5-d20-parser-fix",
         protocolVersion: "2",
         message: compatible
           ? "Mock cloud connected (Startup 2.1.0, Discovery D05 + D10 + D15 + D20, scope-evidence guard enforced)"

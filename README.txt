@@ -1,4 +1,4 @@
-ForgePilot 0.5.4 — D20 Dependencies / Integrations + Discovery scope-evidence guard
+ForgePilot 0.5.5 — D20 Dependencies / Integrations + Claude final-output parser recovery
 
 This package extends the working D05/D10/D15 Discovery runtime with D20 Dependencies / Integrations.
 
@@ -28,3 +28,9 @@ Discovery evidence authority:
 - Provider generation and deterministic stage completion remain separate Activity states.
 
 The workflow server reads the authoritative AI Factory STAGE-EXECUTION-MANIFEST.json; stage dependency relationships are not hard-coded into the renderer.
+
+Claude final-output parser recovery (0.5.5):
+- Large Claude stream-json runs may emit a truncated tail in the terminal `type=result` event while the preceding final assistant event contains the complete JSON document.
+- ForgePilot now evaluates both provider result and assistant-text candidates against the stage output contract and selects the complete contract-valid root envelope.
+- Nested tail objects such as `{ recommended_next_substages, cautions }` can no longer win over a valid D05/D10/D15/D20 audit envelope.
+- Provider Console `Final Raw Output` prefers the larger final assistant payload when Claude's terminal result is truncated.

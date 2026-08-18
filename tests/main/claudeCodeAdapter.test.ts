@@ -39,7 +39,7 @@ describe("createClaudeCodeAdapter", () => {
     expect(command.input).toBe("Return JSON");
   });
 
-  it("grants a scoped Write rule when stageOutputFile metadata is present", async () => {
+  it("grants the Write tool when stageOutputFile metadata is present", async () => {
     const adapter = createClaudeCodeAdapter();
     const command = await adapter.createExecutionCommand({
       instructions: {
@@ -57,9 +57,9 @@ describe("createClaudeCodeAdapter", () => {
 
     const allowedIndex = command.args.indexOf("--allowedTools");
     const disallowedIndex = command.args.indexOf("--disallowedTools");
-    expect(command.args[allowedIndex + 1]).toBe(
-      "Read,Glob,Grep,Write(.ai-factory/.forgepilot/stage-output/**)"
-    );
+    // Bare Write, not a path-scoped rule: Write(<path>) patterns are never
+    // matched by the Windows CLI, so a scoped rule would deny every write.
+    expect(command.args[allowedIndex + 1]).toBe("Read,Glob,Grep,Write");
     // Deny rules win over allow rules, so the blanket Write deny must be gone.
     expect(command.args[disallowedIndex + 1]).toBe("Edit,Bash,PowerShell,Agent");
   });

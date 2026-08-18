@@ -2,18 +2,6 @@ import { PROVIDER_IDS } from "@shared/constants/providerIds";
 
 import { CliProviderAdapter } from "./cliProviderAdapter";
 
-/**
- * Scope the Write permission to the stage-output directory only. Granting the
- * directory (not the single file) tolerates path-normalization differences
- * between Windows and the CLI's gitignore-style rule matching.
- */
-const stageOutputWriteRule = (stageOutputFile: string): string => {
-  const directorySegments = stageOutputFile.split("/").slice(0, -1);
-  return directorySegments.length > 0
-    ? `Write(${directorySegments.join("/")}/**)`
-    : `Write(${stageOutputFile})`;
-};
-
 export const createClaudeCodeAdapter = (): CliProviderAdapter =>
   new CliProviderAdapter({
     buildExecutionArgs: (request) => {
@@ -24,9 +12,14 @@ export const createClaudeCodeAdapter = (): CliProviderAdapter =>
           ? request.instructions.metadata.stageOutputFile
           : null;
 
-      const allowedTools = stageOutputFile
-        ? `Read,Glob,Grep,${stageOutputWriteRule(stageOutputFile)}`
-        : "Read,Glob,Grep";
+      // Path-scoped rules such as Write(.ai-factory/**) never match on the
+      // Windows CLI (verified empirically on Claude Code 2.1.234 with
+      // relative, ./-prefixed, //-absolute, drive-absolute, ** and exact-file
+      // patterns — every form was denied while bare `Write` was honored), so
+      // stage-output delivery grants the unscoped Write tool. Edit/Bash stay
+      // denied, the prompt restricts writes to the stage-output file, and the
+      // Write tool itself refuses to overwrite files that were not Read first.
+      const allowedTools = stageOutputFile ? "Read,Glob,Grep,Write" : "Read,Glob,Grep";
       // Deny rules win over allow rules, so `Write` must leave the disallow
       // list whenever the scoped stage-output Write rule is active. Any Write
       // outside the allowed pattern is still auto-denied in non-interactive -p.

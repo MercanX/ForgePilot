@@ -69,9 +69,10 @@ const stageOutputPromptAppendix = (relativePath: string): string =>
     "",
     "## Final output delivery (IMPORTANT)",
     "Very large final JSON responses get split across streamed messages and become unparseable. Deliver the final JSON as a file instead:",
-    `1. Write the COMPLETE final JSON object to \`${relativePath}\` (relative to the repository root) using the Write tool. You have write permission for exactly this path. The file must contain the raw JSON document only — no Markdown fences, no commentary.`,
+    `1. Write the COMPLETE final JSON object to \`${relativePath}\` (relative to the repository root) using the Write tool. Write ONLY to this path — never to any other file. The file must contain the raw JSON document only — no Markdown fences, no commentary.`,
     `2. After the file is written, end your response with a single short confirmation line such as: STAGE_OUTPUT_WRITTEN ${relativePath}`,
-    "Do NOT print the full JSON to stdout/chat."
+    "3. When the file is written successfully, do NOT print the full JSON to stdout/chat.",
+    "Fallback: if the Write tool is denied or fails, do NOT stop and do NOT ask for permission — instead print the COMPLETE final JSON object to stdout inside a single ```json fenced block as your last message."
   ].join("\n");
 
 export const PROVIDER_FAST_RETRY_DELAYS_MS = [5_000, 15_000, 30_000, 60_000, 120_000] as const;

@@ -433,6 +433,8 @@ export const useJobStore = create<JobStoreState>((set) => ({
         isRunning: true,
         lastRun: null,
         providerRetryWaiting: false,
+        repairState:
+          newRun && stageId && state.repairState?.stageId === stageId ? null : state.repairState,
         runProgress: 2,
         runningStageId: stageId,
         workflow

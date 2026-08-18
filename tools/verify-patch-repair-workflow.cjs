@@ -80,8 +80,8 @@ mustContain(dashboard, 'Auto repair: {activeRepair.autoAttempts}/{activeRepair.m
 mustContain(dashboard, 'disabled={isRunning || !activeRepair.canSave}', 'Save disabled until valid');
 mustContain(dashboard, 'Original provider output is preserved', 'UI original-output preservation notice');
 
-mustContain(mockCloud, 'mock-0.5.11-repair-root-guard', 'Updated mock-cloud version');
-mustContain(mockCloud, 'provider retry watch + schema-aware root selection + fragment-safe JSON patch/manual repair workflow', 'Updated handshake repair description');
+mustContain(mockCloud, 'mock-0.5.12-repair-restart', 'Updated mock-cloud version');
+mustContain(mockCloud, 'provider retry watch + schema-aware root selection + fragment-safe JSON patch/manual repair + repair-pending restart workflow', 'Updated handshake repair description');
 // The legacy helper may remain as dead code for compatibility, but nextDirectiveFor must not schedule it.
 const nextDirectiveStart = mockCloud.indexOf('const nextDirectiveFor = (session) => {');
 const applyPreviousStart = mockCloud.indexOf('const applyPreviousResult = (session, previous) => {');

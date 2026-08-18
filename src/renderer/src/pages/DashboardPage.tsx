@@ -91,15 +91,18 @@ export const DashboardPage = (): ReactElement => {
     (requirement) => requirement.status !== "satisfied"
   );
   const selectedStageNotReady = selectedStage?.availability === "not_ready";
+  const selectedStageNeedsRestart = Boolean(
+    activeRepair || selectedStage?.status === "completed" || selectedStage?.status === "failed"
+  );
   const canRunSelectedStage = Boolean(
     activeProject &&
       selectedProvider &&
       selectedStage &&
       !isRunning &&
-      !activeRepair &&
       !selectedStageNotReady &&
       selectedMissingHardRequirements.length === 0 &&
       selectedStage.status !== "waiting" &&
+      (selectedStage.status !== "running" || selectedStageNeedsRestart) &&
       !startupAwaitingApproval
   );
   const effectiveProgress = selectedStage
@@ -464,7 +467,9 @@ export const DashboardPage = (): ReactElement => {
                     }
 
                     const restart =
-                      selectedStage.status === "completed" || selectedStage.status === "failed";
+                      Boolean(activeRepair) ||
+                      selectedStage.status === "completed" ||
+                      selectedStage.status === "failed";
                     setFollowRunnableStage(true);
                     void runCloudJob(
                       activeProject,
@@ -480,7 +485,7 @@ export const DashboardPage = (): ReactElement => {
                       ? "Waiting for provider"
                       : "Running"
                     : activeRepair
-                      ? "Repair pending"
+                      ? "Restart stage"
                     : selectedStageNotReady
                       ? "Not Ready"
                       : startupAwaitingApproval

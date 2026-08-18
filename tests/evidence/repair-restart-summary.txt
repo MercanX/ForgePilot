@@ -1,0 +1,6 @@
+ForgePilot 0.5.12 repair-pending restart fix
+- Repair-pending stage primary action is enabled as Restart stage.
+- Repair-pending restart is always sent with newRun=true.
+- Renderer repair state is cleared immediately on restart.
+- Persistent stage repair store and execution journal are cleared by stageExecutionService on newRun.
+- Existing provider retry, parser, patch/manual repair, existing-JSON recovery, catalog and dependency behavior preserved by regression verifiers.

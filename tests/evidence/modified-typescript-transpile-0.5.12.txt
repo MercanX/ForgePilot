@@ -1,0 +1,4 @@
+src/renderer/src/pages/DashboardPage.tsx: 0 syntax diagnostics
+src/renderer/src/stores/jobStore.ts: 0 syntax diagnostics
+src/services/jobs/jobService.ts: 0 syntax diagnostics
+TOTAL: 0

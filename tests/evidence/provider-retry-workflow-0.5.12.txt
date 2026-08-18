@@ -1,0 +1,6 @@
+PASS provider retry workflow
+- transient connection/API failure: kept stage running
+- manual Retry provider now: woke retry wait immediately
+- transient failed attempt: not submitted as final result
+- recovered provider attempt: continued same stage to completion
+- policy is generic in executeProvider: applies to every provider-backed stage

@@ -1,0 +1,1 @@
+Repair-pending restart verification passed: restart is enabled, sent as newRun, and clears local/persistent repair state.

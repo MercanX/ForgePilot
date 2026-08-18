@@ -1735,10 +1735,10 @@ const server = http.createServer(async (request, response) => {
         d25RuntimeCompatible;
       sendJson(response, 200, {
         status: compatible ? "ok" : "update-required",
-        serverVersion: "mock-0.5.11-repair-root-guard",
+        serverVersion: "mock-0.5.12-repair-restart",
         protocolVersion: "2",
         message: compatible
-          ? "Mock cloud connected (Startup 2.1.0, Discovery D05 + D10 + D15 + D20 + D25, targeted scan + provider retry watch + schema-aware root selection + fragment-safe JSON patch/manual repair workflow)"
+          ? "Mock cloud connected (Startup 2.1.0, Discovery D05 + D10 + D15 + D20 + D25, targeted scan + provider retry watch + schema-aware root selection + fragment-safe JSON patch/manual repair + repair-pending restart workflow)"
           : !protocolCompatible
             ? "Desktop protocol v2 is required for server-driven execution directives."
             : !startupRuntimeCompatible

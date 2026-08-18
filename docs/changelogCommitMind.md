@@ -4,6 +4,13 @@
 
 ForgePilot Discovery stage görünürlüğü AI Factory runtime içindeki `STAGE-EXECUTION-MANIFEST.json` dosyasını okuyan workflow server tarafından sağlanır. Tüm D05–D70 substages UI'da görünür hale getirildi; executable olmayan stage'ler `Not Ready`, eksik HARD dependency'ler `Run requirement`, hazır stage'ler `Start stage` davranışı aldı. Backend execution guard ve manifest cycle validation eklendi.
 
+## 2026-08-18
+- Added file-based delivery for large semantic stage outputs to prevent JSON corruption from stream splitting at max-output-token boundaries
+- Scoped Claude Code Write permission to the stage-output directory, enabling file writes while maintaining security restrictions
+- Implemented seam-repair logic for split assistant messages, handling token re-emission and partial key duplication
+- Added stage-output file as authoritative output candidate with stream parsing as fallback for non-compliant runs
+- Added comprehensive tests for stream parsing edge cases and scoped Write permission behavior
+
 ## 2026-08-17
 
 - Added structural output repair that moves misplaced fields into `$.result` without semantic regeneration

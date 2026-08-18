@@ -34,8 +34,81 @@ describe("createClaudeCodeAdapter", () => {
     });
 
     expect(command.args).toContain("--output-format");
-    expect(command.args).toContain("json");
+    expect(command.args).toContain("stream-json");
     expect(command.args).not.toContain("--json-schema");
     expect(command.input).toBe("Return JSON");
+  });
+
+  it("grants a scoped Write rule when stageOutputFile metadata is present", async () => {
+    const adapter = createClaudeCodeAdapter();
+    const command = await adapter.createExecutionCommand({
+      instructions: {
+        body: "Return JSON",
+        format: "plain-text",
+        metadata: { stageOutputFile: ".ai-factory/.forgepilot/stage-output/D15-Database.json" }
+      },
+      mode: "provider",
+      model: "sonnet",
+      outputJsonSchema: null,
+      projectRootPath: process.cwd(),
+      providerId: PROVIDER_IDS.claudeCode,
+      timeoutMs: 1000
+    });
+
+    const allowedIndex = command.args.indexOf("--allowedTools");
+    const disallowedIndex = command.args.indexOf("--disallowedTools");
+    expect(command.args[allowedIndex + 1]).toBe(
+      "Read,Glob,Grep,Write(.ai-factory/.forgepilot/stage-output/**)"
+    );
+    // Deny rules win over allow rules, so the blanket Write deny must be gone.
+    expect(command.args[disallowedIndex + 1]).toBe("Edit,Bash,PowerShell,Agent");
+  });
+
+  it("keeps the blanket Write deny without stageOutputFile metadata", async () => {
+    const adapter = createClaudeCodeAdapter();
+    const command = await adapter.createExecutionCommand({
+      instructions: {
+        body: "Return JSON",
+        format: "plain-text",
+        metadata: {}
+      },
+      mode: "provider",
+      model: "sonnet",
+      outputJsonSchema: null,
+      projectRootPath: process.cwd(),
+      providerId: PROVIDER_IDS.claudeCode,
+      timeoutMs: 1000
+    });
+
+    const allowedIndex = command.args.indexOf("--allowedTools");
+    const disallowedIndex = command.args.indexOf("--disallowedTools");
+    expect(command.args[allowedIndex + 1]).toBe("Read,Glob,Grep");
+    expect(command.args[disallowedIndex + 1]).toBe("Edit,Write,Bash,PowerShell,Agent");
+  });
+
+  it("ignores stageOutputFile when the task forbids repository tools", async () => {
+    const adapter = createClaudeCodeAdapter();
+    const command = await adapter.createExecutionCommand({
+      instructions: {
+        body: "Return JSON",
+        format: "plain-text",
+        metadata: {
+          stageOutputFile: ".ai-factory/.forgepilot/stage-output/D15-Database.json",
+          toolPolicy: "no-repository-tools"
+        }
+      },
+      mode: "provider",
+      model: "sonnet",
+      outputJsonSchema: null,
+      projectRootPath: process.cwd(),
+      providerId: PROVIDER_IDS.claudeCode,
+      timeoutMs: 1000
+    });
+
+    expect(command.args).not.toContain("--allowedTools");
+    const disallowedIndex = command.args.indexOf("--disallowedTools");
+    expect(command.args[disallowedIndex + 1]).toBe(
+      "Read,Glob,Grep,Edit,Write,Bash,PowerShell,Agent"
+    );
   });
 });

@@ -1,3 +1,6 @@
+import { mkdir, readFile, rm } from "node:fs/promises";
+import path from "node:path";
+
 import { PROVIDER_IDS } from "@shared/constants/providerIds";
 import { SUPPORTED_CAPABILITIES } from "@shared/constants/protocolVersion";
 import {
@@ -39,6 +42,37 @@ import {
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const MAX_DIRECTIVES_PER_RUN = 100;
+
+/**
+ * Large semantic stage envelopes are delivered through a file instead of
+ * stdout: streamed final messages can split at the max-output-token boundary
+ * and become unparseable, while a Write-tool file is always one complete
+ * document. The provider gets a Write permission scoped to this directory.
+ */
+const STAGE_OUTPUT_DIRECTORY_SEGMENTS = [".ai-factory", ".forgepilot", "stage-output"] as const;
+
+const safeStageFileName = (stageId: string): string =>
+  stageId.replace(/[^a-zA-Z0-9._-]+/g, "_");
+
+const stageOutputRelativePath = (stageId: string): string =>
+  [...STAGE_OUTPUT_DIRECTORY_SEGMENTS, `${safeStageFileName(stageId)}.json`].join("/");
+
+const stageOutputAbsolutePath = (projectRootPath: string, stageId: string): string =>
+  path.join(
+    projectRootPath,
+    ...STAGE_OUTPUT_DIRECTORY_SEGMENTS,
+    `${safeStageFileName(stageId)}.json`
+  );
+
+const stageOutputPromptAppendix = (relativePath: string): string =>
+  [
+    "",
+    "## Final output delivery (IMPORTANT)",
+    "Very large final JSON responses get split across streamed messages and become unparseable. Deliver the final JSON as a file instead:",
+    `1. Write the COMPLETE final JSON object to \`${relativePath}\` (relative to the repository root) using the Write tool. You have write permission for exactly this path. The file must contain the raw JSON document only — no Markdown fences, no commentary.`,
+    `2. After the file is written, end your response with a single short confirmation line such as: STAGE_OUTPUT_WRITTEN ${relativePath}`,
+    "Do NOT print the full JSON to stdout/chat."
+  ].join("\n");
 
 export const PROVIDER_FAST_RETRY_DELAYS_MS = [5_000, 15_000, 30_000, 60_000, 120_000] as const;
 export const PROVIDER_WATCH_RETRY_INTERVAL_MS = 300_000;
@@ -356,8 +390,86 @@ const parseProviderTextObjects = (rawText: string): Record<string, unknown>[] =>
 };
 
 type ProviderStreamTextCandidate = {
-  source: "claude-result" | "claude-assistant";
+  source: "claude-result" | "claude-assistant" | "stage-output-file";
   text: string;
+};
+
+/**
+ * A max-output-token split can cut the stream mid-token; the continuation
+ * message then re-emits the interrupted token from its start (observed in the
+ * field: part one ended with `..."strength_ids": [], "` and part two began
+ * with `"notes": ...`, so a naive join doubles the quote and breaks
+ * JSON.parse). Emit repaired join variants alongside the naive join and let
+ * contract validation pick the first one that parses into a valid envelope.
+ */
+const MAX_SEAM_OVERLAP_CHARS = 200;
+
+const dedupeSeamOverlap = (left: string, right: string): string => {
+  const max = Math.min(left.length, right.length, MAX_SEAM_OVERLAP_CHARS);
+  for (let length = max; length > 0; length -= 1) {
+    if (left.endsWith(right.slice(0, length))) {
+      return right.slice(length);
+    }
+  }
+  return right;
+};
+
+const trimPartialSeamToken = (left: string, right: string): string => {
+  // A dangling token after the last structural character (`,` `{` `[` `:`)
+  // is only dropped when the next fragment re-emits it from the start, so a
+  // legitimate mid-string split (continuation without re-emission) stays
+  // untouched and is covered by the naive join instead.
+  const partial = left.match(/[,{\[:]\s*("?[A-Za-z0-9_.$-]{0,40})$/);
+  const token = partial?.[1];
+  if (!token || !right.startsWith(token)) {
+    return left;
+  }
+  return left.slice(0, left.length - token.length);
+};
+
+const joinFragments = (
+  fragments: string[],
+  repairSeam: (left: string, right: string) => { left: string; right: string }
+): string => {
+  let joined = fragments[0] ?? "";
+  for (let index = 1; index < fragments.length; index += 1) {
+    const { left, right } = repairSeam(joined, fragments[index]!);
+    joined = left + right;
+  }
+  return joined;
+};
+
+const buildAssistantJoinVariants = (fragments: string[]): string[] => {
+  const variants: string[] = [];
+  const add = (text: string): void => {
+    const trimmed = text.trim();
+    if (trimmed && !variants.includes(trimmed)) {
+      variants.push(trimmed);
+    }
+  };
+
+  add(fragments.join(""));
+  if (fragments.length > 1) {
+    add(
+      joinFragments(fragments, (left, right) => ({
+        left: trimPartialSeamToken(left, right),
+        right
+      }))
+    );
+    add(
+      joinFragments(fragments, (left, right) => ({
+        left,
+        right: dedupeSeamOverlap(left, right)
+      }))
+    );
+    add(
+      joinFragments(fragments, (left, right) => {
+        const deduped = dedupeSeamOverlap(left, right);
+        return { left: trimPartialSeamToken(left, deduped), right: deduped };
+      })
+    );
+  }
+  return variants;
 };
 
 const parseJsonLines = (value: string): Record<string, unknown>[] =>
@@ -429,14 +541,14 @@ const findProviderStreamTextCandidates = (
   // Claude may split one very large final JSON document across several
   // assistant events. Individual event parsing then sees only fragments while
   // the terminal result event may contain only the tail. Reassemble the visible
-  // assistant text in chronological order so braces spanning event boundaries
-  // can be parsed as one authoritative envelope.
-  const combinedAssistant = chronologicalAssistantText.join("").trim();
-  if (combinedAssistant) {
-    assistantCandidates.unshift({ source: "claude-assistant", text: combinedAssistant });
-  }
+  // assistant text in chronological order (naive join plus seam-repaired
+  // variants) so braces spanning event boundaries can be parsed as one
+  // authoritative envelope.
+  const combinedCandidates: ProviderStreamTextCandidate[] = buildAssistantJoinVariants(
+    chronologicalAssistantText
+  ).map((text) => ({ source: "claude-assistant", text }));
 
-  return [...resultCandidates, ...assistantCandidates];
+  return [...resultCandidates, ...combinedCandidates, ...assistantCandidates];
 };
 
 const safeJsonPreview = (value: unknown, maxLength = 1600): string | null => {
@@ -1137,7 +1249,7 @@ const selectContractOutput = (
 };
 
 type ParsedProviderJsonSelection = {
-  source: "claude-result" | "claude-assistant" | "plain-output" | null;
+  source: "claude-result" | "claude-assistant" | "stage-output-file" | "plain-output" | null;
   value: Record<string, unknown> | null;
 };
 
@@ -1209,17 +1321,22 @@ export const isRepairBaseViable = (
 const parseProviderJsonSelection = (
   chunks: ProviderOutputChunk[],
   providerId?: string,
-  schema: Record<string, unknown> | null = null
+  schema: Record<string, unknown> | null = null,
+  extraCandidates: ProviderStreamTextCandidate[] = []
 ): ParsedProviderJsonSelection => {
-  const textCandidates =
-    providerId === PROVIDER_IDS.claudeCode
+  // Extra candidates (the stage-output file) are authoritative when present:
+  // the file is one complete document, immune to stream-splitting artifacts.
+  const textCandidates = [
+    ...extraCandidates,
+    ...(providerId === PROVIDER_IDS.claudeCode
       ? findProviderStreamTextCandidates(chunks)
       : [
           {
             source: "plain-output" as const,
             text: chunks.map((chunk) => chunk.text).join("")
           }
-        ];
+        ])
+  ];
 
   let fallback: ParsedProviderJsonSelection = { source: null, value: null };
   let fallbackFitness: [number, number, number, number, number] | null = null;
@@ -1461,6 +1578,27 @@ export const createStageExecutionService = (
   ): Promise<ProviderExecutionResult> => {
     const job = directive.job;
     const task = await client.get(`/jobs/${encodeURIComponent(job.id)}`, getTaskResponseSchema);
+
+    // Semantic Claude runs deliver the final envelope through a file: the
+    // provider gets a Write permission scoped to the stage-output directory
+    // and the prompt tells it to write the JSON there instead of streaming it.
+    // Stream parsing stays as the fallback for non-compliant runs.
+    const useStageOutputFile =
+      request.providerId === PROVIDER_IDS.claudeCode &&
+      directive.mode === "semantic" &&
+      directive.outputSchema !== null;
+    const stageOutputRelative = useStageOutputFile ? stageOutputRelativePath(request.stageId) : null;
+    const stageOutputAbsolute = stageOutputRelative
+      ? stageOutputAbsolutePath(request.project.rootPath, request.stageId)
+      : null;
+    const taskInstructions = stageOutputRelative
+      ? {
+          ...task.instructions,
+          body: `${task.instructions.body}\n${stageOutputPromptAppendix(stageOutputRelative)}`,
+          metadata: { ...task.instructions.metadata, stageOutputFile: stageOutputRelative }
+        }
+      : task.instructions;
+
     const observedOutput: Array<{ taskId: string; chunk: ProviderOutputChunk; debugged: boolean }> = [];
     const observedExits = new Map<
       string,
@@ -1564,8 +1702,16 @@ export const createStageExecutionService = (
       let watchRetryCount = 0;
 
       while (true) {
+        if (stageOutputAbsolute) {
+          // Remove any stale file so a leftover from an earlier attempt can
+          // never be mistaken for this run's output, and pre-create the
+          // directory so the provider's scoped Write always succeeds.
+          await rm(stageOutputAbsolute, { force: true }).catch(() => undefined);
+          await mkdir(path.dirname(stageOutputAbsolute), { recursive: true }).catch(() => undefined);
+        }
+
         started = await taskExecutionService.start({
-          instructions: task.instructions,
+          instructions: taskInstructions,
           mode: "provider",
           model: request.model,
           outputJsonSchema: directive.outputSchema,
@@ -1789,10 +1935,36 @@ export const createStageExecutionService = (
         signal: null,
         timestamp: new Date().toISOString()
       });
+
+      let stageOutputFileText: string | null = null;
+      if (stageOutputAbsolute) {
+        try {
+          const fileText = (await readFile(stageOutputAbsolute, "utf8")).trim();
+          stageOutputFileText = fileText.length > 0 ? fileText : null;
+        } catch {
+          stageOutputFileText = null;
+        }
+        emitDebug(request, onDebug, {
+          kind: "parser",
+          taskId: started.handle.id,
+          processId: started.handle.processId,
+          message: stageOutputFileText
+            ? `Stage output file found (${stageOutputFileText.length} chars): ${stageOutputRelative}. Using it as the primary output candidate.`
+            : `Stage output file ${stageOutputRelative} was not written; falling back to stream parsing.`,
+          text: null,
+          exitCode: null,
+          signal: null,
+          timestamp: new Date().toISOString()
+        });
+      }
+
       const parsedSelection = parseProviderJsonSelection(
         outputChunks,
         request.providerId,
-        directive.mode === "semantic" ? directive.outputSchema : null
+        directive.mode === "semantic" ? directive.outputSchema : null,
+        stageOutputFileText
+          ? [{ source: "stage-output-file", text: stageOutputFileText }]
+          : []
       );
       const originalOutput = parsedSelection.value;
       let rawParsedOutput = originalOutput;

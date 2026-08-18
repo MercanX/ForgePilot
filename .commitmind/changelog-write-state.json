@@ -1,5 +1,5 @@
 {
-  "lastFingerprint": "ea2a1407f15eda8b696ca753a610dc431645c025",
-  "lastDate": "2026-08-17",
-  "lastContent": "- Added structural output repair that moves misplaced fields into `$.result` without semantic regeneration\n- Implemented contract recovery workflow with no-repository-tools policy for repair passes\n- Extended mock cloud to simulate contract repair across all Discovery stages\n- Added regression evidence for structural repair and contract recovery scenarios\n- Updated provider adapter to conditionally disable repository tools during repair passes"
+  "lastFingerprint": "221d445f46dd964fd366f0cc74b6951b0f6c83ad",
+  "lastDate": "2026-08-18",
+  "lastContent": "- Added file-based delivery for large semantic stage outputs to prevent JSON corruption from stream splitting at max-output-token boundaries\n- Scoped Claude Code Write permission to the stage-output directory, enabling file writes while maintaining security restrictions\n- Implemented seam-repair logic for split assistant messages, handling token re-emission and partial key duplication\n- Added stage-output file as authoritative output candidate with stream parsing as fallback for non-compliant runs\n- Added comprehensive tests for stream parsing edge cases and scoped Write permission behavior"
 }
